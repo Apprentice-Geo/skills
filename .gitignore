@@ -1,0 +1,9 @@
+.venv/
+tools/bin/
+tools/cache/
+tools/models/
+results/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
