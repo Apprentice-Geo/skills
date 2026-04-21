@@ -73,6 +73,9 @@ def infer_result_dir(manifest_path: Optional[Path], audio_path: Path, output_dir
     if manifest_path:
         return manifest_path.parent.parent
 
+    if audio_path.parent.name == "resource":
+        return audio_path.parent.parent
+
     return audio_path.parent.parent.parent
 
 

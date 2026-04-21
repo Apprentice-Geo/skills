@@ -66,11 +66,13 @@ def make_transcribe_args(
 
 def normalize_template_language(language: Optional[str]) -> str:
     if not language:
-        return "zh"
+        return "en"
 
     value = language.lower()
     if value.startswith("zh"):
         return "zh"
+    if value.startswith("en"):
+        return "en"
     return value
 
 
@@ -80,7 +82,7 @@ def select_summary_template(language: Optional[str]) -> tuple[str, Path]:
     if template_path and template_path.exists():
         return template_language, template_path
 
-    fallback_language = "zh"
+    fallback_language = "en"
     fallback_path = SUMMARY_TEMPLATE_BY_LANGUAGE[fallback_language]
     if not fallback_path.exists():
         raise FileNotFoundError(f"Summary template not found: {fallback_path}")

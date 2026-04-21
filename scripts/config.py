@@ -34,5 +34,6 @@ DEFAULT_TRANSCRIBE_BATCH_SIZE = 8
 DEFAULT_TRANSCRIBE_BEAM_SIZE = 5
 
 SUMMARY_TEMPLATE_BY_LANGUAGE = {
+    "en": ASSETS_DIR / "summary_template_en.md",
     "zh": ASSETS_DIR / "summary_template_zh.md",
 }

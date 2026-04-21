@@ -6,15 +6,17 @@ param(
     [switch]$SkipVerify,
     [string]$PythonCommand = "",
     [string]$PipIndexUrl = "",
+    [string]$HfEndpoint = "",
     [string]$WhisperModelRepo = "Systran/faster-whisper-small",
-    [string]$WhisperModelDirName = "faster-whisper-small",
-    [string]$FfmpegUrl = ""
+    [string]$WhisperModelDirName = "faster-whisper-small"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $DefaultFfmpegUrl = "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+$DefaultPipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple"
+$DefaultHfEndpoint = "https://hf-mirror.com"
 
 function Write-Step {
     param([string]$Message)
@@ -153,6 +155,18 @@ function Find-SystemCommand {
     return ""
 }
 
+function Resolve-PythonPackageFfmpeg {
+    param([string]$PythonExe)
+
+    $resolver = Join-Path $PSScriptRoot "resolve_ffmpeg_binaries.py"
+    $result = & $PythonExe $resolver
+    if ($LASTEXITCODE -ne 0 -or -not $result -or $result.Count -lt 2) {
+        return @("", "")
+    }
+
+    return @([string]$result[0], [string]$result[1])
+}
+
 $SkillRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VenvDir = Join-Path $SkillRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
@@ -169,17 +183,23 @@ $FfprobeExe = Join-Path $FfmpegDir "bin\ffprobe.exe"
 $ResolvedFfmpegExe = ""
 $ResolvedFfprobeExe = ""
 
-if (-not $PipIndexUrl -and $env:BILI_AUDIO_PIP_INDEX_URL) {
-    $PipIndexUrl = $env:BILI_AUDIO_PIP_INDEX_URL
+if (-not $PipIndexUrl -and $env:PIP_INDEX_URL) {
+    $PipIndexUrl = $env:PIP_INDEX_URL
 }
-if (-not $FfmpegUrl -and $env:BILI_AUDIO_FFMPEG_URL) {
-    $FfmpegUrl = $env:BILI_AUDIO_FFMPEG_URL
-}
-if (-not $FfmpegUrl) {
-    $FfmpegUrl = $DefaultFfmpegUrl
+if (-not $PipIndexUrl) {
+    $PipIndexUrl = $DefaultPipIndexUrl
 }
 
+if (-not $HfEndpoint -and $env:HF_ENDPOINT) {
+    $HfEndpoint = $env:HF_ENDPOINT
+}
+if (-not $HfEndpoint) {
+    $HfEndpoint = $DefaultHfEndpoint
+}
+$env:HF_ENDPOINT = $HfEndpoint
+
 Write-Host "Skill root: $SkillRoot"
+Write-Host "Using HF endpoint: $env:HF_ENDPOINT"
 
 Write-Step "Create local directories"
 Ensure-Directory $BinDir
@@ -220,25 +240,32 @@ else {
 }
 
 Write-Step "Resolve ffmpeg"
-if ((Test-Path -LiteralPath $FfmpegExe) -and (Test-Path -LiteralPath $FfprobeExe)) {
-    $ResolvedFfmpegExe = $FfmpegExe
-    $ResolvedFfprobeExe = $FfprobeExe
-    Write-Host "Using portable ffmpeg: $FfmpegDir"
+$systemFfmpeg = Find-SystemCommand "ffmpeg"
+$systemFfprobe = Find-SystemCommand "ffprobe"
+
+if ($systemFfmpeg -and $systemFfprobe) {
+    $ResolvedFfmpegExe = $systemFfmpeg
+    $ResolvedFfprobeExe = $systemFfprobe
+    Write-Host "Using system ffmpeg: $ResolvedFfmpegExe"
+    Write-Host "Using system ffprobe: $ResolvedFfprobeExe"
 }
 else {
-    $systemFfmpeg = Find-SystemCommand "ffmpeg"
-    $systemFfprobe = Find-SystemCommand "ffprobe"
-
-    if ($systemFfmpeg -and $systemFfprobe) {
-        $ResolvedFfmpegExe = $systemFfmpeg
-        $ResolvedFfprobeExe = $systemFfprobe
-        Write-Host "Using system ffmpeg: $ResolvedFfmpegExe"
-        Write-Host "Using system ffprobe: $ResolvedFfprobeExe"
+    $packageFfmpeg = Resolve-PythonPackageFfmpeg $VenvPython
+    if ($packageFfmpeg[0] -and $packageFfmpeg[1]) {
+        $ResolvedFfmpegExe = $packageFfmpeg[0]
+        $ResolvedFfprobeExe = $packageFfmpeg[1]
+        Write-Host "Using ffmpeg-binaries-compat ffmpeg: $ResolvedFfmpegExe"
+        Write-Host "Using ffmpeg-binaries-compat ffprobe: $ResolvedFfprobeExe"
+    }
+    elseif ((Test-Path -LiteralPath $FfmpegExe) -and (Test-Path -LiteralPath $FfprobeExe)) {
+        $ResolvedFfmpegExe = $FfmpegExe
+        $ResolvedFfprobeExe = $FfprobeExe
+        Write-Host "Using cached portable ffmpeg: $FfmpegDir"
     }
     elseif (-not $SkipDownloads) {
-        Write-Host "System ffmpeg/ffprobe not found. Installing portable ffmpeg."
+        Write-Host "System ffmpeg/ffprobe and ffmpeg-binaries-compat were not found. Installing portable ffmpeg from the default GitHub release."
         $ffmpegZip = Join-Path $CacheDir "ffmpeg-win64.zip"
-        Invoke-DownloadFile -Url $FfmpegUrl -Destination $ffmpegZip
+        Invoke-DownloadFile -Url $DefaultFfmpegUrl -Destination $ffmpegZip
         Expand-FfmpegArchive -ArchivePath $ffmpegZip -InstallDir $BinDir
         $ResolvedFfmpegExe = $FfmpegExe
         $ResolvedFfprobeExe = $FfprobeExe
@@ -304,9 +331,5 @@ else {
 Write-Host ""
 Write-Host "Setup completed."
 Write-Host "Run scripts with:"
-Write-Host "  .\.venv\Scripts\python.exe scripts\run_pipeline.py <bilibili-url>"
+Write-Host "  .\.venv\Scripts\python.exe scripts\run_pipeline.py ""<bilibili-url>"""
 Write-Host ""
-Write-Host "Network override variables for China mainland networks:"
-Write-Host "  BILI_AUDIO_PIP_INDEX_URL  e.g. https://pypi.tuna.tsinghua.edu.cn/simple"
-Write-Host "  BILI_AUDIO_FFMPEG_URL     custom ffmpeg zip URL"
-Write-Host "  HF_ENDPOINT               e.g. https://hf-mirror.com"

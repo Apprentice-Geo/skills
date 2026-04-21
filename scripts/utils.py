@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -80,11 +81,35 @@ def list_media_files(path: Path) -> list[Path]:
     )
 
 
-def resolve_ffmpeg_location() -> Optional[str]:
-    if PORTABLE_FFMPEG_EXE.exists() and PORTABLE_FFPROBE_EXE.exists():
-        return path_to_posix(PORTABLE_FFMPEG_BIN_DIR)
+def resolve_ffmpeg_binaries_location() -> Optional[str]:
+    try:
+        import ffmpeg_binaries as ffmpeg
+    except ImportError:
+        return None
 
+    try:
+        ffmpeg.init()
+        ffmpeg_path = Path(str(ffmpeg.FFMPEG_PATH))
+    except Exception:
+        return None
+
+    bin_dir = ffmpeg_path.parent if ffmpeg_path.is_file() else ffmpeg_path
+    exe_suffix = ".exe" if os.name == "nt" else ""
+    if (bin_dir / f"ffmpeg{exe_suffix}").exists() and (bin_dir / f"ffprobe{exe_suffix}").exists():
+        return path_to_posix(bin_dir)
+
+    return None
+
+
+def resolve_ffmpeg_location() -> Optional[str]:
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
         return None
+
+    package_location = resolve_ffmpeg_binaries_location()
+    if package_location:
+        return package_location
+
+    if PORTABLE_FFMPEG_EXE.exists() and PORTABLE_FFPROBE_EXE.exists():
+        return path_to_posix(PORTABLE_FFMPEG_BIN_DIR)
 
     return None

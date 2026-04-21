@@ -74,12 +74,10 @@ def build_result_paths(info: dict[str, Any], output_dir: Path) -> dict[str, Path
     paths = {
         "result": result_dir,
         "resource": resource_dir,
-        "video": resource_dir / "video",
-        "audio": resource_dir / "audio",
         "subtitle": resource_dir / "subtitle",
     }
 
-    for path in paths.values():
+    for path in (result_dir, resource_dir):
         ensure_dir(path)
 
     return paths
@@ -101,6 +99,8 @@ def download_subtitles(
 ) -> list[Path]:
     if args.skip_subtitles:
         return []
+
+    ensure_dir(subtitle_dir)
 
     options = make_base_options(args)
     options.update(
@@ -257,7 +257,7 @@ def run_fetch(args: argparse.Namespace) -> dict[str, Any]:
     else:
         args.skip_subtitles = True
         subtitle_files = []
-    audio_files = download_audio(args.url, paths["audio"], video_id, args)
+    audio_files = download_audio(args.url, paths["resource"], video_id, args)
     manifest_path = write_manifest(paths["result"], info, audio_files, subtitle_files)
 
     print(f"Title: {info.get('title') or info.get('id')}")
