@@ -9,6 +9,8 @@ from config import (
     SUMMARY_TEMPLATE_BY_LANGUAGE,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
+    DEFAULT_TRANSCRIBE_BATCH_SIZE,
+    DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
     DEFAULT_TRANSCRIBE_LANGUAGE,
@@ -53,6 +55,7 @@ def make_transcribe_args(
         language=args.language,
         device=args.device,
         compute_type=args.compute_type,
+        batch_size=args.batch_size,
         beam_size=args.beam_size,
         cpu_threads=args.cpu_threads,
         num_workers=args.num_workers,
@@ -165,7 +168,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
-    parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_TRANSCRIBE_BATCH_SIZE)
+    parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
     parser.add_argument("--cpu-threads", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--vad-filter", dest="vad_filter", action="store_true", default=True)

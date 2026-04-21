@@ -2,9 +2,11 @@ import argparse
 from pathlib import Path
 from typing import Any, Optional
 
-from faster_whisper import WhisperModel
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 from config import (
+    DEFAULT_TRANSCRIBE_BATCH_SIZE,
+    DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
     DEFAULT_TRANSCRIBE_LANGUAGE,
@@ -137,9 +139,11 @@ def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[s
         num_workers=args.num_workers,
     )
 
-    segments, info = model.transcribe(
+    transcriber = BatchedInferencePipeline(model=model)
+    segments, info = transcriber.transcribe(
         path_to_posix(audio_path),
         language=args.language,
+        batch_size=args.batch_size,
         beam_size=args.beam_size,
         vad_filter=args.vad_filter,
         word_timestamps=args.word_timestamps,
@@ -154,6 +158,8 @@ def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[s
         "model": model_path,
         "device": args.device,
         "compute_type": args.compute_type,
+        "batch_size": args.batch_size,
+        "beam_size": args.beam_size,
         "vad_filter": args.vad_filter,
         "word_timestamps": args.word_timestamps,
     }
@@ -176,7 +182,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
-    parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=DEFAULT_TRANSCRIBE_BATCH_SIZE)
+    parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
     parser.add_argument("--cpu-threads", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--vad-filter", dest="vad_filter", action="store_true", default=True)

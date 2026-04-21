@@ -28,10 +28,8 @@ Do not use this skill as the main solution for visual-first videos such as PVs, 
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>"
 ```
 
-3. Read the `Summary Prompt` path printed by the pipeline.
-
+3. Read the `Summary Prompt` path printed by the pipeline.Do not read other files unless debugging a failure.
 4. Generate the final summary by following that prompt, then write the summary to the output path shown at the top of the prompt.
-
 5. Verify the final summary:
 
 - the file exists at the output path specified in the prompt

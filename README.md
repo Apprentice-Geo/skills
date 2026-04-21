@@ -1,6 +1,6 @@
 # bili-audiosummary
 
-该项目是一个 Agent Skill，遵循 [Agent Skills](https://agentskills.io/home) 开发标准。目标是根据 B 站视频音频的 STT 转写结果生成视频内容总结。
+该项目是一个 Agent Skill，遵循 [Agent Skills](https://agentskills.io/home) 开放标准。目标是根据 B 站视频音频的 STT 转写结果生成视频内容总结。
 
 当前已实现：输入 B 站视频 URL，解析 BVID，下载最低可用音频流，使用 faster-whisper 生成带时间戳的转写结果，并拼接 instructions、总结模板和转写文本生成 summary prompt。
 
