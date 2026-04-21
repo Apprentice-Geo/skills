@@ -19,6 +19,7 @@
 - Do not infer visual information that is not stated in the transcript.
 - This workflow is intended for spoken videos where audio carries most of the information.
 - If the transcript is unsuitable for audio-only summarization, state the limitation in the required limitations section.
+- If the transcript includes advertisements, sponsorships, or promotional content, include them only in the Advertisements section and do not mention them in any other sections.
 
 ## Language
 
