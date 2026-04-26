@@ -3,41 +3,39 @@ from pathlib import Path
 from typing import Any, Optional
 
 import fetch_audio
+import subtitle_transcript
 import transcribe
 from config import (
-    SUMMARY_INSTRUCTIONS_PATH,
-    SUMMARY_TEMPLATE_BY_LANGUAGE,
-    DEFAULT_AUDIO_CODEC,
-    DEFAULT_AUDIO_SELECTOR,
-    DEFAULT_TRANSCRIBE_BATCH_SIZE,
-    DEFAULT_TRANSCRIBE_BEAM_SIZE,
-    DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
-    DEFAULT_TRANSCRIBE_DEVICE,
+    DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_LANGUAGE,
     RESULTS_DIR,
+    SUMMARY_INSTRUCTIONS_PATH,
+    SUMMARY_TEMPLATE_BY_LANGUAGE,
 )
 from utils import ensure_dir, path_to_posix, read_json
+
+
+def resolve_transcribe_language(args: argparse.Namespace) -> str:
+    return args.language or DEFAULT_TRANSCRIBE_LANGUAGE
 
 
 def make_fetch_args(args: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
         url=args.url,
-        output_dir=args.output_dir,
-        cookies=None,
-        cookies_from_browser=None,
-        playlist=args.playlist,
-        skip_audio=args.skip_audio,
-        fetch_subtitles=False,
-        skip_subtitles=True,
-        write_auto_subs=False,
+        output_dir=RESULTS_DIR,
+        cookies=args.cookies,
+        playlist=False,
+        skip_audio=False,
+        language=resolve_transcribe_language(args),
+        write_auto_subs=True,
         subtitle_langs=[],
         subtitle_format="srt/best",
-        audio_selector=args.audio_selector,
-        audio_format=args.audio_format,
-        audio_quality=args.audio_quality,
-        retries=args.retries,
-        socket_timeout=args.socket_timeout,
-        quiet=args.quiet,
+        audio_selector=fetch_audio.DEFAULT_AUDIO_SELECTOR,
+        audio_format=fetch_audio.DEFAULT_AUDIO_CODEC,
+        audio_quality="0",
+        retries=10,
+        socket_timeout=30,
+        quiet=False,
     )
 
 
@@ -51,16 +49,24 @@ def make_transcribe_args(
         manifest=manifest_path,
         audio=None,
         output_dir=output_dir,
-        model=args.model,
-        language=args.language,
-        device=args.device,
-        compute_type=args.compute_type,
-        batch_size=args.batch_size,
-        beam_size=args.beam_size,
-        cpu_threads=args.cpu_threads,
-        num_workers=args.num_workers,
-        vad_filter=args.vad_filter,
-        word_timestamps=args.word_timestamps,
+        asr_provider=args.asr_provider,
+        model=None,
+        language=resolve_transcribe_language(args),
+        device=transcribe.DEFAULT_TRANSCRIBE_DEVICE,
+        compute_type=transcribe.DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
+        batch_size=transcribe.DEFAULT_TRANSCRIBE_BATCH_SIZE,
+        beam_size=transcribe.DEFAULT_TRANSCRIBE_BEAM_SIZE,
+        cpu_threads=0,
+        num_workers=1,
+        word_timestamps=False,
+    )
+
+
+def require_audio_for_stt(audio_files: list[Path]) -> None:
+    if audio_files:
+        return
+    raise RuntimeError(
+        "No usable subtitle or audio files available. Download or reuse at least one subtitle SRT file or one audio file before running STT fallback."
     )
 
 
@@ -69,6 +75,10 @@ def normalize_template_language(language: Optional[str]) -> str:
         return "en"
 
     value = language.lower()
+    if value.startswith("ai-zh"):
+        return "zh"
+    if value.startswith("ai-en"):
+        return "en"
     if value.startswith("zh"):
         return "zh"
     if value.startswith("en"):
@@ -147,36 +157,17 @@ def write_summary_prompt(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the full Bilibili audio summary preparation pipeline: fetch audio, transcribe it, then build a summary prompt."
+        description="Run the full Bilibili audio summary preparation pipeline: fetch subtitles and audio, prefer usable subtitles, fall back to STT when needed, then build a summary prompt."
     )
     parser.add_argument("url", help="Bilibili video URL.")
-    parser.add_argument("--output-dir", type=Path, default=RESULTS_DIR)
-
-    parser.add_argument("--playlist", action="store_true", help="Allow playlist/multi-entry downloads.")
-    parser.add_argument("--skip-audio", action="store_true")
+    parser.add_argument("--cookies", type=Path, help="Path to a Netscape-format cookies.txt file.")
+    parser.add_argument("--language", choices=("zh", "en"), default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument(
-        "--audio-selector",
-        default=DEFAULT_AUDIO_SELECTOR,
-        help="yt-dlp format selector. Defaults to the lowest available audio stream.",
+        "--asr-provider",
+        choices=("whisper", "qwen3"),
+        default=DEFAULT_ASR_PROVIDER,
+        help="ASR provider. qwen3 is only for machines with available CUDA.",
     )
-    parser.add_argument("--audio-format", default=DEFAULT_AUDIO_CODEC)
-    parser.add_argument("--audio-quality", default="0")
-    parser.add_argument("--retries", type=int, default=10)
-    parser.add_argument("--socket-timeout", type=int, default=30)
-    parser.add_argument("--quiet", action="store_true")
-
-    parser.add_argument("--skip-stt", action="store_true", help="Do not run STT.")
-    parser.add_argument("--model", help="Model name or local faster-whisper model directory.")
-    parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
-    parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
-    parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_TRANSCRIBE_BATCH_SIZE)
-    parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
-    parser.add_argument("--cpu-threads", type=int, default=0)
-    parser.add_argument("--num-workers", type=int, default=1)
-    parser.add_argument("--vad-filter", dest="vad_filter", action="store_true", default=True)
-    parser.add_argument("--no-vad-filter", dest="vad_filter", action="store_false")
-    parser.add_argument("--word-timestamps", action="store_true")
     return parser.parse_args()
 
 
@@ -188,10 +179,50 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     transcript_result = None
     prompt_result = None
 
-    if not args.skip_stt:
-        if args.skip_audio:
-            raise ValueError("STT requires audio. Remove --skip-audio or also pass --skip-stt.")
+    subtitle_files = fetch_result.get("subtitle_files") or []
+    audio_files = [Path(path) for path in (fetch_result.get("audio_files") or [])]
+    usable_subtitle_files = [Path(path) for path in subtitle_files if fetch_audio.is_usable_subtitle(Path(path))]
+    if usable_subtitle_files:
+        sorted_subtitle_files = fetch_audio.sort_subtitle_files(
+            usable_subtitle_files,
+            fetch_audio.resolve_subtitle_langs(make_fetch_args(args)),
+        )
+        subtitle_path = None
+        for candidate_path in sorted_subtitle_files:
+            segments, error = subtitle_transcript.probe_srt(candidate_path)
+            if segments is not None:
+                subtitle_path = candidate_path
+                break
+            print(f"Warning: subtitle is unusable: {path_to_posix(candidate_path)} ({error})")
 
+        if subtitle_path is not None:
+            transcript_result = subtitle_transcript.subtitle_to_transcript(
+                subtitle_path=subtitle_path,
+                manifest=read_json(manifest_path),
+                metadata=read_json(fetch_result["metadata_path"]),
+                output_dir=result_dir,
+            )
+            prompt_result = write_summary_prompt(
+                result_dir=result_dir,
+                video_id=fetch_result["video_id"],
+                transcript_markdown_path=transcript_result["markdown_path"],
+                transcript_json_path=transcript_result["json_path"],
+            )
+        else:
+            print("Subtitle SRT is empty or invalid; falling back to STT.")
+            require_audio_for_stt(audio_files)
+            transcribe_args = make_transcribe_args(args, manifest_path, result_dir)
+            transcript_result = transcribe.run_transcribe(transcribe_args)
+            prompt_result = write_summary_prompt(
+                result_dir=result_dir,
+                video_id=fetch_result["video_id"],
+                transcript_markdown_path=transcript_result["markdown_path"],
+                transcript_json_path=transcript_result["json_path"],
+            )
+    else:
+        if subtitle_files:
+            print("No usable SRT subtitles found; falling back to STT.")
+        require_audio_for_stt(audio_files)
         transcribe_args = make_transcribe_args(args, manifest_path, result_dir)
         transcript_result = transcribe.run_transcribe(transcribe_args)
         prompt_result = write_summary_prompt(
@@ -200,9 +231,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             transcript_markdown_path=transcript_result["markdown_path"],
             transcript_json_path=transcript_result["json_path"],
         )
-    else:
-        print("STT skipped: --skip-stt was set")
-
     print("")
     print("Pipeline completed.")
     print(f"Result: {path_to_posix(result_dir)}")

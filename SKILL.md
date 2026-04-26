@@ -20,10 +20,34 @@ Do not use this skill as the main solution for visual-first videos such as PVs, 
 .\scripts\setup_windows.ps1
 ```
 
+If the machine has an available CUDA GPU and you want to try Qwen3-ASR for potentially better Chinese ASR, install its optional runtime dependencies first:
+
+```powershell
+.\scripts\setup_windows.ps1 -InstallQwen3
+```
+
+Before actually using Qwen3-ASR, prepare the Qwen3 local model files:
+
+```powershell
+.\scripts\setup_windows.ps1 -DownloadQwen3Models
+```
+
 2. Run the main pipeline with the Bilibili URL:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>"
+```
+
+With available CUDA and the local Qwen3 models already prepared, you can switch STT to the optional Qwen3-ASR path:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --asr-provider qwen3
+```
+
+If the video should be processed as English content, set the target language explicitly:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --language en
 ```
 
 3. Read the `Summary Prompt` path printed by the pipeline.Do not read other files unless debugging a failure.
@@ -38,10 +62,11 @@ Do not use this skill as the main solution for visual-first videos such as PVs, 
 
 ## Scripts
 
-- `scripts/setup_windows.ps1`: prepare `.venv`, install Python dependencies, resolve ffmpeg through system PATH, ffmpeg-binaries-compat, or the default GitHub release fallback, and download the default faster-whisper model.
+- `scripts/setup_windows.ps1`: prepare `.venv`, install Python dependencies, resolve ffmpeg through system PATH or `ffmpeg-binaries-compat`, and download the default faster-whisper model. `-InstallQwen3` installs optional Qwen3 runtime dependencies, and `-DownloadQwen3Models` downloads the required Qwen3 local model files.
+  When `-InstallQwen3` is used, `torch` and `torchaudio` are installed from the PyTorch CUDA wheel index, while the remaining Qwen3 dependencies still use the configured pip mirror.
 - `scripts/setup_windows.bat`: wrapper for the PowerShell setup script.
-- `scripts/run_pipeline.py`: main entry point. Download audio, transcribe it, and generate the summary prompt.
-- `scripts/fetch_audio.py`: fetch Bilibili metadata and audio only; useful for debugging downloads.
+- `scripts/run_pipeline.py`: main entry point. Reuse matching cached subtitle `.srt` files only when they still parse correctly, otherwise best-effort download target-language subtitles; reuse cached audio when available, otherwise best-effort download audio; prefer subtitles when usable, then fall back to STT and generate the summary prompt.
+- `scripts/fetch_audio.py`: fetch Bilibili metadata plus target-language subtitles and audio; it reuses matching cached subtitle `.srt` files only when they still parse correctly, re-fetches subtitles when cached `.srt` files are unusable, reuses cached audio when available, and only prints warnings when subtitle or audio download fails.
 - `scripts/transcribe.py`: transcribe an existing fetched audio manifest or audio file.
 
 ## Outputs
@@ -57,7 +82,8 @@ Important files:
 ```text
 resource/fetch_manifest.json
 resource/metadata.json
-resource/<BVID>.m4a
+resource/<BVID>.<audio-ext>
+resource/subtitle/<BVID>.<lang>.srt
 <BVID>_transcript.json
 <BVID>_transcript.md
 <BVID>_summary_prompt.md
@@ -71,5 +97,9 @@ resource/<BVID>.m4a
 - If setup fails, check the environment setup section in `README.md`.
 - If pip, ffmpeg, or model downloads fail, check mirror variables in `README.md`.
 - If Bilibili download fails, report the network or yt-dlp error and ask for a reachable URL if needed.
-- If STT fails, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
+- If Bilibili requires browser cookies, tell the user to provide a Netscape-format `cookies.txt` file by following the cookie export instructions in `README.md`.
+- If rerunning the same BVID, remember that only cached subtitle `.srt` files matching the current requested language and still parsing correctly are reused directly; other subtitle cache files do not block a fresh subtitle fetch attempt.
+- If STT fails on the default path, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
+- If both subtitles and audio are unavailable, the pipeline should stop with a clear error instead of attempting STT.
+- If STT fails with `--asr-provider qwen3`, verify the machine has available CUDA and that both Qwen3 runtime dependencies and local model files were prepared under `tools/models/qwen3-asr-0.6b/` and `tools/models/qwen3-forcedaligner-0.6b/`.
 - If the problem cannot be solved from local logs and README guidance, report the specific failure to the user.

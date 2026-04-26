@@ -3,14 +3,19 @@ from pathlib import Path
 from typing import Any, Optional
 
 from faster_whisper import BatchedInferencePipeline, WhisperModel
+from asr_qwen3 import has_model_weights, transcribe_with_qwen3
+from transcript_output import write_markdown
 
 from config import (
+    DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_BATCH_SIZE,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
     DEFAULT_TRANSCRIBE_LANGUAGE,
     DEFAULT_WHISPER_MODEL_DIR,
+    QWEN3_ALIGNER_MODEL_DIR,
+    QWEN3_ASR_MODEL_DIR,
     SKILL_ROOT,
 )
 from utils import ensure_dir, path_to_posix, read_json, write_json
@@ -21,14 +26,6 @@ def resolve_path(value: str) -> Path:
     if path.is_absolute():
         return path
     return SKILL_ROOT / path
-
-
-def format_timestamp(seconds: float) -> str:
-    total_seconds = max(0, int(seconds))
-    hours = total_seconds // 3600
-    minutes = (total_seconds % 3600) // 60
-    secs = total_seconds % 60
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def default_model_path() -> str:
@@ -103,36 +100,18 @@ def make_segment(segment: Any, include_words: bool) -> dict[str, Any]:
     return data
 
 
-def write_markdown(path: Path, payload: dict[str, Any]) -> None:
-    ensure_dir(path.parent)
+def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+    if args.asr_provider == "qwen3":
+        if has_model_weights(QWEN3_ASR_MODEL_DIR) and has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
+            try:
+                info_data, segment_list = transcribe_with_qwen3(audio_path, args.language)
+                return info_data, segment_list, "qwen3-asr"
+            except Exception as exc:
+                print(f"Qwen3 ASR failed: {exc}")
+                print("Falling back to faster-whisper.")
+        else:
+            print("Qwen3 local models not found; falling back to faster-whisper.")
 
-    lines = [
-        "## metadata",
-        "",
-        f"title: {payload.get('title') or ''}",
-        f"bvid: {payload.get('bvid') or ''}",
-        f"url: {payload.get('url') or ''}",
-        f"uploader: {payload.get('uploader') or ''}",
-        f"duration: {payload.get('duration_string') or payload.get('duration') or ''}",
-        f"source: {payload.get('source') or ''}",
-        f"language: {payload.get('language') or ''}",
-        "",
-        "## transcript text",
-        "",
-    ]
-
-    for segment in payload["segments"]:
-        start = format_timestamp(segment["start"])
-        end = format_timestamp(segment["end"])
-        text = segment["text"]
-        if text:
-            lines.append(f"[{start} - {end}] {text}")
-            lines.append("")
-
-    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-
-
-def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     model_path = args.model or default_model_path()
     model = WhisperModel(
         model_path,
@@ -148,7 +127,7 @@ def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[s
         language=args.language,
         batch_size=args.batch_size,
         beam_size=args.beam_size,
-        vad_filter=args.vad_filter,
+        vad_filter=True,
         word_timestamps=args.word_timestamps,
     )
 
@@ -163,15 +142,14 @@ def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[s
         "compute_type": args.compute_type,
         "batch_size": args.batch_size,
         "beam_size": args.beam_size,
-        "vad_filter": args.vad_filter,
         "word_timestamps": args.word_timestamps,
     }
-    return info_data, segment_list
+    return info_data, segment_list, "faster-whisper"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Transcribe a fetched Bilibili audio file with faster-whisper."
+        description="Transcribe a fetched Bilibili audio file."
     )
     parser.add_argument(
         "input",
@@ -181,6 +159,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, help="Path to resource/fetch_manifest.json.")
     parser.add_argument("--audio", type=Path, help="Path to an audio file.")
     parser.add_argument("--output-dir", type=Path, help="Result directory for transcript outputs.")
+    parser.add_argument(
+        "--asr-provider",
+        choices=("whisper", "qwen3"),
+        default=DEFAULT_ASR_PROVIDER,
+        help="ASR provider. Use qwen3 only when CUDA is available and Qwen3 dependencies/models were installed explicitly.",
+    )
     parser.add_argument("--model", help="Model name or local faster-whisper model directory.")
     parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
@@ -189,8 +173,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
     parser.add_argument("--cpu-threads", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
-    parser.add_argument("--vad-filter", dest="vad_filter", action="store_true", default=True)
-    parser.add_argument("--no-vad-filter", dest="vad_filter", action="store_false")
     parser.add_argument("--word-timestamps", action="store_true")
     return parser.parse_args()
 
@@ -242,14 +224,14 @@ def run_transcribe(args: argparse.Namespace) -> dict[str, Any]:
     json_path = output_dir / f"{output_stem}.json"
     md_path = output_dir / f"{output_stem}.md"
 
-    info_data, segments = transcribe_audio(audio_path, args)
+    info_data, segments, source = transcribe_audio(audio_path, args)
     payload = {
         "bvid": video_id,
         "title": manifest.get("title"),
         "url": manifest.get("url"),
         "uploader": metadata.get("uploader"),
         "duration_string": metadata.get("duration_string"),
-        "source": "faster-whisper",
+        "source": source,
         "audio_path": path_to_posix(audio_path),
         **info_data,
         "segments": segments,

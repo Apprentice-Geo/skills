@@ -1,0 +1,7 @@
+qwen-asr
+transformers
+accelerate
+huggingface_hub
+numpy
+soundfile
+librosa

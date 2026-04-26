@@ -1,22 +1,21 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipDownloads,
-    [switch]$SkipPythonInstall,
-    [switch]$SkipModelDownload,
-    [switch]$SkipVerify,
+    [switch]$InstallQwen3,
+    [switch]$DownloadQwen3Models,
     [string]$PythonCommand = "",
     [string]$PipIndexUrl = "",
-    [string]$HfEndpoint = "",
-    [string]$WhisperModelRepo = "Systran/faster-whisper-small",
-    [string]$WhisperModelDirName = "faster-whisper-small"
+    [string]$HfEndpoint = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$DefaultFfmpegUrl = "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
 $DefaultPipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple"
 $DefaultHfEndpoint = "https://hf-mirror.com"
+$WhisperModelRepo = "Systran/faster-whisper-small"
+$Qwen3AsrModelRepo = "Qwen/Qwen3-ASR-0.6B"
+$Qwen3AlignerModelRepo = "Qwen/Qwen3-ForcedAligner-0.6B"
+$Qwen3TorchIndexUrl = "https://download.pytorch.org/whl/cu126"
 
 function Write-Step {
     param([string]$Message)
@@ -70,64 +69,6 @@ function Invoke-Python {
     }
 }
 
-function Invoke-DownloadFile {
-    param(
-        [string]$Url,
-        [string]$Destination
-    )
-
-    Ensure-Directory (Split-Path -Parent $Destination)
-
-    Write-Host "Downloading: $Url"
-    Write-Host "To: $Destination"
-
-    $tempPath = "$Destination.download"
-    if (Test-Path -LiteralPath $tempPath) {
-        Remove-Item -LiteralPath $tempPath -Force
-    }
-
-    try {
-        Invoke-WebRequest -Uri $Url -OutFile $tempPath -UseBasicParsing
-        Move-Item -LiteralPath $tempPath -Destination $Destination -Force
-    }
-    catch {
-        if (Test-Path -LiteralPath $tempPath) {
-            Remove-Item -LiteralPath $tempPath -Force
-        }
-        throw
-    }
-}
-
-function Expand-FfmpegArchive {
-    param(
-        [string]$ArchivePath,
-        [string]$InstallDir
-    )
-
-    $extractDir = Join-Path $InstallDir "_ffmpeg_extract"
-    if (Test-Path -LiteralPath $extractDir) {
-        Remove-Item -LiteralPath $extractDir -Recurse -Force
-    }
-    Ensure-Directory $extractDir
-
-    Expand-Archive -LiteralPath $ArchivePath -DestinationPath $extractDir -Force
-
-    $ffmpegExe = Get-ChildItem -Path $extractDir -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-    if (-not $ffmpegExe) {
-        throw "ffmpeg.exe was not found in archive: $ArchivePath"
-    }
-
-    $ffmpegRoot = Split-Path -Parent (Split-Path -Parent $ffmpegExe.FullName)
-    $targetDir = Join-Path $InstallDir "ffmpeg"
-
-    if (Test-Path -LiteralPath $targetDir) {
-        Remove-Item -LiteralPath $targetDir -Recurse -Force
-    }
-
-    Move-Item -LiteralPath $ffmpegRoot -Destination $targetDir
-    Remove-Item -LiteralPath $extractDir -Recurse -Force
-}
-
 function Test-CommandVersion {
     param(
         [string]$ExePath,
@@ -167,19 +108,32 @@ function Resolve-PythonPackageFfmpeg {
     return @([string]$result[0], [string]$result[1])
 }
 
+function Test-ModelWeights {
+    param(
+        [string]$ModelDir,
+        [string[]]$WeightFiles
+    )
+
+    foreach ($WeightFile in $WeightFiles) {
+        if (Test-Path -LiteralPath (Join-Path $ModelDir $WeightFile)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 $SkillRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VenvDir = Join-Path $SkillRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $RequirementsPath = Join-Path $SkillRoot "requirements.txt"
+$Qwen3RequirementsPath = Join-Path $SkillRoot "requirements-qwen3.txt"
 $ToolsDir = Join-Path $SkillRoot "tools"
-$BinDir = Join-Path $ToolsDir "bin"
-$CacheDir = Join-Path $ToolsDir "cache"
 $ModelsDir = Join-Path $ToolsDir "models"
 $ResultsDir = Join-Path $SkillRoot "results"
-$WhisperModelDir = Join-Path $ModelsDir $WhisperModelDirName
-$FfmpegDir = Join-Path $BinDir "ffmpeg"
-$FfmpegExe = Join-Path $FfmpegDir "bin\ffmpeg.exe"
-$FfprobeExe = Join-Path $FfmpegDir "bin\ffprobe.exe"
+$WhisperModelDir = Join-Path $ModelsDir "faster-whisper-small"
+$Qwen3AsrModelDir = Join-Path $ModelsDir "qwen3-asr-0.6b"
+$Qwen3AlignerModelDir = Join-Path $ModelsDir "qwen3-forcedaligner-0.6b"
 $ResolvedFfmpegExe = ""
 $ResolvedFfprobeExe = ""
 
@@ -202,8 +156,6 @@ Write-Host "Skill root: $SkillRoot"
 Write-Host "Using HF endpoint: $env:HF_ENDPOINT"
 
 Write-Step "Create local directories"
-Ensure-Directory $BinDir
-Ensure-Directory $CacheDir
 Ensure-Directory $ModelsDir
 Ensure-Directory $ResultsDir
 
@@ -217,26 +169,56 @@ else {
     Write-Host "Virtual environment already exists: $VenvDir"
 }
 
-if (-not $SkipPythonInstall) {
-    Write-Step "Install Python dependencies into .venv"
-    & $VenvPython -m pip install --upgrade pip
+Write-Step "Install Python dependencies into .venv"
+& $VenvPython -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to upgrade pip."
+}
+
+$pipArgs = @("install", "-r", $RequirementsPath)
+if ($PipIndexUrl) {
+    $pipArgs = @("install", "-i", $PipIndexUrl, "-r", $RequirementsPath)
+    Write-Host "Using pip index: $PipIndexUrl"
+}
+
+& $VenvPython -m pip @pipArgs
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to install requirements."
+}
+
+if ($InstallQwen3) {
+    $torchArgs = @("install", "--index-url", $Qwen3TorchIndexUrl, "torch", "torchaudio")
+    Write-Host "Installing torch and torchaudio from PyTorch CUDA index: $Qwen3TorchIndexUrl"
+    & $VenvPython -m pip @torchArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to upgrade pip."
+        throw "Failed to install CUDA torch/torchaudio from: $Qwen3TorchIndexUrl"
     }
 
-    $pipArgs = @("install", "-r", $RequirementsPath)
+    if (-not (Test-Path -LiteralPath $Qwen3RequirementsPath)) {
+        throw "Qwen3 requirements file not found: $Qwen3RequirementsPath"
+    }
+
+    $qwenPipArgs = @("install", "-r", $Qwen3RequirementsPath)
     if ($PipIndexUrl) {
-        $pipArgs = @("install", "-i", $PipIndexUrl, "-r", $RequirementsPath)
-        Write-Host "Using pip index: $PipIndexUrl"
+        $qwenPipArgs = @("install", "-i", $PipIndexUrl, "-r", $Qwen3RequirementsPath)
     }
 
-    & $VenvPython -m pip @pipArgs
+    & $VenvPython -m pip @qwenPipArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install requirements."
+        throw "Failed to install Qwen3 requirements."
     }
 }
-else {
-    Write-Host "Skipping Python dependency installation."
+
+if ($DownloadQwen3Models -and -not $InstallQwen3) {
+    $hubArgs = @("install", "huggingface_hub")
+    if ($PipIndexUrl) {
+        $hubArgs = @("install", "-i", $PipIndexUrl, "huggingface_hub")
+    }
+
+    & $VenvPython -m pip @hubArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to install huggingface_hub for Qwen3 model download."
+    }
 }
 
 Write-Step "Resolve ffmpeg"
@@ -257,75 +239,99 @@ else {
         Write-Host "Using ffmpeg-binaries-compat ffmpeg: $ResolvedFfmpegExe"
         Write-Host "Using ffmpeg-binaries-compat ffprobe: $ResolvedFfprobeExe"
     }
-    elseif ((Test-Path -LiteralPath $FfmpegExe) -and (Test-Path -LiteralPath $FfprobeExe)) {
-        $ResolvedFfmpegExe = $FfmpegExe
-        $ResolvedFfprobeExe = $FfprobeExe
-        Write-Host "Using cached portable ffmpeg: $FfmpegDir"
-    }
-    elseif (-not $SkipDownloads) {
-        Write-Host "System ffmpeg/ffprobe and ffmpeg-binaries-compat were not found. Installing portable ffmpeg from the default GitHub release."
-        $ffmpegZip = Join-Path $CacheDir "ffmpeg-win64.zip"
-        Invoke-DownloadFile -Url $DefaultFfmpegUrl -Destination $ffmpegZip
-        Expand-FfmpegArchive -ArchivePath $ffmpegZip -InstallDir $BinDir
-        $ResolvedFfmpegExe = $FfmpegExe
-        $ResolvedFfprobeExe = $FfprobeExe
-    }
     else {
-        Write-Warning "ffmpeg/ffprobe not found and downloads are skipped."
+        Write-Warning "ffmpeg/ffprobe not found. Install them system-wide or ensure ffmpeg-binaries-compat is available in .venv."
     }
 }
 
-if (-not $SkipModelDownload) {
-    Write-Step "Install default faster-whisper model"
-    if (Test-Path -LiteralPath (Join-Path $WhisperModelDir "model.bin")) {
-        Write-Host "Model already exists: $WhisperModelDir"
+Write-Step "Install default faster-whisper model"
+if (Test-ModelWeights $WhisperModelDir @("model.bin")) {
+    Write-Host "Model already exists: $WhisperModelDir"
+}
+else {
+    & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$WhisperModelRepo', local_dir=r'$WhisperModelDir')"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to download faster-whisper model: $WhisperModelRepo"
+    }
+}
+
+if ($DownloadQwen3Models) {
+    Write-Step "Install optional Qwen3 ASR models"
+
+    if (Test-ModelWeights $Qwen3AsrModelDir @("model.safetensors")) {
+        Write-Host "Qwen3 ASR model already exists: $Qwen3AsrModelDir"
     }
     else {
-        & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$WhisperModelRepo', local_dir=r'$WhisperModelDir')"
+        & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$Qwen3AsrModelRepo', local_dir=r'$Qwen3AsrModelDir')"
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to download faster-whisper model: $WhisperModelRepo"
+            throw "Failed to download Qwen3 ASR model: $Qwen3AsrModelRepo"
+        }
+    }
+
+    if (Test-ModelWeights $Qwen3AlignerModelDir @("model.safetensors")) {
+        Write-Host "Qwen3 aligner model already exists: $Qwen3AlignerModelDir"
+    }
+    else {
+        & $VenvPython -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='$Qwen3AlignerModelRepo', local_dir=r'$Qwen3AlignerModelDir')"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download Qwen3 aligner model: $Qwen3AlignerModelRepo"
         }
     }
 }
-else {
-    Write-Host "Skipping faster-whisper model download."
+
+Write-Step "Verify installation"
+& $VenvPython -m yt_dlp --version
+if ($LASTEXITCODE -ne 0) {
+    throw "yt-dlp check failed."
 }
 
-if (-not $SkipVerify) {
-    Write-Step "Verify installation"
-    & $VenvPython -m yt_dlp --version
+& $VenvPython -c "import faster_whisper; print('faster-whisper ok')"
+if ($LASTEXITCODE -ne 0) {
+    throw "faster-whisper import check failed."
+}
+
+if ($InstallQwen3) {
+    & $VenvPython -c "import qwen_asr; import torch; print('qwen3-asr ok'); print(torch.__version__); print(torch.cuda.is_available())"
     if ($LASTEXITCODE -ne 0) {
-        throw "yt-dlp check failed."
-    }
-
-    & $VenvPython -c "import faster_whisper; print('faster-whisper ok')"
-    if ($LASTEXITCODE -ne 0) {
-        throw "faster-whisper import check failed."
-    }
-
-    if (Test-Path -LiteralPath (Join-Path $WhisperModelDir "model.bin")) {
-        Write-Host "faster-whisper model ok: $WhisperModelDir"
-    }
-    else {
-        throw "faster-whisper model is missing: $WhisperModelDir"
-    }
-
-    if ($ResolvedFfmpegExe) {
-        Test-CommandVersion -ExePath $ResolvedFfmpegExe -Arguments @("-version")
-    }
-    else {
-        throw "ffmpeg is missing. Install it system-wide or re-run without -SkipDownloads."
-    }
-
-    if ($ResolvedFfprobeExe) {
-        Test-CommandVersion -ExePath $ResolvedFfprobeExe -Arguments @("-version")
-    }
-    else {
-        throw "ffprobe is missing. Install it system-wide or re-run without -SkipDownloads."
+        throw "Qwen3 import check failed."
     }
 }
+
+if (Test-ModelWeights $WhisperModelDir @("model.bin")) {
+    Write-Host "faster-whisper model ok: $WhisperModelDir"
+}
 else {
-    Write-Host "Skipping installation verification."
+    throw "faster-whisper model is missing: $WhisperModelDir"
+}
+
+if ($DownloadQwen3Models) {
+    if (Test-ModelWeights $Qwen3AsrModelDir @("model.safetensors")) {
+        Write-Host "Qwen3 ASR model ok: $Qwen3AsrModelDir"
+    }
+    else {
+        throw "Qwen3 ASR model is missing: $Qwen3AsrModelDir"
+    }
+
+    if (Test-ModelWeights $Qwen3AlignerModelDir @("model.safetensors")) {
+        Write-Host "Qwen3 aligner model ok: $Qwen3AlignerModelDir"
+    }
+    else {
+        throw "Qwen3 aligner model is missing: $Qwen3AlignerModelDir"
+    }
+}
+
+if ($ResolvedFfmpegExe) {
+    Test-CommandVersion -ExePath $ResolvedFfmpegExe -Arguments @("-version")
+}
+else {
+    throw "ffmpeg is missing. Install it system-wide or ensure ffmpeg-binaries-compat is available in .venv."
+}
+
+if ($ResolvedFfprobeExe) {
+    Test-CommandVersion -ExePath $ResolvedFfprobeExe -Arguments @("-version")
+}
+else {
+    throw "ffprobe is missing. Install it system-wide or ensure ffmpeg-binaries-compat is available in .venv."
 }
 
 Write-Host ""
