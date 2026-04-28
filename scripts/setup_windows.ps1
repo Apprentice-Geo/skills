@@ -16,6 +16,8 @@ $WhisperModelRepo = "Systran/faster-whisper-small"
 $Qwen3AsrModelRepo = "Qwen/Qwen3-ASR-0.6B"
 $Qwen3AlignerModelRepo = "Qwen/Qwen3-ForcedAligner-0.6B"
 $Qwen3TorchIndexUrl = "https://download.pytorch.org/whl/cu126"
+$RecommendedPythonVersion = "3.12"
+$MinimumPythonVersion = [version]"3.12.0"
 
 function Write-Step {
     param([string]$Message)
@@ -28,27 +30,6 @@ function Ensure-Directory {
     if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Path $Path | Out-Null
     }
-}
-
-function Resolve-Python {
-    param([string]$PreferredCommand)
-
-    if ($PreferredCommand) {
-        $cmd = Get-Command $PreferredCommand -ErrorAction Stop
-        return $cmd.Source
-    }
-
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
-        return $python.Source
-    }
-
-    $py = Get-Command py -ErrorAction SilentlyContinue
-    if ($py) {
-        return $py.Source
-    }
-
-    throw "Python 3 was not found. Install Python 3 first, or pass -PythonCommand <path>."
 }
 
 function Invoke-Python {
@@ -67,6 +48,147 @@ function Invoke-Python {
     if ($LASTEXITCODE -ne 0) {
         throw "Python command failed: $PythonExe $($Arguments -join ' ')"
     }
+}
+
+function Get-PythonVersion {
+    param([string]$PythonExe)
+
+    if (-not (Test-Path -LiteralPath $PythonExe) -and -not (Get-Command $PythonExe -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    if ((Split-Path -Leaf $PythonExe) -ieq "py.exe") {
+        $versionText = & $PythonExe -3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
+    }
+    else {
+        $versionText = & $PythonExe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
+    }
+
+    if ($LASTEXITCODE -ne 0 -or -not $versionText) {
+        return $null
+    }
+
+    return [version]([string]@($versionText)[0])
+}
+
+function Assert-CompatiblePython {
+    param(
+        [string]$PythonExe,
+        [string]$Context
+    )
+
+    $version = Get-PythonVersion $PythonExe
+    if (-not $version) {
+        throw "Unable to determine Python version for ${Context}: $PythonExe"
+    }
+
+    if ($version -lt $MinimumPythonVersion) {
+        throw "${Context} uses Python $version, but this skill requires Python >= $MinimumPythonVersion."
+    }
+
+    Write-Host "${Context} Python version: $version"
+}
+
+function Find-Uv {
+    $uv = Get-Command uv -ErrorAction SilentlyContinue
+    if ($uv) {
+        return $uv.Source
+    }
+
+    return ""
+}
+
+function Resolve-CompatibleSystemPython {
+    param([string]$PreferredCommand)
+
+    $candidateCommands = @()
+    if ($PreferredCommand) {
+        $candidateCommands += $PreferredCommand
+    }
+    else {
+        $candidateCommands += "python"
+        $candidateCommands += "py"
+    }
+
+    foreach ($candidateCommand in $candidateCommands) {
+        $command = Get-Command $candidateCommand -ErrorAction SilentlyContinue
+        if (-not $command) {
+            continue
+        }
+
+        $version = Get-PythonVersion $command.Source
+        if ($version -and $version -ge $MinimumPythonVersion) {
+            Write-Host "Using system Python: $($command.Source)"
+            Write-Host "System Python version: $version"
+            return $command.Source
+        }
+
+        if ($version) {
+            Write-Host "Skipping Python $version at $($command.Source); requires >= $MinimumPythonVersion."
+        }
+    }
+
+    if ($PreferredCommand) {
+        throw "The specified -PythonCommand is missing or uses Python < $MinimumPythonVersion."
+    }
+
+    throw @"
+No compatible Python runtime was found.
+
+This skill requires Python >= $MinimumPythonVersion.
+Recommended: install uv, then rerun setup.
+
+uv official site:
+  https://docs.astral.sh/uv/
+
+After installing uv:
+  .\scripts\setup_windows.ps1
+"@
+}
+
+function New-SkillVirtualEnvironment {
+    param(
+        [string]$VenvDir,
+        [string]$VenvPython,
+        [string]$PreferredPythonCommand
+    )
+
+    if (Test-Path -LiteralPath $VenvPython) {
+        Write-Host "Virtual environment already exists: $VenvDir"
+        Assert-CompatiblePython -PythonExe $VenvPython -Context "Existing .venv"
+        return
+    }
+
+    if ($PreferredPythonCommand) {
+        $python = Resolve-CompatibleSystemPython $PreferredPythonCommand
+        Invoke-Python $python @("-m", "venv", $VenvDir)
+        Assert-CompatiblePython -PythonExe $VenvPython -Context "Created .venv"
+        return
+    }
+
+    $uv = Find-Uv
+    if ($uv) {
+        Write-Host "Using uv: $uv"
+        Write-Host "Preparing Python $RecommendedPythonVersion with uv"
+        & $uv python install $RecommendedPythonVersion
+        if ($LASTEXITCODE -ne 0) {
+            throw "uv failed to install Python $RecommendedPythonVersion."
+        }
+
+        Write-Host "Creating .venv with Python $RecommendedPythonVersion"
+        & $uv venv --seed --python $RecommendedPythonVersion $VenvDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "uv failed to create virtual environment: $VenvDir"
+        }
+
+        Assert-CompatiblePython -PythonExe $VenvPython -Context "Created .venv"
+        return
+    }
+
+    Write-Host "uv was not found; falling back to system Python >= $MinimumPythonVersion."
+    $systemPython = Resolve-CompatibleSystemPython ""
+    Invoke-Python $systemPython @("-m", "venv", $VenvDir)
+    Assert-CompatiblePython -PythonExe $VenvPython -Context "Created .venv"
 }
 
 function Test-CommandVersion {
@@ -160,14 +282,7 @@ Ensure-Directory $ModelsDir
 Ensure-Directory $ResultsDir
 
 Write-Step "Create Python virtual environment"
-if (-not (Test-Path -LiteralPath $VenvPython)) {
-    $SystemPython = Resolve-Python $PythonCommand
-    Write-Host "Using Python: $SystemPython"
-    Invoke-Python $SystemPython @("-m", "venv", $VenvDir)
-}
-else {
-    Write-Host "Virtual environment already exists: $VenvDir"
-}
+New-SkillVirtualEnvironment -VenvDir $VenvDir -VenvPython $VenvPython -PreferredPythonCommand $PythonCommand
 
 Write-Step "Install Python dependencies into .venv"
 & $VenvPython -m pip install --upgrade pip

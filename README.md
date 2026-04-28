@@ -1,6 +1,6 @@
 # bili-audiosummary
 
-该项目是一个 Agent Skill，遵循 [Agent Skills](https://agentskills.io/home) 开放标准。目标是优先复用符合目标语言的 B 站字幕，在字幕缺失或无效时回退到音频 STT，并基于 transcript 生成视频内容总结。
+该项目是一个 Agent Skill，遵循 [Agent Skills](https://agentskills.io/home) 开放标准。可根据 B 站字幕，或者音频转写结果生成视频内容总结。
 
 已实现：输入 B 站视频 URL，解析 BVID，下载目标语言字幕和最低可用音频流；若存在符合目标语言且可用的 `.srt` 字幕，则直接转换为统一 transcript；否则默认使用 faster-whisper 执行 STT，在本机有可用 CUDA 时也可选用 Qwen3-ASR，并拼接 instructions、总结模板和转写文本生成 summary prompt。
 
@@ -12,7 +12,7 @@ bili-audiosummary/
 ├─ README.md
 ├─ requirements.txt
 ├─ .gitignore
-├─ .venv/                         # setup_windows.ps1 创建，本地虚拟环境
+├─ .venv/                         # setup_windows.ps1 创建，本地 Python >= 3.12 虚拟环境
 ├─ tools/
 │  ├─ bin/
 │  ├─ cache/                      # 预留本地缓存目录
@@ -71,27 +71,26 @@ Windows 默认使用：
 
 脚本会：
 
-- 在 Skill 根目录创建 `.venv/`
-- 将 Python 依赖安装到 `.venv/`
+- 已有 `.venv/` 且其 Python 版本大于等于 3.12 时复用
+- 否则优先使用 `uv` 创建 Python 3.12 虚拟环境 `.venv/`
+- 如果系统没有 `uv`，自动尝试使用本机 Python 3.12 或更高版本创建虚拟环境
+- 默认升级 pip，并将相关 Python 依赖安装到 `.venv/`
 - 优先检测系统 `ffmpeg/ffprobe`
 - 系统缺失时使用 `ffmpeg-binaries-compat` 随 Python 依赖安装的二进制
 - 下载默认模型 `Systran/faster-whisper-small` 到 `tools/models/faster-whisper-small/`
 
+推荐安装 [`uv`](https://docs.astral.sh/uv/) 以获得更稳定使用体验。
+
+
 默认 setup 只准备 faster-whisper。Qwen3-ASR 是有可用 CUDA 时的可选项，需要显式执行：
 
 ```powershell
-.\scripts\setup_windows.ps1 -InstallQwen3
-```
-
-如需实际使用 Qwen3-ASR，还必须准备本地 Qwen3 模型：
-
-```powershell
-.\scripts\setup_windows.ps1 -DownloadQwen3Models
+.\scripts\setup_windows.ps1 -InstallQwen3 -DownloadQwen3Models
 ```
 
 Qwen3 的可选依赖安装仍然继续兼容 `PIP_INDEX_URL` 和 `HF_ENDPOINT` 的国内镜像优化。其中 `torch` 与 `torchaudio` 会在启用 `-InstallQwen3` 时单独走 PyTorch 官方 CUDA wheel 源，避免从普通 PyPI 安装成 CPU 版；Qwen3 模型下载继续通过 `huggingface_hub` 完成。当前设计要求本地模型已存在后才能使用 Qwen3 运行转写。
 
-setup 脚本会默认使用较稳定的 [PyPI 清华源](https://pypi.tuna.tsinghua.edu.cn/simple)与 [Hugging Face 镜像站](https://hf-mirror.com)。
+setup 脚本会默认使用 [PyPI 清华源](https://pypi.tuna.tsinghua.edu.cn/simple)与 [Hugging Face 镜像站](https://hf-mirror.com)。
 
 需要使用原生源可在运行前设置：
 
@@ -113,7 +112,7 @@ ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries
 - Edge：安装 `Cookie-Editor` 扩展，在已登录 B 站的情况下选择导出格式为 `Netscape`，扩展会将内容复制到剪贴板。随后新建一个 `cookies.txt` 文件，将内容粘贴并保存。
   扩展地址：<https://microsoftedge.microsoft.com/addons/detail/cookieeditor/>
 
-准备好 `cookies.txt` 后，可在命令中加入：
+将导出的 `cookies.txt` 复制到 SKILL 根目录，在命令中使用 cookies：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt

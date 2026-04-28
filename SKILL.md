@@ -1,7 +1,9 @@
 ---
 name: bili-audiosummary
 description: Use this skill when the user provides a Bilibili/B站/BV video URL and wants an audio-based summary, notes, key points, timestamps, or asks what the video says, e.g. “总结这个B站视频”, “这个BV讲了什么”, “提炼要点”, or “生成笔记”. Do not use it for visual analysis, PV/music/dance videos, editing, comments, covers, or original-video downloads.
-compatibility: Windows with PowerShell and Python 3. Requires network access to Bilibili, PyPI, GitHub, and Hugging Face or configured mirrors. 
+compatibility: Windows with PowerShell. Recommended uv for Python 3.12 environment creation; otherwise local Python >= 3.12 is required. Requires network access to Bilibili, PyPI, GitHub, and Hugging Face or configured mirrors.
+metadata:
+  Github: https://github.com/Apprentice-Geo/bili-audiosummary
 ---
 
 # Bilibili Audio Summary
@@ -18,6 +20,12 @@ Do not use this skill as the main solution for visual-first videos such as PVs, 
 
 ```powershell
 .\scripts\setup_windows.ps1
+```
+
+The setup script prefers `uv` and uses it to create a Python 3.12 `.venv`. If `uv` is not installed, it falls back to a local Python >= 3.12. If neither is available, tell the user to install `uv` from the official documentation and rerun setup:
+
+```text
+https://docs.astral.sh/uv/
 ```
 
 If the machine has an available CUDA GPU and you want to try Qwen3-ASR for potentially better Chinese ASR, install its optional runtime dependencies first:
@@ -62,7 +70,7 @@ If the video should be processed as English content, set the target language exp
 
 ## Scripts
 
-- `scripts/setup_windows.ps1`: prepare `.venv`, install Python dependencies, resolve ffmpeg through system PATH or `ffmpeg-binaries-compat`, and download the default faster-whisper model. `-InstallQwen3` installs optional Qwen3 runtime dependencies, and `-DownloadQwen3Models` downloads the required Qwen3 local model files.
+- `scripts/setup_windows.ps1`: prepare a Python >= 3.12 `.venv`, preferring `uv` with Python 3.12 and falling back to local Python >= 3.12 when `uv` is unavailable; install Python dependencies, resolve ffmpeg through system PATH or `ffmpeg-binaries-compat`, and download the default faster-whisper model. `-InstallQwen3` installs optional Qwen3 runtime dependencies, and `-DownloadQwen3Models` downloads the required Qwen3 local model files.
   When `-InstallQwen3` is used, `torch` and `torchaudio` are installed from the PyTorch CUDA wheel index, while the remaining Qwen3 dependencies still use the configured pip mirror.
 - `scripts/setup_windows.bat`: wrapper for the PowerShell setup script.
 - `scripts/run_pipeline.py`: main entry point. Reuse matching cached subtitle `.srt` files only when they still parse correctly, otherwise best-effort download target-language subtitles; reuse cached audio when available, otherwise best-effort download audio; prefer subtitles when usable, then fall back to STT and generate the summary prompt.
@@ -94,7 +102,7 @@ resource/subtitle/<BVID>.<lang>.srt
 
 ## Troubleshooting
 
-- If setup fails, check the environment setup section in `README.md`.
+- If setup fails because no compatible Python is available, tell the user to install `uv` from `https://docs.astral.sh/uv/` and rerun setup. For other setup failures, check the environment setup section in `README.md`.
 - If pip, ffmpeg, or model downloads fail, check mirror variables in `README.md`.
 - If Bilibili download fails, report the network or yt-dlp error and ask for a reachable URL if needed.
 - If Bilibili requires browser cookies, tell the user to provide a Netscape-format `cookies.txt` file by following the cookie export instructions in `README.md`.
