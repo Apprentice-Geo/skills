@@ -46,7 +46,9 @@ Before actually using Qwen3-ASR, prepare the Qwen3 local model files:
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>"
 ```
 
-With available CUDA and the local Qwen3 models already prepared, you can switch STT to the optional Qwen3-ASR path:
+Tell the user that the default STT provider is faster-whisper. Also mention that Qwen3-ASR is available as an optional preferred path for machines with CUDA after `-InstallQwen3` and `-DownloadQwen3Models` have been run.
+
+With available CUDA and the local Qwen3 models already prepared, you can ask the pipeline to try Qwen3-ASR first. If Qwen3-ASR is unavailable or fails, the code falls back to faster-whisper:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --asr-provider qwen3
@@ -105,9 +107,9 @@ resource/subtitle/<BVID>.<lang>.srt
 - If setup fails because no compatible Python is available, tell the user to install `uv` from `https://docs.astral.sh/uv/` and rerun setup. For other setup failures, check the environment setup section in `README.md`.
 - If pip, ffmpeg, or model downloads fail, check mirror variables in `README.md`.
 - If Bilibili download fails, report the network or yt-dlp error and ask for a reachable URL if needed.
-- If Bilibili requires browser cookies, tell the user to provide a Netscape-format `cookies.txt` file by following the cookie export instructions in `README.md`.
+- If Bilibili returns `HTTP 412`, stop immediately. Do not query other sources or generate a summary. Tell the user to provide a Netscape-format `cookies.txt` file by following the cookie export instructions in `README.md`, then rerun with `--cookies .\cookies.txt`.
 - If rerunning the same BVID, remember that only cached subtitle `.srt` files matching the current requested language and still parsing correctly are reused directly; other subtitle cache files do not block a fresh subtitle fetch attempt.
 - If STT fails on the default path, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
 - If both subtitles and audio are unavailable, the pipeline should stop with a clear error instead of attempting STT.
-- If STT fails with `--asr-provider qwen3`, verify the machine has available CUDA and that both Qwen3 runtime dependencies and local model files were prepared under `tools/models/qwen3-asr-0.6b/` and `tools/models/qwen3-forcedaligner-0.6b/`.
+- If `--asr-provider qwen3` was requested, check the transcript JSON `source` field to confirm whether the run actually used `qwen3-asr` or fell back to `faster-whisper`. If Qwen3 did not run, verify the machine has available CUDA and that both Qwen3 runtime dependencies and local model files were prepared under `tools/models/qwen3-asr-0.6b/` and `tools/models/qwen3-forcedaligner-0.6b/`.
 - If the problem cannot be solved from local logs and README guidance, report the specific failure to the user.

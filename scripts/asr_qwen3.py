@@ -44,26 +44,21 @@ class SegmentDraft:
         return max(0.0, self.end - self.start)
 
 
-def _is_cjk(char: str) -> bool:
-    code = ord(char)
-    return (
-        0x3400 <= code <= 0x4DBF
-        or 0x4E00 <= code <= 0x9FFF
-        or 0xF900 <= code <= 0xFAFF
-    )
-
-
-def is_alignable_char(char: str) -> bool:
-    if _is_cjk(char):
-        return True
-    if char.isascii() and char.isalnum():
-        return True
-    category = unicodedata.category(char)
-    return category.startswith("L") or category == "Nd"
+def consumes_timestamp(char: str) -> bool:
+    if char.isspace():
+        return False
+    return not unicodedata.category(char).startswith("P")
 
 
 def _to_float(value: Any) -> float:
     return round(float(value), 3)
+
+
+def consume_alignment_item(alignment_items: list[AlignmentItem], item_index: int) -> tuple[AlignmentItem | None, int]:
+    if item_index >= len(alignment_items):
+        return None, item_index
+
+    return alignment_items[item_index], item_index + 1
 
 
 def has_model_weights(model_dir: Path) -> bool:
@@ -124,7 +119,11 @@ def _merge_segments(segments: list[SegmentDraft]) -> list[SegmentDraft]:
             return merged
 
 
-def build_sentence_segments(text: str, alignment_items: list[AlignmentItem]) -> list[dict[str, Any]]:
+def build_sentence_segments(
+    text: str,
+    alignment_items: list[AlignmentItem],
+    duration: float | None = None,
+) -> list[dict[str, Any]]:
     segments: list[SegmentDraft] = []
     item_index = 0
     current_chars: list[str] = []
@@ -149,16 +148,44 @@ def build_sentence_segments(text: str, alignment_items: list[AlignmentItem]) -> 
         current_start = None
         current_end = None
 
-    for char in text:
-        current_chars.append(char)
-        if is_alignable_char(char):
-            if item_index >= len(alignment_items):
-                raise ValueError("Qwen3 time_stamps items are fewer than alignable characters in transcription text.")
-            item = alignment_items[item_index]
-            item_index += 1
+    def append_remaining_segment(remaining_text: str) -> None:
+        nonlocal current_start, current_end
+
+        tail_text = remaining_text.strip()
+        if not tail_text:
+            return
+
+        start = current_end
+        if start is None and alignment_items:
+            start = alignment_items[-1].end
+        if start is None:
+            start = 0.0
+
+        end = duration if duration is not None else start
+        if end < start:
+            end = start
+
+        segments.append(
+            SegmentDraft(
+                text=tail_text,
+                start=_to_float(start),
+                end=_to_float(end),
+                strong_end=tail_text[-1] in STRONG_PUNCTUATION,
+            )
+        )
+
+    for index, char in enumerate(text):
+        if consumes_timestamp(char):
+            item, item_index = consume_alignment_item(alignment_items, item_index)
+            if item is None:
+                flush_segment(strong_end=False)
+                append_remaining_segment(text[index:])
+                break
             if current_start is None:
                 current_start = item.start
             current_end = item.end
+
+        current_chars.append(char)
 
         if char in STRONG_PUNCTUATION:
             flush_segment(strong_end=True)
@@ -168,7 +195,9 @@ def build_sentence_segments(text: str, alignment_items: list[AlignmentItem]) -> 
             if current_end - current_start >= MIN_SEGMENT_SECONDS:
                 flush_segment(strong_end=False)
 
-    flush_segment(strong_end=False)
+    else:
+        flush_segment(strong_end=False)
+
     normalized = _merge_segments(segments)
     return [
         {
@@ -181,7 +210,7 @@ def build_sentence_segments(text: str, alignment_items: list[AlignmentItem]) -> 
     ]
 
 
-def transcribe_with_qwen3(audio_path: Path, language: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     try:
         import torch
         from qwen_asr import Qwen3ASRModel
@@ -214,7 +243,7 @@ def transcribe_with_qwen3(audio_path: Path, language: str) -> tuple[dict[str, An
     )
     result = asr.transcribe(path_to_posix(audio_path), return_time_stamps=True)[0]
     alignment_items = normalize_alignment_items(list(getattr(result.time_stamps, "items", [])))
-    segments = build_sentence_segments(str(result.text or "").strip(), alignment_items)
+    segments = build_sentence_segments(str(result.text or "").strip(), alignment_items, duration)
     info = {
         "language": language,
         "model": asr_model,

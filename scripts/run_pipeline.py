@@ -172,6 +172,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
+    print(
+        "ASR provider: faster-whisper by default. Qwen3-ASR is available with --asr-provider qwen3 "
+        "after CUDA, optional dependencies, and local Qwen3 models are prepared."
+    )
     fetch_result = fetch_audio.run_fetch(make_fetch_args(args))
     manifest_path = fetch_result["manifest_path"]
     result_dir = fetch_result["paths"]["result"]
@@ -252,7 +256,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    run_pipeline(args)
+    try:
+        run_pipeline(args)
+    except fetch_audio.CookieRequiredError as exc:
+        print(f"Error: {exc}")
+        return 2
     return 0
 
 

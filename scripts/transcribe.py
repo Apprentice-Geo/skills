@@ -21,6 +21,9 @@ from config import (
 from utils import ensure_dir, path_to_posix, read_json, write_json
 
 
+SIMPLIFIED_CHINESE_PROMPT = "以下是普通话内容，请使用简体中文转写。"
+
+
 def resolve_path(value: str) -> Path:
     path = Path(value)
     if path.is_absolute():
@@ -100,11 +103,57 @@ def make_segment(segment: Any, include_words: bool) -> dict[str, Any]:
     return data
 
 
-def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+def is_chinese_language(language: str) -> bool:
+    return language.lower().startswith("zh")
+
+
+def make_simplified_chinese_converter() -> Any:
+    try:
+        from opencc import OpenCC
+    except ImportError as exc:
+        raise RuntimeError(
+            "Chinese transcription requires opencc-python-reimplemented to normalize output to Simplified Chinese. "
+            "Run setup_windows.ps1 again to install updated requirements."
+        ) from exc
+
+    return OpenCC("t2s")
+
+
+def normalize_segments_for_language(segments: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
+    if not is_chinese_language(language):
+        return segments
+
+    converter = make_simplified_chinese_converter()
+    for segment in segments:
+        segment["text"] = converter.convert(str(segment.get("text") or ""))
+        for word in segment.get("words") or []:
+            word["word"] = converter.convert(str(word.get("word") or ""))
+    return segments
+
+
+def metadata_duration(metadata: dict[str, Any]) -> float | None:
+    duration = metadata.get("duration")
+    if duration is None:
+        return None
+    try:
+        return float(duration)
+    except (TypeError, ValueError):
+        return None
+
+
+def transcribe_audio(
+    audio_path: Path,
+    args: argparse.Namespace,
+    metadata: Optional[dict[str, Any]] = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
     if args.asr_provider == "qwen3":
         if has_model_weights(QWEN3_ASR_MODEL_DIR) and has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
             try:
-                info_data, segment_list = transcribe_with_qwen3(audio_path, args.language)
+                info_data, segment_list = transcribe_with_qwen3(
+                    audio_path,
+                    args.language,
+                    metadata_duration(metadata or {}),
+                )
                 return info_data, segment_list, "qwen3-asr"
             except Exception as exc:
                 print(f"Qwen3 ASR failed: {exc}")
@@ -129,9 +178,13 @@ def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[s
         beam_size=args.beam_size,
         vad_filter=True,
         word_timestamps=args.word_timestamps,
+        initial_prompt=SIMPLIFIED_CHINESE_PROMPT if is_chinese_language(args.language) else None,
     )
 
-    segment_list = [make_segment(segment, args.word_timestamps) for segment in segments]
+    segment_list = normalize_segments_for_language(
+        [make_segment(segment, args.word_timestamps) for segment in segments],
+        args.language,
+    )
     info_data = {
         "language": getattr(info, "language", None),
         "language_probability": getattr(info, "language_probability", None),
@@ -143,6 +196,7 @@ def transcribe_audio(audio_path: Path, args: argparse.Namespace) -> tuple[dict[s
         "batch_size": args.batch_size,
         "beam_size": args.beam_size,
         "word_timestamps": args.word_timestamps,
+        "text_normalization": "simplified-chinese" if is_chinese_language(args.language) else None,
     }
     return info_data, segment_list, "faster-whisper"
 
@@ -224,7 +278,7 @@ def run_transcribe(args: argparse.Namespace) -> dict[str, Any]:
     json_path = output_dir / f"{output_stem}.json"
     md_path = output_dir / f"{output_stem}.md"
 
-    info_data, segments, source = transcribe_audio(audio_path, args)
+    info_data, segments, source = transcribe_audio(audio_path, args, metadata)
     payload = {
         "bvid": video_id,
         "title": manifest.get("title"),

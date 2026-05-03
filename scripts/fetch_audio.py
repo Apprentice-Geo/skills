@@ -23,6 +23,23 @@ from utils import (
 )
 
 
+class CookieRequiredError(RuntimeError):
+    pass
+
+
+def is_http_412_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "HTTP Error 412" in message or "HTTP 412" in message or "Precondition Failed" in message
+
+
+def make_cookie_required_error() -> CookieRequiredError:
+    return CookieRequiredError(
+        "Bilibili returned HTTP 412, which usually means this request needs a logged-in browser cookie. "
+        "Stop this run and ask the user to provide a Netscape-format cookies.txt file, then rerun with "
+        "--cookies .\\cookies.txt. See README.md cookie export instructions."
+    )
+
+
 def parse_subtitle_langs(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
@@ -116,7 +133,12 @@ def extract_metadata(url: str, args: argparse.Namespace) -> dict[str, Any]:
     )
 
     with YoutubeDL(options) as ydl:
-        info = ydl.extract_info(url, download=False)
+        try:
+            info = ydl.extract_info(url, download=False)
+        except Exception as exc:
+            if is_http_412_error(exc):
+                raise make_cookie_required_error() from exc
+            raise
         return ydl.sanitize_info(info)
 
 
@@ -192,6 +214,8 @@ def download_subtitles(
         with YoutubeDL(options) as ydl:
             ydl.download([url])
     except Exception as exc:
+        if is_http_412_error(exc):
+            raise make_cookie_required_error() from exc
         print(f"Warning: subtitle download failed: {exc}")
 
     subtitle_files = filter_subtitle_files_by_language(
@@ -244,6 +268,8 @@ def download_audio(
         with YoutubeDL(options) as ydl:
             ydl.download([url])
     except Exception as exc:
+        if is_http_412_error(exc):
+            raise make_cookie_required_error() from exc
         print(f"Warning: audio download failed: {exc}")
 
     return list_current_files(audio_dir, video_id)
@@ -333,7 +359,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    run_fetch(args)
+    try:
+        run_fetch(args)
+    except CookieRequiredError as exc:
+        print(f"Error: {exc}")
+        return 2
     return 0
 
 

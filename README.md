@@ -25,7 +25,7 @@ bili-audiosummary/
 │  ├─ setup_windows.ps1
 │  ├─ run_pipeline.py             # 总入口：抓字幕/音频，优先用字幕，必要时执行 STT，生成 summary prompt
 │  ├─ fetch_audio.py              # 解析 URL，下载目标语言字幕和音频
-│  ├─ transcribe.py               # 使用 faster-whisper 生成转写结果
+│  ├─ transcribe.py               # 默认使用 faster-whisper，可选优先尝试 Qwen3-ASR 生成转写结果
 │  ├─ config.py
 │  └─ utils.py
 ├─ assets/
@@ -143,7 +143,7 @@ ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries
 .\.venv\Scripts\python.exe scripts\transcribe.py results/BV12kXmBCEDi/resource/fetch_manifest.json
 ```
 
-在本机有可用 CUDA，且本地 Qwen3 模型已下载完成时，可选使用 Qwen3-ASR：
+在本机有可用 CUDA，且本地 Qwen3 模型已下载完成时，可选优先尝试 Qwen3-ASR。若 Qwen3-ASR 不可用或运行失败，代码会回退到 faster-whisper：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/" --asr-provider qwen3
@@ -155,7 +155,7 @@ ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/" --language en
 ```
 
-Qwen3 路径内部固定使用：
+Qwen3 路径实际运行时内部固定使用：
 
 - `Qwen/Qwen3-ASR-0.6B`
 - `Qwen/Qwen3-ForcedAligner-0.6B`
@@ -168,12 +168,14 @@ Qwen3 的安装策略：
 - `torch` 和 `torchaudio` 在 `-InstallQwen3` 时单独从 PyTorch 官方 CUDA wheel 源安装
 - Qwen3 模型和 aligner 仍通过 `huggingface_hub` 下载，继续受 `HF_ENDPOINT` 控制
 - 使用 `--asr-provider qwen3` 前，需要先执行 `-InstallQwen3` 和 `-DownloadQwen3Models`
+- `--asr-provider qwen3` 表示优先尝试 Qwen3-ASR，不是严格只允许 Qwen3；可查看 transcript JSON 的 `source` 字段确认实际使用的是 `qwen3-asr` 还是 `faster-whisper`
 
 ## 依赖组件
 
 - 视频元信息、字幕和音频下载：`yt-dlp`
 - 音频处理：`ffmpeg`或`ffmpeg-binaries-compat`
 - 默认语音转写：`faster-whisper`
+- 中文 faster-whisper 转写会使用简体中文提示，并通过 OpenCC 将输出规范化为简体中文。
 - 可选 CUDA 语音转写：`qwen-asr` + `torch` + `torchaudio` + `transformers` + `accelerate` + `huggingface_hub` + `numpy` + `soundfile` + `librosa`
 
 ## 能力边界
