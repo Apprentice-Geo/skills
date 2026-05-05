@@ -51,6 +51,7 @@ bili-audiosummary/
 ```text
 URL
   -> yt-dlp 解析元信息和 BVID
+  -> 将后续下载入口规范化为 https://www.bilibili.com/video/<BVID>/
   -> results/<BVID>/ 创建结果目录
   -> 优先复用符合目标语言且可正常解析的 .srt 本地字幕缓存；无匹配缓存或缓存损坏时尽力下载目标语言字幕
   -> 优先复用已下载音频；无缓存时尽力下载最低可用音频流
@@ -78,6 +79,7 @@ Windows 默认使用：
 - 优先检测系统 `ffmpeg/ffprobe`
 - 系统缺失时使用 `ffmpeg-binaries-compat` 随 Python 依赖安装的二进制
 - 下载默认模型 `Systran/faster-whisper-small` 到 `tools/models/faster-whisper-small/`
+- 未显式设置 `UV_CACHE_DIR` 时，默认将 uv 缓存放到 `tools/uv-cache/`
 
 推荐安装 [`uv`](https://docs.astral.sh/uv/) 以获得更稳定使用体验。
 
@@ -91,6 +93,7 @@ Windows 默认使用：
 Qwen3 的可选依赖安装仍然继续兼容 `PIP_INDEX_URL` 和 `HF_ENDPOINT` 的国内镜像优化。其中 `torch` 与 `torchaudio` 会在启用 `-InstallQwen3` 时单独走 PyTorch 官方 CUDA wheel 源，避免从普通 PyPI 安装成 CPU 版；Qwen3 模型下载继续通过 `huggingface_hub` 完成。当前设计要求本地模型已存在后才能使用 Qwen3 运行转写。
 
 setup 脚本会默认使用 [PyPI 清华源](https://pypi.tuna.tsinghua.edu.cn/simple)与 [Hugging Face 镜像站](https://hf-mirror.com)。
+如果 pip 通过配置镜像安装依赖失败，脚本会自动重试官方 PyPI 源 `https://pypi.org/simple`。实际使用中，系统代理可能导致镜像源的 simple 索引解析异常，表现为常见包提示 `from versions: none`；遇到这类情况可以先关闭代理重试，或直接使用官方源。
 
 需要使用原生源可在运行前设置：
 
@@ -112,7 +115,7 @@ ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries
 - Edge：安装 `Cookie-Editor` 扩展，在已登录 B 站的情况下选择导出格式为 `Netscape`，扩展会将内容复制到剪贴板。随后新建一个 `cookies.txt` 文件，将内容粘贴并保存。
   扩展地址：<https://microsoftedge.microsoft.com/addons/detail/cookieeditor/>
 
-将导出的 `cookies.txt` 复制到 SKILL 根目录，在命令中使用 cookies：
+将导出的 cookie 文件复制到 SKILL 根目录。若文件名是 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，脚本会自动检测并使用；也可以在命令中显式指定：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt

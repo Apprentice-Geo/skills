@@ -11,6 +11,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $DefaultPipIndexUrl = "https://pypi.tuna.tsinghua.edu.cn/simple"
+$FallbackPipIndexUrl = "https://pypi.org/simple"
 $DefaultHfEndpoint = "https://hf-mirror.com"
 $WhisperModelRepo = "Systran/faster-whisper-small"
 $Qwen3AsrModelRepo = "Qwen/Qwen3-ASR-0.6B"
@@ -245,12 +246,54 @@ function Test-ModelWeights {
     return $false
 }
 
+function Test-SamePipIndex {
+    param(
+        [string]$Left,
+        [string]$Right
+    )
+
+    return $Left.TrimEnd("/").ToLowerInvariant() -eq $Right.TrimEnd("/").ToLowerInvariant()
+}
+
+function Invoke-PipInstall {
+    param(
+        [string]$PythonExe,
+        [string[]]$InstallArguments,
+        [string]$IndexUrl,
+        [string]$FailureMessage
+    )
+
+    $pipArgs = @("install")
+    if ($IndexUrl) {
+        $pipArgs += @("-i", $IndexUrl)
+        Write-Host "Using pip index: $IndexUrl"
+    }
+    $pipArgs += $InstallArguments
+
+    & $PythonExe -m pip @pipArgs
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    if ($IndexUrl -and -not (Test-SamePipIndex $IndexUrl $FallbackPipIndexUrl)) {
+        Write-Warning "pip install failed with index '$IndexUrl'. Retrying with official PyPI: $FallbackPipIndexUrl"
+        $fallbackArgs = @("install", "-i", $FallbackPipIndexUrl) + $InstallArguments
+        & $PythonExe -m pip @fallbackArgs
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+    }
+
+    throw $FailureMessage
+}
+
 $SkillRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VenvDir = Join-Path $SkillRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $RequirementsPath = Join-Path $SkillRoot "requirements.txt"
 $Qwen3RequirementsPath = Join-Path $SkillRoot "requirements-qwen3.txt"
 $ToolsDir = Join-Path $SkillRoot "tools"
+$UvCacheDir = Join-Path $ToolsDir "uv-cache"
 $ModelsDir = Join-Path $ToolsDir "models"
 $ResultsDir = Join-Path $SkillRoot "results"
 $WhisperModelDir = Join-Path $ModelsDir "faster-whisper-small"
@@ -278,8 +321,18 @@ Write-Host "Skill root: $SkillRoot"
 Write-Host "Using HF endpoint: $env:HF_ENDPOINT"
 
 Write-Step "Create local directories"
+Ensure-Directory $ToolsDir
+Ensure-Directory $UvCacheDir
 Ensure-Directory $ModelsDir
 Ensure-Directory $ResultsDir
+
+if (-not $env:UV_CACHE_DIR) {
+    $env:UV_CACHE_DIR = $UvCacheDir
+    Write-Host "Using local uv cache: $env:UV_CACHE_DIR"
+}
+else {
+    Write-Host "Using configured uv cache: $env:UV_CACHE_DIR"
+}
 
 Write-Step "Create Python virtual environment"
 New-SkillVirtualEnvironment -VenvDir $VenvDir -VenvPython $VenvPython -PreferredPythonCommand $PythonCommand
@@ -290,16 +343,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to upgrade pip."
 }
 
-$pipArgs = @("install", "-r", $RequirementsPath)
-if ($PipIndexUrl) {
-    $pipArgs = @("install", "-i", $PipIndexUrl, "-r", $RequirementsPath)
-    Write-Host "Using pip index: $PipIndexUrl"
-}
-
-& $VenvPython -m pip @pipArgs
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to install requirements."
-}
+Invoke-PipInstall `
+    -PythonExe $VenvPython `
+    -InstallArguments @("-r", $RequirementsPath) `
+    -IndexUrl $PipIndexUrl `
+    -FailureMessage "Failed to install requirements."
 
 if ($InstallQwen3) {
     $torchArgs = @("install", "--index-url", $Qwen3TorchIndexUrl, "torch", "torchaudio")
@@ -313,27 +361,19 @@ if ($InstallQwen3) {
         throw "Qwen3 requirements file not found: $Qwen3RequirementsPath"
     }
 
-    $qwenPipArgs = @("install", "-r", $Qwen3RequirementsPath)
-    if ($PipIndexUrl) {
-        $qwenPipArgs = @("install", "-i", $PipIndexUrl, "-r", $Qwen3RequirementsPath)
-    }
-
-    & $VenvPython -m pip @qwenPipArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install Qwen3 requirements."
-    }
+    Invoke-PipInstall `
+        -PythonExe $VenvPython `
+        -InstallArguments @("-r", $Qwen3RequirementsPath) `
+        -IndexUrl $PipIndexUrl `
+        -FailureMessage "Failed to install Qwen3 requirements."
 }
 
 if ($DownloadQwen3Models -and -not $InstallQwen3) {
-    $hubArgs = @("install", "huggingface_hub")
-    if ($PipIndexUrl) {
-        $hubArgs = @("install", "-i", $PipIndexUrl, "huggingface_hub")
-    }
-
-    & $VenvPython -m pip @hubArgs
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install huggingface_hub for Qwen3 model download."
-    }
+    Invoke-PipInstall `
+        -PythonExe $VenvPython `
+        -InstallArguments @("huggingface_hub") `
+        -IndexUrl $PipIndexUrl `
+        -FailureMessage "Failed to install huggingface_hub for Qwen3 model download."
 }
 
 Write-Step "Resolve ffmpeg"

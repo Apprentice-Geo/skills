@@ -73,10 +73,11 @@ If the video should be processed as English content, set the target language exp
 ## Scripts
 
 - `scripts/setup_windows.ps1`: prepare a Python >= 3.12 `.venv`, preferring `uv` with Python 3.12 and falling back to local Python >= 3.12 when `uv` is unavailable; install Python dependencies, resolve ffmpeg through system PATH or `ffmpeg-binaries-compat`, and download the default faster-whisper model. `-InstallQwen3` installs optional Qwen3 runtime dependencies, and `-DownloadQwen3Models` downloads the required Qwen3 local model files.
+  When `UV_CACHE_DIR` is not already configured, setup uses `tools/uv-cache/` as the local uv cache directory.
   When `-InstallQwen3` is used, `torch` and `torchaudio` are installed from the PyTorch CUDA wheel index, while the remaining Qwen3 dependencies still use the configured pip mirror.
 - `scripts/setup_windows.bat`: wrapper for the PowerShell setup script.
 - `scripts/run_pipeline.py`: main entry point. Reuse matching cached subtitle `.srt` files only when they still parse correctly, otherwise best-effort download target-language subtitles; reuse cached audio when available, otherwise best-effort download audio; prefer subtitles when usable, then fall back to STT and generate the summary prompt.
-- `scripts/fetch_audio.py`: fetch Bilibili metadata plus target-language subtitles and audio; it reuses matching cached subtitle `.srt` files only when they still parse correctly, re-fetches subtitles when cached `.srt` files are unusable, reuses cached audio when available, and only prints warnings when subtitle or audio download fails.
+- `scripts/fetch_audio.py`: fetch Bilibili metadata plus target-language subtitles and audio; after the first metadata extraction, later subtitle and audio downloads use the canonical `https://www.bilibili.com/video/<BVID>/` URL. It reuses matching cached subtitle `.srt` files only when they still parse correctly, re-fetches subtitles when cached `.srt` files are unusable, reuses cached audio when available, and only prints warnings when subtitle or audio download fails.
 - `scripts/transcribe.py`: transcribe an existing fetched audio manifest or audio file.
 
 ## Outputs
@@ -107,7 +108,7 @@ resource/subtitle/<BVID>.<lang>.srt
 - If setup fails because no compatible Python is available, tell the user to install `uv` from `https://docs.astral.sh/uv/` and rerun setup. For other setup failures, check the environment setup section in `README.md`.
 - If pip, ffmpeg, or model downloads fail, check mirror variables in `README.md`.
 - If Bilibili download fails, report the network or yt-dlp error and ask for a reachable URL if needed.
-- If Bilibili returns `HTTP 412`, stop immediately. Do not query other sources or generate a summary. Tell the user to provide a Netscape-format `cookies.txt` file by following the cookie export instructions in `README.md`, then rerun with `--cookies .\cookies.txt`.
+- If Bilibili returns `HTTP 412`, stop immediately. Do not query other sources or generate a summary. Tell the user to provide a Netscape-format cookie file by following the cookie export instructions in `README.md`. The pipeline auto-detects `cookies.txt`, `www.bilibili.com_cookies.txt`, and `bilibili_cookies.txt` in the skill root; otherwise rerun with `--cookies .\cookies.txt`.
 - If rerunning the same BVID, remember that only cached subtitle `.srt` files matching the current requested language and still parsing correctly are reused directly; other subtitle cache files do not block a fresh subtitle fetch attempt.
 - If STT fails on the default path, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
 - If both subtitles and audio are unavailable, the pipeline should stop with a clear error instead of attempting STT.

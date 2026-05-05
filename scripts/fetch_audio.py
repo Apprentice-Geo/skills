@@ -1,6 +1,8 @@
 import argparse
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import subtitle_transcript
 from yt_dlp import YoutubeDL
@@ -10,6 +12,7 @@ from config import (
     DEFAULT_AUDIO_SELECTOR,
     DEFAULT_TRANSCRIBE_LANGUAGE,
     RESULTS_DIR,
+    SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
 )
 from utils import (
@@ -25,6 +28,13 @@ from utils import (
 
 class CookieRequiredError(RuntimeError):
     pass
+
+
+DEFAULT_COOKIE_FILENAMES = [
+    "cookies.txt",
+    "www.bilibili.com_cookies.txt",
+    "bilibili_cookies.txt",
+]
 
 
 def is_http_412_error(exc: Exception) -> bool:
@@ -48,6 +58,18 @@ def resolve_subtitle_langs(args: argparse.Namespace) -> list[str]:
     if args.subtitle_langs:
         return args.subtitle_langs
     return list(SUBTITLE_LANGUAGE_PRIORITY[args.language])
+
+
+def resolve_cookie_path(args: argparse.Namespace) -> Path | None:
+    if args.cookies:
+        return args.cookies
+
+    for filename in DEFAULT_COOKIE_FILENAMES:
+        candidate = SKILL_ROOT / filename
+        if candidate.is_file():
+            return candidate
+
+    return None
 
 
 def infer_subtitle_language(path: Path) -> str:
@@ -100,8 +122,9 @@ def select_valid_srt_files(paths: list[Path], preferred_languages: list[str], co
 
 
 def add_cookie_options(options: dict[str, Any], args: argparse.Namespace) -> None:
-    if args.cookies:
-        options["cookiefile"] = path_to_posix(args.cookies)
+    cookie_path = resolve_cookie_path(args)
+    if cookie_path:
+        options["cookiefile"] = path_to_posix(cookie_path)
 
 def make_base_options(args: argparse.Namespace) -> dict[str, Any]:
     options: dict[str, Any] = {
@@ -145,6 +168,18 @@ def extract_metadata(url: str, args: argparse.Namespace) -> dict[str, Any]:
 def get_video_id(info: dict[str, Any]) -> str:
     video_id = info.get("id") or info.get("display_id") or info.get("webpage_url_basename")
     return sanitize_filename(str(video_id or "unknown-video"))
+
+
+def build_canonical_url(info: dict[str, Any], video_id: str) -> str:
+    source_url = str(info.get("webpage_url") or info.get("original_url") or "")
+    bvid_match = re.search(r"/video/(BV[0-9A-Za-z]+)", source_url)
+    bvid = bvid_match.group(1) if bvid_match else video_id.split("_p", 1)[0]
+
+    page_match = re.search(r"_p([0-9]+)$", str(info.get("id") or video_id))
+    query_page = parse_qs(urlsplit(source_url).query).get("p", [])
+    page = page_match.group(1) if page_match else (query_page[0] if query_page else "")
+    page_suffix = f"?p={page}" if page and page != "1" else ""
+    return f"https://www.bilibili.com/video/{bvid}/{page_suffix}"
 
 
 def build_result_paths(info: dict[str, Any], output_dir: Path) -> dict[str, Path]:
@@ -306,11 +341,12 @@ def write_manifest(
     info: dict[str, Any],
     audio_files: list[Path],
     subtitle_files: list[Path],
+    canonical_url: str,
 ) -> Path:
     manifest = {
         "title": info.get("title") or info.get("fulltitle") or info.get("id"),
         "id": info.get("id"),
-        "url": normalize_bilibili_video_url(str(info.get("webpage_url") or info.get("original_url") or "")),
+        "url": canonical_url,
         "metadata_path": path_to_posix(result_dir / "resource" / "metadata.json"),
         "audio_files": [path_to_posix(path) for path in audio_files],
         "subtitle_files": [path_to_posix(path) for path in subtitle_files],
@@ -370,8 +406,13 @@ def main() -> int:
 def run_fetch(args: argparse.Namespace) -> dict[str, Any]:
     ensure_dir(args.output_dir)
 
+    cookie_path = resolve_cookie_path(args)
+    if cookie_path and not args.cookies:
+        print(f"Using auto-detected cookies: {path_to_posix(cookie_path)}")
+
     info = extract_metadata(args.url, args)
     video_id = get_video_id(info)
+    canonical_url = build_canonical_url(info, video_id)
     paths = build_result_paths(info, args.output_dir)
 
     metadata_path = paths["resource"] / "metadata.json"
@@ -380,16 +421,17 @@ def run_fetch(args: argparse.Namespace) -> dict[str, Any]:
     raw_metadata_path = paths["resource"] / "metadata.raw.json"
     write_json(raw_metadata_path, info)
 
-    subtitle_files = download_subtitles(args.url, paths["subtitle"], video_id, args)
+    subtitle_files = download_subtitles(canonical_url, paths["subtitle"], video_id, args)
 
     should_download_audio = not args.skip_audio
     audio_files = []
     if should_download_audio:
-        audio_files = download_audio(args.url, paths["resource"], video_id, args)
-    manifest_path = write_manifest(paths["result"], info, audio_files, subtitle_files)
+        audio_files = download_audio(canonical_url, paths["resource"], video_id, args)
+    manifest_path = write_manifest(paths["result"], info, audio_files, subtitle_files, canonical_url)
 
     print(f"Title: {info.get('title') or info.get('id')}")
     print(f"BVID: {video_id}")
+    print(f"Canonical URL: {canonical_url}")
     print(f"Result: {path_to_posix(paths['result'])}")
     print(f"Metadata: {path_to_posix(metadata_path)}")
     print(f"Raw metadata: {path_to_posix(raw_metadata_path)}")

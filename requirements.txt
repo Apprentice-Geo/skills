@@ -1,6 +1,6 @@
-yt-dlp==2026.3.17
-faster-whisper==1.2.1
+yt-dlp==2025.12.8
+faster-whisper==1.2.0
 opencc-python-reimplemented==0.1.7
 ffmpeg-binaries-compat==1.0.1
-tqdm==4.67.3
-requests==2.33.1
+tqdm==4.67.1
+requests==2.32.3
