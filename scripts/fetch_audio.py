@@ -39,7 +39,11 @@ DEFAULT_COOKIE_FILENAMES = [
 
 def is_http_412_error(exc: Exception) -> bool:
     message = str(exc)
-    return "HTTP Error 412" in message or "HTTP 412" in message or "Precondition Failed" in message
+    return (
+        "HTTP Error 412" in message
+        or "HTTP 412" in message
+        or "Precondition Failed" in message
+    )
 
 
 def make_cookie_required_error() -> CookieRequiredError:
@@ -83,7 +87,9 @@ def is_usable_subtitle(path: Path) -> bool:
     return path.suffix.lower() == ".srt"
 
 
-def sort_subtitle_files(paths: list[Path], preferred_languages: list[str]) -> list[Path]:
+def sort_subtitle_files(
+    paths: list[Path], preferred_languages: list[str]
+) -> list[Path]:
     order = {language: index for index, language in enumerate(preferred_languages)}
     return sorted(
         paths,
@@ -95,27 +101,37 @@ def sort_subtitle_files(paths: list[Path], preferred_languages: list[str]) -> li
     )
 
 
-def filter_subtitle_files_by_language(paths: list[Path], preferred_languages: list[str]) -> list[Path]:
+def filter_subtitle_files_by_language(
+    paths: list[Path], preferred_languages: list[str]
+) -> list[Path]:
     allowed_languages = set(preferred_languages)
     return [
-        path
-        for path in paths
-        if infer_subtitle_language(path) in allowed_languages
+        path for path in paths if infer_subtitle_language(path) in allowed_languages
     ]
 
 
-def select_cached_subtitle_files(paths: list[Path], preferred_languages: list[str]) -> list[Path]:
-    matching_language_files = filter_subtitle_files_by_language(paths, preferred_languages)
-    usable_files = [path for path in matching_language_files if is_usable_subtitle(path)]
+def select_cached_subtitle_files(
+    paths: list[Path], preferred_languages: list[str]
+) -> list[Path]:
+    matching_language_files = filter_subtitle_files_by_language(
+        paths, preferred_languages
+    )
+    usable_files = [
+        path for path in matching_language_files if is_usable_subtitle(path)
+    ]
     return sort_subtitle_files(usable_files, preferred_languages)
 
 
-def select_valid_srt_files(paths: list[Path], preferred_languages: list[str], context: str) -> list[Path]:
+def select_valid_srt_files(
+    paths: list[Path], preferred_languages: list[str], context: str
+) -> list[Path]:
     valid_files: list[Path] = []
     for path in sort_subtitle_files(paths, preferred_languages):
         segments, error = subtitle_transcript.probe_srt(path)
         if segments is None:
-            print(f"Warning: {context} subtitle is unusable: {path_to_posix(path)} ({error})")
+            print(
+                f"Warning: {context} subtitle is unusable: {path_to_posix(path)} ({error})"
+            )
             continue
         valid_files.append(path)
     return valid_files
@@ -125,6 +141,7 @@ def add_cookie_options(options: dict[str, Any], args: argparse.Namespace) -> Non
     cookie_path = resolve_cookie_path(args)
     if cookie_path:
         options["cookiefile"] = path_to_posix(cookie_path)
+
 
 def make_base_options(args: argparse.Namespace) -> dict[str, Any]:
     options: dict[str, Any] = {
@@ -166,7 +183,9 @@ def extract_metadata(url: str, args: argparse.Namespace) -> dict[str, Any]:
 
 
 def get_video_id(info: dict[str, Any]) -> str:
-    video_id = info.get("id") or info.get("display_id") or info.get("webpage_url_basename")
+    video_id = (
+        info.get("id") or info.get("display_id") or info.get("webpage_url_basename")
+    )
     return sanitize_filename(str(video_id or "unknown-video"))
 
 
@@ -202,7 +221,8 @@ def list_current_files(path: Path, video_id: str) -> list[Path]:
     return [
         item
         for item in list_media_files(path)
-        if item.name == f"{video_id}{item.suffix}" or item.name.startswith(f"{video_id}.")
+        if item.name == f"{video_id}{item.suffix}"
+        or item.name.startswith(f"{video_id}.")
     ]
 
 
@@ -231,7 +251,9 @@ def download_subtitles(
         preferred_languages,
     )
     if cached_srt_files:
-        print("Warning: cached subtitle files are invalid; attempting to re-download subtitles.")
+        print(
+            "Warning: cached subtitle files are invalid; attempting to re-download subtitles."
+        )
 
     options = make_base_options(args)
     options.update(
@@ -266,7 +288,9 @@ def download_subtitles(
     if valid_subtitle_srt_files:
         return valid_subtitle_srt_files
 
-    non_srt_subtitle_files = [path for path in subtitle_files if not is_usable_subtitle(path)]
+    non_srt_subtitle_files = [
+        path for path in subtitle_files if not is_usable_subtitle(path)
+    ]
     return sort_subtitle_files(non_srt_subtitle_files, preferred_languages)
 
 
@@ -362,17 +386,28 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("url", help="Bilibili video URL or BV URL accepted by yt-dlp.")
     parser.add_argument("--output-dir", type=Path, default=RESULTS_DIR)
-    parser.add_argument("--cookies", type=Path, help="Path to a Netscape-format cookies.txt file.")
-    parser.add_argument("--playlist", action="store_true", help="Allow playlist/multi-entry downloads.")
+    parser.add_argument(
+        "--cookies", type=Path, help="Path to a Netscape-format cookies.txt file."
+    )
+    parser.add_argument(
+        "--playlist", action="store_true", help="Allow playlist/multi-entry downloads."
+    )
     parser.add_argument("--skip-audio", action="store_true")
+    parser.add_argument(
+        "--skip-subtitles", action="store_true", help="Skip subtitle reuse/download."
+    )
     parser.add_argument(
         "--language",
         choices=tuple(SUBTITLE_LANGUAGE_PRIORITY.keys()),
         default=DEFAULT_TRANSCRIBE_LANGUAGE,
         help="Target language. Only subtitles from the selected language group will be requested.",
     )
-    parser.add_argument("--write-auto-subs", dest="write_auto_subs", action="store_true", default=True)
-    parser.add_argument("--no-write-auto-subs", dest="write_auto_subs", action="store_false")
+    parser.add_argument(
+        "--write-auto-subs", dest="write_auto_subs", action="store_true", default=True
+    )
+    parser.add_argument(
+        "--no-write-auto-subs", dest="write_auto_subs", action="store_false"
+    )
     parser.add_argument(
         "--subtitle-langs",
         type=parse_subtitle_langs,
@@ -421,13 +456,19 @@ def run_fetch(args: argparse.Namespace) -> dict[str, Any]:
     raw_metadata_path = paths["resource"] / "metadata.raw.json"
     write_json(raw_metadata_path, info)
 
-    subtitle_files = download_subtitles(canonical_url, paths["subtitle"], video_id, args)
+    subtitle_files = []
+    if not getattr(args, "skip_subtitles", False):
+        subtitle_files = download_subtitles(
+            canonical_url, paths["subtitle"], video_id, args
+        )
 
     should_download_audio = not args.skip_audio
     audio_files = []
     if should_download_audio:
         audio_files = download_audio(canonical_url, paths["resource"], video_id, args)
-    manifest_path = write_manifest(paths["result"], info, audio_files, subtitle_files, canonical_url)
+    manifest_path = write_manifest(
+        paths["result"], info, audio_files, subtitle_files, canonical_url
+    )
 
     print(f"Title: {info.get('title') or info.get('id')}")
     print(f"BVID: {video_id}")

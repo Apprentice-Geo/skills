@@ -26,6 +26,7 @@ def make_fetch_args(args: argparse.Namespace) -> argparse.Namespace:
         cookies=args.cookies,
         playlist=False,
         skip_audio=False,
+        skip_subtitles=getattr(args, "skip_subtitles", False),
         language=resolve_transcribe_language(args),
         write_auto_subs=True,
         subtitle_langs=[],
@@ -66,7 +67,7 @@ def require_audio_for_stt(audio_files: list[Path]) -> None:
     if audio_files:
         return
     raise RuntimeError(
-        "No usable subtitle or audio files available. Download or reuse at least one subtitle SRT file or one audio file before running STT fallback."
+        "No usable audio files available. Download or reuse at least one audio file before running ASR."
     )
 
 
@@ -168,6 +169,11 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_ASR_PROVIDER,
         help="ASR provider. qwen3 is only for machines with available CUDA.",
     )
+    parser.add_argument(
+        "--skip-subtitles",
+        action="store_true",
+        help="Skip subtitle reuse/download and force ASR from audio.",
+    )
     return parser.parse_args()
 
 
@@ -186,7 +192,18 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     subtitle_files = fetch_result.get("subtitle_files") or []
     audio_files = [Path(path) for path in (fetch_result.get("audio_files") or [])]
     usable_subtitle_files = [Path(path) for path in subtitle_files if fetch_audio.is_usable_subtitle(Path(path))]
-    if usable_subtitle_files:
+    if getattr(args, "skip_subtitles", False):
+        print("Skipping subtitles; using ASR from audio.")
+        require_audio_for_stt(audio_files)
+        transcribe_args = make_transcribe_args(args, manifest_path, result_dir)
+        transcript_result = transcribe.run_transcribe(transcribe_args)
+        prompt_result = write_summary_prompt(
+            result_dir=result_dir,
+            video_id=fetch_result["video_id"],
+            transcript_markdown_path=transcript_result["markdown_path"],
+            transcript_json_path=transcript_result["json_path"],
+        )
+    elif usable_subtitle_files:
         sorted_subtitle_files = fetch_audio.sort_subtitle_files(
             usable_subtitle_files,
             fetch_audio.resolve_subtitle_langs(make_fetch_args(args)),

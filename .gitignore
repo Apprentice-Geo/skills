@@ -4,5 +4,7 @@ results/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+test_workspace/
+tests/.tmp/
 *cookies*
 AGENTS.md

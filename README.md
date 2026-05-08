@@ -28,6 +28,8 @@ bili-audiosummary/
 │  ├─ transcribe.py               # 默认使用 faster-whisper，可选优先尝试 Qwen3-ASR 生成转写结果
 │  ├─ config.py
 │  └─ utils.py
+├─ references/
+│  └─ error-handling.md           # Skill 执行过程中的错误处理参考
 ├─ assets/
 │  ├─ summary_instructions.md     # 总结生成规则
 │  ├─ summary_template_en.md      # 英文总结输出模板
@@ -127,6 +129,12 @@ ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
 ```
 
+跳过字幕复用/下载并强制使用 ASR：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/" --skip-subtitles
+```
+
 抓取元信息、字幕和音频：
 
 ```powershell
@@ -138,6 +146,7 @@ ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries
 - `fetch_audio.py` 会优先复用符合当前请求语言且可正常解析的 `.srt` 字幕缓存；缓存损坏时会尝试重新拉取字幕
 - 已下载音频会直接复用
 - 字幕或音频下载失败时先输出 warning，不会立即中止流程
+- `run_pipeline.py --skip-subtitles` 会跳过字幕复用和下载，直接使用音频 ASR
 - `run_pipeline.py` 只有在既没有可用字幕、也没有可用音频可供 STT 回退时才会报错退出
 
 仅执行 STT：
