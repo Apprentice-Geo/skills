@@ -3,8 +3,15 @@ import re
 from pathlib import Path
 from typing import Any
 
+from manifest_io import (
+    infer_result_dir,
+    load_manifest,
+    load_metadata_from_manifest,
+    resolve_manifest_path,
+    resolve_path,
+)
+from subtitle_utils import infer_subtitle_language
 from transcript_output import write_markdown
-from transcribe import infer_result_dir, load_manifest, load_metadata_from_manifest, resolve_path
 from utils import ensure_dir, path_to_posix, write_json
 
 
@@ -70,11 +77,6 @@ def probe_srt(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
     return segments, None
 
 
-def infer_subtitle_language(path: Path) -> str | None:
-    parts = path.name.split(".")
-    if len(parts) >= 3:
-        return parts[-2]
-    return None
 def subtitle_to_transcript(
     subtitle_path: Path,
     manifest: dict[str, Any],
@@ -131,7 +133,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     subtitle_path = resolve_path(args.subtitle)
-    manifest_path = resolve_path(path_to_posix(args.manifest))
+    manifest_path = resolve_manifest_path(args.manifest)
     manifest = load_manifest(manifest_path)
     metadata = load_metadata_from_manifest(manifest)
     output_dir = infer_result_dir(manifest_path, subtitle_path, args.output_dir)

@@ -15,6 +15,8 @@ from config import (
     SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
 )
+from runtime_options import FetchOptions
+from subtitle_utils import infer_subtitle_language
 from utils import (
     ensure_dir,
     list_media_files,
@@ -58,15 +60,15 @@ def parse_subtitle_langs(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def resolve_subtitle_langs(args: argparse.Namespace) -> list[str]:
-    if args.subtitle_langs:
-        return args.subtitle_langs
-    return list(SUBTITLE_LANGUAGE_PRIORITY[args.language])
+def resolve_subtitle_langs(options: FetchOptions) -> list[str]:
+    if options.subtitle_langs:
+        return options.subtitle_langs
+    return list(SUBTITLE_LANGUAGE_PRIORITY[options.language])
 
 
-def resolve_cookie_path(args: argparse.Namespace) -> Path | None:
-    if args.cookies:
-        return args.cookies
+def resolve_cookie_path(options: FetchOptions) -> Path | None:
+    if options.cookies:
+        return options.cookies
 
     for filename in DEFAULT_COOKIE_FILENAMES:
         candidate = SKILL_ROOT / filename
@@ -74,13 +76,6 @@ def resolve_cookie_path(args: argparse.Namespace) -> Path | None:
             return candidate
 
     return None
-
-
-def infer_subtitle_language(path: Path) -> str:
-    parts = path.name.split(".")
-    if len(parts) >= 3:
-        return parts[-2]
-    return ""
 
 
 def is_usable_subtitle(path: Path) -> bool:
@@ -137,34 +132,34 @@ def select_valid_srt_files(
     return valid_files
 
 
-def add_cookie_options(options: dict[str, Any], args: argparse.Namespace) -> None:
-    cookie_path = resolve_cookie_path(args)
+def add_cookie_options(ydl_options: dict[str, Any], options: FetchOptions) -> None:
+    cookie_path = resolve_cookie_path(options)
     if cookie_path:
-        options["cookiefile"] = path_to_posix(cookie_path)
+        ydl_options["cookiefile"] = path_to_posix(cookie_path)
 
 
-def make_base_options(args: argparse.Namespace) -> dict[str, Any]:
-    options: dict[str, Any] = {
-        "noplaylist": not args.playlist,
-        "retries": args.retries,
-        "fragment_retries": args.retries,
-        "socket_timeout": args.socket_timeout,
+def make_base_options(options: FetchOptions) -> dict[str, Any]:
+    ydl_options: dict[str, Any] = {
+        "noplaylist": not options.playlist,
+        "retries": options.retries,
+        "fragment_retries": options.retries,
+        "socket_timeout": options.socket_timeout,
         "windowsfilenames": True,
-        "quiet": args.quiet,
-        "no_warnings": args.quiet,
+        "quiet": options.quiet,
+        "no_warnings": options.quiet,
     }
 
     ffmpeg_location = resolve_ffmpeg_location()
     if ffmpeg_location:
-        options["ffmpeg_location"] = ffmpeg_location
+        ydl_options["ffmpeg_location"] = ffmpeg_location
 
-    add_cookie_options(options, args)
-    return options
+    add_cookie_options(ydl_options, options)
+    return ydl_options
 
 
-def extract_metadata(url: str, args: argparse.Namespace) -> dict[str, Any]:
-    options = make_base_options(args)
-    options.update(
+def extract_metadata(url: str, options: FetchOptions) -> dict[str, Any]:
+    ydl_options = make_base_options(options)
+    ydl_options.update(
         {
             "skip_download": True,
             "writesubtitles": False,
@@ -172,7 +167,7 @@ def extract_metadata(url: str, args: argparse.Namespace) -> dict[str, Any]:
         }
     )
 
-    with YoutubeDL(options) as ydl:
+    with YoutubeDL(ydl_options) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
         except Exception as exc:
@@ -230,10 +225,10 @@ def download_subtitles(
     url: str,
     subtitle_dir: Path,
     video_id: str,
-    args: argparse.Namespace,
+    options: FetchOptions,
 ) -> list[Path]:
     ensure_dir(subtitle_dir)
-    preferred_languages = resolve_subtitle_langs(args)
+    preferred_languages = resolve_subtitle_langs(options)
     cached_subtitle_files = select_valid_srt_files(
         select_cached_subtitle_files(
             list_current_files(subtitle_dir, video_id),
@@ -255,20 +250,20 @@ def download_subtitles(
             "Warning: cached subtitle files are invalid; attempting to re-download subtitles."
         )
 
-    options = make_base_options(args)
-    options.update(
+    ydl_options = make_base_options(options)
+    ydl_options.update(
         {
             "skip_download": True,
             "writesubtitles": True,
-            "writeautomaticsub": args.write_auto_subs,
+            "writeautomaticsub": options.write_auto_subs,
             "subtitleslangs": preferred_languages,
-            "subtitlesformat": args.subtitle_format,
+            "subtitlesformat": options.subtitle_format,
             "outtmpl": path_to_posix(subtitle_dir / "%(id)s.%(ext)s"),
         }
     )
 
     try:
-        with YoutubeDL(options) as ydl:
+        with YoutubeDL(ydl_options) as ydl:
             ydl.download([url])
     except Exception as exc:
         if is_http_412_error(exc):
@@ -298,9 +293,9 @@ def download_audio(
     url: str,
     audio_dir: Path,
     video_id: str,
-    args: argparse.Namespace,
+    options: FetchOptions,
 ) -> list[Path]:
-    if args.skip_audio:
+    if options.skip_audio:
         return []
 
     cached_audio_files = list_current_files(audio_dir, video_id)
@@ -308,23 +303,23 @@ def download_audio(
         print(f"Using cached audio files: {len(cached_audio_files)}")
         return cached_audio_files
 
-    options = make_base_options(args)
-    options.update(
+    ydl_options = make_base_options(options)
+    ydl_options.update(
         {
-            "format": args.audio_selector,
+            "format": options.audio_selector,
             "outtmpl": path_to_posix(audio_dir / "%(id)s.%(ext)s"),
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
-                    "preferredcodec": args.audio_format,
-                    "preferredquality": args.audio_quality,
+                    "preferredcodec": options.audio_format,
+                    "preferredquality": options.audio_quality,
                 }
             ],
         }
     )
 
     try:
-        with YoutubeDL(options) as ydl:
+        with YoutubeDL(ydl_options) as ydl:
             ydl.download([url])
     except Exception as exc:
         if is_http_412_error(exc):
@@ -429,26 +424,27 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
-    args = parse_args()
+    options = FetchOptions.from_args(parse_args())
     try:
-        run_fetch(args)
+        run_fetch(options)
     except CookieRequiredError as exc:
         print(f"Error: {exc}")
         return 2
     return 0
 
 
-def run_fetch(args: argparse.Namespace) -> dict[str, Any]:
-    ensure_dir(args.output_dir)
+def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
+    options = FetchOptions.from_args(args)
+    ensure_dir(options.output_dir)
 
-    cookie_path = resolve_cookie_path(args)
-    if cookie_path and not args.cookies:
+    cookie_path = resolve_cookie_path(options)
+    if cookie_path and not options.cookies:
         print(f"Using auto-detected cookies: {path_to_posix(cookie_path)}")
 
-    info = extract_metadata(args.url, args)
+    info = extract_metadata(options.url, options)
     video_id = get_video_id(info)
     canonical_url = build_canonical_url(info, video_id)
-    paths = build_result_paths(info, args.output_dir)
+    paths = build_result_paths(info, options.output_dir)
 
     metadata_path = paths["resource"] / "metadata.json"
     write_json(metadata_path, compact_metadata(info))
@@ -457,15 +453,15 @@ def run_fetch(args: argparse.Namespace) -> dict[str, Any]:
     write_json(raw_metadata_path, info)
 
     subtitle_files = []
-    if not getattr(args, "skip_subtitles", False):
+    if not options.skip_subtitles:
         subtitle_files = download_subtitles(
-            canonical_url, paths["subtitle"], video_id, args
+            canonical_url, paths["subtitle"], video_id, options
         )
 
-    should_download_audio = not args.skip_audio
+    should_download_audio = not options.skip_audio
     audio_files = []
     if should_download_audio:
-        audio_files = download_audio(canonical_url, paths["resource"], video_id, args)
+        audio_files = download_audio(canonical_url, paths["resource"], video_id, options)
     manifest_path = write_manifest(
         paths["result"], info, audio_files, subtitle_files, canonical_url
     )

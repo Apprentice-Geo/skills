@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import fetch_audio
 import subtitle_transcript
@@ -12,22 +12,23 @@ from config import (
     SUMMARY_INSTRUCTIONS_PATH,
     SUMMARY_TEMPLATE_BY_LANGUAGE,
 )
+from runtime_options import FetchOptions, PipelineOptions, TranscribeOptions
 from utils import ensure_dir, path_to_posix, read_json
 
 
-def resolve_transcribe_language(args: argparse.Namespace) -> str:
-    return args.language or DEFAULT_TRANSCRIBE_LANGUAGE
+def resolve_transcribe_language(options: PipelineOptions) -> str:
+    return options.language or DEFAULT_TRANSCRIBE_LANGUAGE
 
 
-def make_fetch_args(args: argparse.Namespace) -> argparse.Namespace:
-    return argparse.Namespace(
-        url=args.url,
+def make_fetch_args(options: PipelineOptions) -> FetchOptions:
+    return FetchOptions(
+        url=options.url,
         output_dir=RESULTS_DIR,
-        cookies=args.cookies,
+        cookies=options.cookies,
         playlist=False,
         skip_audio=False,
-        skip_subtitles=getattr(args, "skip_subtitles", False),
-        language=resolve_transcribe_language(args),
+        skip_subtitles=options.skip_subtitles,
+        language=resolve_transcribe_language(options),
         write_auto_subs=True,
         subtitle_langs=[],
         subtitle_format="srt/best",
@@ -41,18 +42,18 @@ def make_fetch_args(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def make_transcribe_args(
-    args: argparse.Namespace,
+    options: PipelineOptions,
     manifest_path: Path,
-    output_dir: Optional[Path],
-) -> argparse.Namespace:
-    return argparse.Namespace(
+    output_dir: Path | None,
+) -> TranscribeOptions:
+    return TranscribeOptions(
         input=None,
         manifest=manifest_path,
         audio=None,
         output_dir=output_dir,
-        asr_provider=args.asr_provider,
+        asr_provider=options.asr_provider,
         model=None,
-        language=resolve_transcribe_language(args),
+        language=resolve_transcribe_language(options),
         device=transcribe.DEFAULT_TRANSCRIBE_DEVICE,
         compute_type=transcribe.DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
         batch_size=transcribe.DEFAULT_TRANSCRIBE_BATCH_SIZE,
@@ -71,7 +72,7 @@ def require_audio_for_stt(audio_files: list[Path]) -> None:
     )
 
 
-def normalize_template_language(language: Optional[str]) -> str:
+def normalize_template_language(language: str | None) -> str:
     if not language:
         return "en"
 
@@ -87,7 +88,7 @@ def normalize_template_language(language: Optional[str]) -> str:
     return value
 
 
-def select_summary_template(language: Optional[str]) -> tuple[str, Path]:
+def select_summary_template(language: str | None) -> tuple[str, Path]:
     template_language = normalize_template_language(language)
     template_path = SUMMARY_TEMPLATE_BY_LANGUAGE.get(template_language)
     if template_path and template_path.exists():
@@ -156,6 +157,49 @@ def write_summary_prompt(
     }
 
 
+def write_prompt_for_transcript(
+    fetch_result: dict[str, Any],
+    transcript_result: dict[str, Any],
+) -> dict[str, Path]:
+    return write_summary_prompt(
+        result_dir=fetch_result["paths"]["result"],
+        video_id=fetch_result["video_id"],
+        transcript_markdown_path=transcript_result["markdown_path"],
+        transcript_json_path=transcript_result["json_path"],
+    )
+
+
+def run_asr_transcript(
+    options: PipelineOptions,
+    fetch_result: dict[str, Any],
+    audio_files: list[Path],
+) -> dict[str, Any]:
+    require_audio_for_stt(audio_files)
+    transcribe_args = make_transcribe_args(
+        options,
+        fetch_result["manifest_path"],
+        fetch_result["paths"]["result"],
+    )
+    return transcribe.run_transcribe(transcribe_args)
+
+
+def select_usable_subtitle(
+    subtitle_files: list[Path],
+    preferred_languages: list[str],
+) -> Path | None:
+    sorted_subtitle_files = fetch_audio.sort_subtitle_files(
+        subtitle_files,
+        preferred_languages,
+    )
+    for candidate_path in sorted_subtitle_files:
+        segments, error = subtitle_transcript.probe_srt(candidate_path)
+        if segments is not None:
+            return candidate_path
+        print(f"Warning: subtitle is unusable: {path_to_posix(candidate_path)} ({error})")
+
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the full Bilibili audio summary preparation pipeline: fetch subtitles and audio, prefer usable subtitles, fall back to STT when needed, then build a summary prompt."
@@ -177,12 +221,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
+def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
+    options = PipelineOptions.from_args(args)
     print(
         "ASR provider: faster-whisper by default. Qwen3-ASR is available with --asr-provider qwen3 "
         "after CUDA, optional dependencies, and local Qwen3 models are prepared."
     )
-    fetch_result = fetch_audio.run_fetch(make_fetch_args(args))
+    fetch_args = make_fetch_args(options)
+    fetch_result = fetch_audio.run_fetch(fetch_args)
     manifest_path = fetch_result["manifest_path"]
     result_dir = fetch_result["paths"]["result"]
 
@@ -192,30 +238,15 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     subtitle_files = fetch_result.get("subtitle_files") or []
     audio_files = [Path(path) for path in (fetch_result.get("audio_files") or [])]
     usable_subtitle_files = [Path(path) for path in subtitle_files if fetch_audio.is_usable_subtitle(Path(path))]
-    if getattr(args, "skip_subtitles", False):
+    if options.skip_subtitles:
         print("Skipping subtitles; using ASR from audio.")
-        require_audio_for_stt(audio_files)
-        transcribe_args = make_transcribe_args(args, manifest_path, result_dir)
-        transcript_result = transcribe.run_transcribe(transcribe_args)
-        prompt_result = write_summary_prompt(
-            result_dir=result_dir,
-            video_id=fetch_result["video_id"],
-            transcript_markdown_path=transcript_result["markdown_path"],
-            transcript_json_path=transcript_result["json_path"],
-        )
+        transcript_result = run_asr_transcript(options, fetch_result, audio_files)
+        prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
     elif usable_subtitle_files:
-        sorted_subtitle_files = fetch_audio.sort_subtitle_files(
+        subtitle_path = select_usable_subtitle(
             usable_subtitle_files,
-            fetch_audio.resolve_subtitle_langs(make_fetch_args(args)),
+            fetch_audio.resolve_subtitle_langs(fetch_args),
         )
-        subtitle_path = None
-        for candidate_path in sorted_subtitle_files:
-            segments, error = subtitle_transcript.probe_srt(candidate_path)
-            if segments is not None:
-                subtitle_path = candidate_path
-                break
-            print(f"Warning: subtitle is unusable: {path_to_posix(candidate_path)} ({error})")
-
         if subtitle_path is not None:
             transcript_result = subtitle_transcript.subtitle_to_transcript(
                 subtitle_path=subtitle_path,
@@ -223,35 +254,16 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 metadata=read_json(fetch_result["metadata_path"]),
                 output_dir=result_dir,
             )
-            prompt_result = write_summary_prompt(
-                result_dir=result_dir,
-                video_id=fetch_result["video_id"],
-                transcript_markdown_path=transcript_result["markdown_path"],
-                transcript_json_path=transcript_result["json_path"],
-            )
+            prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
         else:
             print("Subtitle SRT is empty or invalid; falling back to STT.")
-            require_audio_for_stt(audio_files)
-            transcribe_args = make_transcribe_args(args, manifest_path, result_dir)
-            transcript_result = transcribe.run_transcribe(transcribe_args)
-            prompt_result = write_summary_prompt(
-                result_dir=result_dir,
-                video_id=fetch_result["video_id"],
-                transcript_markdown_path=transcript_result["markdown_path"],
-                transcript_json_path=transcript_result["json_path"],
-            )
+            transcript_result = run_asr_transcript(options, fetch_result, audio_files)
+            prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
     else:
         if subtitle_files:
             print("No usable SRT subtitles found; falling back to STT.")
-        require_audio_for_stt(audio_files)
-        transcribe_args = make_transcribe_args(args, manifest_path, result_dir)
-        transcript_result = transcribe.run_transcribe(transcribe_args)
-        prompt_result = write_summary_prompt(
-            result_dir=result_dir,
-            video_id=fetch_result["video_id"],
-            transcript_markdown_path=transcript_result["markdown_path"],
-            transcript_json_path=transcript_result["json_path"],
-        )
+        transcript_result = run_asr_transcript(options, fetch_result, audio_files)
+        prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
     print("")
     print("Pipeline completed.")
     print(f"Result: {path_to_posix(result_dir)}")
@@ -272,9 +284,9 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main() -> int:
-    args = parse_args()
+    options = PipelineOptions.from_args(parse_args())
     try:
-        run_pipeline(args)
+        run_pipeline(options)
     except fetch_audio.CookieRequiredError as exc:
         print(f"Error: {exc}")
         return 2

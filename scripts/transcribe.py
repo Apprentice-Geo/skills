@@ -1,9 +1,16 @@
 import argparse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-from faster_whisper import BatchedInferencePipeline, WhisperModel
 from asr_qwen3 import has_model_weights, transcribe_with_qwen3
+from manifest_io import (
+    infer_result_dir,
+    load_manifest,
+    load_metadata_from_manifest,
+    resolve_manifest_path,
+    resolve_path,
+)
+from runtime_options import TranscribeOptions
 from transcript_output import write_markdown
 
 from config import (
@@ -16,19 +23,11 @@ from config import (
     DEFAULT_WHISPER_MODEL_DIR,
     QWEN3_ALIGNER_MODEL_DIR,
     QWEN3_ASR_MODEL_DIR,
-    SKILL_ROOT,
 )
-from utils import ensure_dir, path_to_posix, read_json, write_json
+from utils import ensure_dir, path_to_posix, write_json
 
 
 SIMPLIFIED_CHINESE_PROMPT = "以下是普通话内容，请使用简体中文转写。"
-
-
-def resolve_path(value: str) -> Path:
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    return SKILL_ROOT / path
 
 
 def default_model_path() -> str:
@@ -37,46 +36,11 @@ def default_model_path() -> str:
     return "small"
 
 
-def load_manifest(path: Path) -> dict[str, Any]:
-    manifest = read_json(path)
-    if not isinstance(manifest, dict):
-        raise ValueError(f"Manifest must be a JSON object: {path}")
-    return manifest
-
-
-def load_metadata_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
-    metadata_path = manifest.get("metadata_path")
-    if not metadata_path:
-        return {}
-
-    path = resolve_path(str(metadata_path))
-    if not path.exists():
-        return {}
-
-    metadata = read_json(path)
-    if not isinstance(metadata, dict):
-        return {}
-    return metadata
-
-
 def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:
     audio_files = manifest.get("audio_files") or []
     if not audio_files:
         raise ValueError("Manifest does not contain audio_files. Run fetch_audio.py first.")
     return resolve_path(str(audio_files[0]))
-
-
-def infer_result_dir(manifest_path: Optional[Path], audio_path: Path, output_dir: Optional[Path]) -> Path:
-    if output_dir:
-        return output_dir
-
-    if manifest_path:
-        return manifest_path.parent.parent
-
-    if audio_path.parent.name == "resource":
-        return audio_path.parent.parent
-
-    return audio_path.parent.parent.parent
 
 
 def make_segment(segment: Any, include_words: bool) -> dict[str, Any]:
@@ -143,15 +107,15 @@ def metadata_duration(metadata: dict[str, Any]) -> float | None:
 
 def transcribe_audio(
     audio_path: Path,
-    args: argparse.Namespace,
-    metadata: Optional[dict[str, Any]] = None,
+    options: TranscribeOptions,
+    metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
-    if args.asr_provider == "qwen3":
+    if options.asr_provider == "qwen3":
         if has_model_weights(QWEN3_ASR_MODEL_DIR) and has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
             try:
                 info_data, segment_list = transcribe_with_qwen3(
                     audio_path,
-                    args.language,
+                    options.language,
                     metadata_duration(metadata or {}),
                 )
                 return info_data, segment_list, "qwen3-asr"
@@ -161,29 +125,31 @@ def transcribe_audio(
         else:
             print("Qwen3 local models not found; falling back to faster-whisper.")
 
-    model_path = args.model or default_model_path()
+    from faster_whisper import BatchedInferencePipeline, WhisperModel
+
+    model_path = options.model or default_model_path()
     model = WhisperModel(
         model_path,
-        device=args.device,
-        compute_type=args.compute_type,
-        cpu_threads=args.cpu_threads,
-        num_workers=args.num_workers,
+        device=options.device,
+        compute_type=options.compute_type,
+        cpu_threads=options.cpu_threads,
+        num_workers=options.num_workers,
     )
 
     transcriber = BatchedInferencePipeline(model=model)
     segments, info = transcriber.transcribe(
         path_to_posix(audio_path),
-        language=args.language,
-        batch_size=args.batch_size,
-        beam_size=args.beam_size,
+        language=options.language,
+        batch_size=options.batch_size,
+        beam_size=options.beam_size,
         vad_filter=True,
-        word_timestamps=args.word_timestamps,
-        initial_prompt=SIMPLIFIED_CHINESE_PROMPT if is_chinese_language(args.language) else None,
+        word_timestamps=options.word_timestamps,
+        initial_prompt=SIMPLIFIED_CHINESE_PROMPT if is_chinese_language(options.language) else None,
     )
 
     segment_list = normalize_segments_for_language(
-        [make_segment(segment, args.word_timestamps) for segment in segments],
-        args.language,
+        [make_segment(segment, options.word_timestamps) for segment in segments],
+        options.language,
     )
     info_data = {
         "language": getattr(info, "language", None),
@@ -191,12 +157,12 @@ def transcribe_audio(
         "duration": getattr(info, "duration", None),
         "duration_after_vad": getattr(info, "duration_after_vad", None),
         "model": model_path,
-        "device": args.device,
-        "compute_type": args.compute_type,
-        "batch_size": args.batch_size,
-        "beam_size": args.beam_size,
-        "word_timestamps": args.word_timestamps,
-        "text_normalization": "simplified-chinese" if is_chinese_language(args.language) else None,
+        "device": options.device,
+        "compute_type": options.compute_type,
+        "batch_size": options.batch_size,
+        "beam_size": options.beam_size,
+        "word_timestamps": options.word_timestamps,
+        "text_normalization": "simplified-chinese" if is_chinese_language(options.language) else None,
     }
     return info_data, segment_list, "faster-whisper"
 
@@ -231,12 +197,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_inputs(args: argparse.Namespace) -> tuple[Optional[Path], Path, dict[str, Any]]:
-    manifest_path = args.manifest
-    audio_path = args.audio
+def resolve_inputs(
+    args: argparse.Namespace | TranscribeOptions,
+) -> tuple[Path | None, Path, dict[str, Any]]:
+    options = TranscribeOptions.from_args(args)
+    manifest_path = options.manifest
+    audio_path = options.audio
 
-    if args.input:
-        input_path = resolve_path(args.input)
+    if options.input:
+        input_path = resolve_path(options.input)
         if input_path.suffix.lower() == ".json":
             manifest_path = input_path
         else:
@@ -244,7 +213,7 @@ def resolve_inputs(args: argparse.Namespace) -> tuple[Optional[Path], Path, dict
 
     manifest: dict[str, Any] = {}
     if manifest_path:
-        manifest_path = resolve_path(path_to_posix(manifest_path))
+        manifest_path = resolve_manifest_path(manifest_path)
         manifest = load_manifest(manifest_path)
 
     if audio_path:
@@ -258,19 +227,20 @@ def resolve_inputs(args: argparse.Namespace) -> tuple[Optional[Path], Path, dict
 
 
 def main() -> int:
-    args = parse_args()
-    run_transcribe(args)
+    options = TranscribeOptions.from_args(parse_args())
+    run_transcribe(options)
     return 0
 
 
-def run_transcribe(args: argparse.Namespace) -> dict[str, Any]:
-    manifest_path, audio_path, manifest = resolve_inputs(args)
+def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, Any]:
+    options = TranscribeOptions.from_args(args)
+    manifest_path, audio_path, manifest = resolve_inputs(options)
     metadata = load_metadata_from_manifest(manifest)
 
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-    output_dir = infer_result_dir(manifest_path, audio_path, args.output_dir)
+    output_dir = infer_result_dir(manifest_path, audio_path, options.output_dir)
     ensure_dir(output_dir)
 
     video_id = manifest.get("id") or audio_path.stem
@@ -278,7 +248,7 @@ def run_transcribe(args: argparse.Namespace) -> dict[str, Any]:
     json_path = output_dir / f"{output_stem}.json"
     md_path = output_dir / f"{output_stem}.md"
 
-    info_data, segments, source = transcribe_audio(audio_path, args, metadata)
+    info_data, segments, source = transcribe_audio(audio_path, options, metadata)
     payload = {
         "bvid": video_id,
         "title": manifest.get("title"),
