@@ -1,0 +1,11 @@
+.cache/
+.venv/
+tools/
+results/
+test_workspace/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+tests/.tmp/
+*cookies*
+DEVELOP_PLAN.md

@@ -6,6 +6,7 @@ Use this reference only when a command fails or debugging is required.
 
 - If setup fails because no compatible Python is available, tell the user to install `uv` from `https://docs.astral.sh/uv/` and rerun setup. For other setup failures, check the environment setup section in `README.md`.
 - If pip, ffmpeg, or model downloads fail, check mirror variables in `README.md`.
+- If model downloads fail after the network and mirror settings look correct, verify that the `HF_HOME` and `HUGGINGFACE_HUB_CACHE` paths printed by setup are writable.
 - If the default faster-whisper path fails, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
 
 ## Bilibili Fetch Failures

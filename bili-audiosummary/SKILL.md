@@ -1,6 +1,6 @@
 ---
 name: bili-audiosummary
-description: Use this skill when the user provides a Bilibili/B站/BV video URL and wants an audio-based summary, notes, key points, timestamps, or asks what the video says, e.g. “总结这个B站视频”, “这个BV讲了什么”, “提炼要点”, or “生成笔记”. Do not use it for visual analysis, PV/music/dance videos, editing, comments, covers, or original-video downloads.
+description: Use this skill when the user provides a Bilibili/B站/BV video URL and wants an audio-based summary, notes, key points, timestamps, or asks what the video says, e.g. “总结这个B站视频”, “这个视频讲了什么”, “提炼要点”, or “生成笔记”. Do not use it for visual analysis, PV/music/dance videos, editing, comments, covers, or original-video downloads.
 compatibility: Windows with PowerShell. Recommended uv for Python 3.12 environment creation; otherwise local Python >= 3.12 is required. Requires network access to Bilibili, PyPI, GitHub, and Hugging Face or configured mirrors.
 license: Apache-2.0
 ---

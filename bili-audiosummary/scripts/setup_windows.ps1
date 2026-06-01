@@ -294,6 +294,7 @@ $RequirementsPath = Join-Path $SkillRoot "requirements.txt"
 $Qwen3RequirementsPath = Join-Path $SkillRoot "requirements-qwen3.txt"
 $ToolsDir = Join-Path $SkillRoot "tools"
 $UvCacheDir = Join-Path $ToolsDir "uv-cache"
+$DefaultHfHome = Join-Path $SkillRoot ".cache\huggingface"
 $ModelsDir = Join-Path $ToolsDir "models"
 $ResultsDir = Join-Path $SkillRoot "results"
 $WhisperModelDir = Join-Path $ModelsDir "faster-whisper-small"
@@ -320,11 +321,23 @@ $env:HF_ENDPOINT = $HfEndpoint
 Write-Host "Skill root: $SkillRoot"
 Write-Host "Using HF endpoint: $env:HF_ENDPOINT"
 
+if (-not $env:HF_HOME) {
+    $env:HF_HOME = $DefaultHfHome
+}
+
+if (-not $env:HUGGINGFACE_HUB_CACHE) {
+    $env:HUGGINGFACE_HUB_CACHE = Join-Path $env:HF_HOME "hub"
+}
+
 Write-Step "Create local directories"
 Ensure-Directory $ToolsDir
 Ensure-Directory $UvCacheDir
+Ensure-Directory $env:HF_HOME
+Ensure-Directory $env:HUGGINGFACE_HUB_CACHE
 Ensure-Directory $ModelsDir
 Ensure-Directory $ResultsDir
+Write-Host "HF_HOME: $env:HF_HOME"
+Write-Host "HUGGINGFACE_HUB_CACHE: $env:HUGGINGFACE_HUB_CACHE"
 
 if (-not $env:UV_CACHE_DIR) {
     $env:UV_CACHE_DIR = $UvCacheDir
