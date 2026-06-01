@@ -3,6 +3,8 @@ name: bili-audiosummary
 description: Use this skill when the user provides a Bilibili/B站/BV video URL and wants an audio-based summary, notes, key points, timestamps, or asks what the video says, e.g. “总结这个B站视频”, “这个视频讲了什么”, “提炼要点”, or “生成笔记”. Do not use it for visual analysis, PV/music/dance videos, editing, comments, covers, or original-video downloads.
 compatibility: Windows with PowerShell. Recommended uv for Python 3.12 environment creation; otherwise local Python >= 3.12 is required. Requires network access to Bilibili, PyPI, GitHub, and Hugging Face or configured mirrors.
 license: Apache-2.0
+metadata:
+  Github: https://github.com/Apprentice-Geo/skills/tree/main/bili-audiosummary
 ---
 
 # Bilibili Audio Summary
@@ -72,11 +74,9 @@ If the video should be processed as English content, set the target language exp
 7. Write the summary to the output path shown at the top of the prompt.
 8. Verify the final summary:
 
-- the file exists at the output path specified in the prompt
-- no `{{...}}` placeholders remain
-- template comments are not included
-- the full transcript is not copied into the summary
-- the file is saved as UTF-8
+```powershell
+.\.venv\Scripts\python.exe scripts\validate_summary.py "<summary-path>"
+```
 
 9. If any command fails, read `references/error-handling.md` and follow the matching failure case.
 
@@ -87,6 +87,7 @@ If the video should be processed as English content, set the target language exp
   When `-InstallQwen3` is used, `torch` and `torchaudio` are installed from the PyTorch CUDA wheel index, while the remaining Qwen3 dependencies still use the configured pip mirror.
 - `scripts/setup_windows.bat`: wrapper for the PowerShell setup script.
 - `scripts/run_pipeline.py`: main entry point. Reuse matching cached subtitle `.srt` files only when they still parse correctly, otherwise best-effort download target-language subtitles; reuse cached audio when available, otherwise best-effort download audio; prefer subtitles when usable, then fall back to STT and generate the summary prompt.
+- `scripts/validate_summary.py`: validate that the final summary file exists, is UTF-8, and contains no template placeholders or template comments.
 - `scripts/fetch_audio.py`: fetch Bilibili metadata plus target-language subtitles and audio; after the first metadata extraction, later subtitle and audio downloads use the canonical `https://www.bilibili.com/video/<BVID>/` URL. It reuses matching cached subtitle `.srt` files only when they still parse correctly, re-fetches subtitles when cached `.srt` files are unusable, reuses cached audio when available, and only prints warnings when subtitle or audio download fails.
 - `scripts/transcribe.py`: transcribe an existing fetched audio manifest or audio file.
 

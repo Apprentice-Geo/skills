@@ -58,8 +58,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## 5. Test quality
 
-Write tests for stable, user-observable behavior, public interfaces, business rules, error handling, and regression cases.
+**Tests must protect behavior, not implementation.**
 
-Do not write tests that lock down implementation details or easily changeable content, such as UI copy, documentation wording, CSS classes, snapshots, internal function calls, mock call counts, default user preferences, temporary folders, cache files, logs, or other incidental side effects.
+Prefer testing public APIs, user-visible outcomes, business rules, error paths, and regressions. Avoid tests for mutable text, documentation wording, styling, snapshots, internal calls, mock interactions, default preferences, temporary files, logs, caches, and incidental filesystem side effects.
 
-Only test side effects when they are part of the explicit product contract. Prefer focused assertions on meaningful outcomes over broad snapshots or full-structure matching.
+A test is acceptable only if breaking it usually indicates a real product or contract regression.

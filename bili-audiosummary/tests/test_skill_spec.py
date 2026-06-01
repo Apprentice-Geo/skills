@@ -32,6 +32,7 @@ def test_skill_referenced_files_exist() -> None:
         "README.md",
         "requirements.txt",
         "scripts/run_pipeline.py",
+        "scripts/validate_summary.py",
         "scripts/fetch_audio.py",
         "scripts/transcribe.py",
         "references/error-handling.md",
@@ -50,3 +51,9 @@ def test_readme_declares_agent_skill_standard_and_main_usage() -> None:
     assert "Agent Skills" in readme
     assert "scripts\\run_pipeline.py" in readme or "scripts/run_pipeline.py" in readme
     assert "--skip-subtitles" in readme
+
+
+def test_skill_declares_summary_validator_usage() -> None:
+    skill = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "scripts\\validate_summary.py" in skill or "scripts/validate_summary.py" in skill
