@@ -83,7 +83,7 @@ If the video should be processed as English content, set the target language exp
 ## Scripts
 
 - `scripts/setup_windows.ps1`: prepare a Python >= 3.12 `.venv`, preferring `uv` with Python 3.12 and falling back to local Python >= 3.12 when `uv` is unavailable; install Python dependencies, resolve ffmpeg through system PATH or `ffmpeg-binaries-compat`, and download the default faster-whisper model. `-InstallQwen3` installs optional Qwen3 runtime dependencies, and `-DownloadQwen3Models` downloads the required Qwen3 local model files.
-  When `UV_CACHE_DIR` is not already configured, setup uses `tools/uv-cache/` as the local uv cache directory.
+  When `UV_CACHE_DIR` is not already configured, setup uses `.cache/uv/` as the local uv cache directory. When `HF_HOME` is not already configured, setup uses `.cache/huggingface/` for Hugging Face downloads.
   When `-InstallQwen3` is used, `torch` and `torchaudio` are installed from the PyTorch CUDA wheel index, while the remaining Qwen3 dependencies still use the configured pip mirror.
 - `scripts/setup_windows.bat`: wrapper for the PowerShell setup script.
 - `scripts/run_pipeline.py`: main entry point. Reuse matching cached subtitle `.srt` files only when they still parse correctly, otherwise best-effort download target-language subtitles; reuse cached audio when available, otherwise best-effort download audio; prefer subtitles when usable, then fall back to STT and generate the summary prompt.

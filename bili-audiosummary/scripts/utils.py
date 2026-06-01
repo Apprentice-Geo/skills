@@ -6,8 +6,6 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any, Optional
 
-from config import PORTABLE_FFMPEG_BIN_DIR, PORTABLE_FFMPEG_EXE, PORTABLE_FFPROBE_EXE
-
 
 WINDOWS_RESERVED_NAMES = {
     "CON",
@@ -108,8 +106,5 @@ def resolve_ffmpeg_location() -> Optional[str]:
     package_location = resolve_ffmpeg_binaries_location()
     if package_location:
         return package_location
-
-    if PORTABLE_FFMPEG_EXE.exists() and PORTABLE_FFPROBE_EXE.exists():
-        return path_to_posix(PORTABLE_FFMPEG_BIN_DIR)
 
     return None

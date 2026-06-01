@@ -292,10 +292,10 @@ $VenvDir = Join-Path $SkillRoot ".venv"
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $RequirementsPath = Join-Path $SkillRoot "requirements.txt"
 $Qwen3RequirementsPath = Join-Path $SkillRoot "requirements-qwen3.txt"
-$ToolsDir = Join-Path $SkillRoot "tools"
-$UvCacheDir = Join-Path $ToolsDir "uv-cache"
-$DefaultHfHome = Join-Path $SkillRoot ".cache\huggingface"
-$ModelsDir = Join-Path $ToolsDir "models"
+$CacheDir = Join-Path $SkillRoot ".cache"
+$UvCacheDir = Join-Path $CacheDir "uv"
+$DefaultHfHome = Join-Path $CacheDir "huggingface"
+$ModelsDir = Join-Path $SkillRoot "models"
 $ResultsDir = Join-Path $SkillRoot "results"
 $WhisperModelDir = Join-Path $ModelsDir "faster-whisper-small"
 $Qwen3AsrModelDir = Join-Path $ModelsDir "qwen3-asr-0.6b"
@@ -330,7 +330,7 @@ if (-not $env:HUGGINGFACE_HUB_CACHE) {
 }
 
 Write-Step "Create local directories"
-Ensure-Directory $ToolsDir
+Ensure-Directory $CacheDir
 Ensure-Directory $UvCacheDir
 Ensure-Directory $env:HF_HOME
 Ensure-Directory $env:HUGGINGFACE_HUB_CACHE

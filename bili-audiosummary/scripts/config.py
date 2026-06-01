@@ -6,17 +6,11 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_ROOT / "results"
 ASSETS_DIR = SKILL_ROOT / "assets"
 SUMMARY_INSTRUCTIONS_PATH = ASSETS_DIR / "summary_instructions.md"
-TOOLS_DIR = SKILL_ROOT / "tools"
-TOOLS_BIN_DIR = TOOLS_DIR / "bin"
-TOOLS_MODELS_DIR = TOOLS_DIR / "models"
-DEFAULT_WHISPER_MODEL_DIR = TOOLS_MODELS_DIR / "faster-whisper-small"
-QWEN3_ASR_MODEL_DIR = TOOLS_MODELS_DIR / "qwen3-asr-0.6b"
-QWEN3_ALIGNER_MODEL_DIR = TOOLS_MODELS_DIR / "qwen3-forcedaligner-0.6b"
+MODELS_DIR = SKILL_ROOT / "models"
+DEFAULT_WHISPER_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
+QWEN3_ASR_MODEL_DIR = MODELS_DIR / "qwen3-asr-0.6b"
+QWEN3_ALIGNER_MODEL_DIR = MODELS_DIR / "qwen3-forcedaligner-0.6b"
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
-
-PORTABLE_FFMPEG_BIN_DIR = TOOLS_BIN_DIR / "ffmpeg" / "bin"
-PORTABLE_FFMPEG_EXE = PORTABLE_FFMPEG_BIN_DIR / "ffmpeg.exe"
-PORTABLE_FFPROBE_EXE = PORTABLE_FFMPEG_BIN_DIR / "ffprobe.exe"
 
 SUBTITLE_LANGUAGE_PRIORITY = {
     "zh": [

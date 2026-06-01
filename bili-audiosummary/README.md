@@ -13,13 +13,13 @@ bili-audiosummary/
 ├─ requirements.txt
 ├─ .gitignore
 ├─ .venv/                         # setup_windows.ps1 创建，本地 Python >= 3.12 虚拟环境
-├─ tools/
-│  ├─ bin/
-│  ├─ cache/                      # 预留本地缓存目录
-│  └─ models/
-│     ├─ faster-whisper-small/     # 默认 STT 本地模型
-│     ├─ qwen3-asr-0.6b/           # 可选 Qwen3 ASR 本地模型
-│     └─ qwen3-forcedaligner-0.6b/ # 可选 Qwen3 对齐模型
+├─ .cache/
+│  ├─ uv/                          # setup 默认 uv 缓存
+│  └─ huggingface/                 # setup 默认 Hugging Face 下载缓存
+├─ models/
+│  ├─ faster-whisper-small/         # 默认 STT 本地模型
+│  ├─ qwen3-asr-0.6b/               # 可选 Qwen3 ASR 本地模型
+│  └─ qwen3-forcedaligner-0.6b/     # 可选 Qwen3 对齐模型
 ├─ scripts/
 │  ├─ setup_windows.bat
 │  ├─ setup_windows.ps1
@@ -80,8 +80,9 @@ Windows 默认使用：
 - 默认升级 pip，并将相关 Python 依赖安装到 `.venv/`
 - 优先检测系统 `ffmpeg/ffprobe`
 - 系统缺失时使用 `ffmpeg-binaries-compat` 随 Python 依赖安装的二进制
-- 下载默认模型 `Systran/faster-whisper-small` 到 `tools/models/faster-whisper-small/`
-- 未显式设置 `UV_CACHE_DIR` 时，默认将 uv 缓存放到 `tools/uv-cache/`
+- 下载默认模型 `Systran/faster-whisper-small` 到 `models/faster-whisper-small/`
+- 未显式设置 `UV_CACHE_DIR` 时，默认将 uv 缓存放到 `.cache/uv/`
+- 未显式设置 `HF_HOME` 时，默认将 Hugging Face 下载缓存放到 `.cache/huggingface/`
 
 推荐安装 [`uv`](https://docs.astral.sh/uv/) 以获得更稳定使用体验。
 
