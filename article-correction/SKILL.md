@@ -20,7 +20,7 @@ The skill is designed for:
 
 - 修正错误、校对文章、修改格式
 - 修正 Markdown、公式、标题、列表、代码块周边格式
-- 处理技术博客、调试记录、配置记录、算法题解、技术笔记
+- 校订技术博客、调试记录、配置记录、算法题解、技术笔记
 
 Do not use this skill for translation, summarization, expansion, heavy rewriting, article generation, or style polishing that is not tied to a clear error.
 
@@ -47,11 +47,15 @@ Keep these traits:
 - Short to medium sentences, with longer causal sentences only where the original already uses them.
 - Practice-first organization: background/problem -> attempt -> error/phenomenon -> cause judgment -> final solution -> summary.
 - Algorithm organization: problem -> core idea -> mapping/derivation -> code -> complexity or optimization.
-- Direct technical terms such as `GOPROXY`, `gopls`, `Playwright`, `Chromium`, 欧拉筛, 积性函数, and similar domain terms.
+- Direct technical terms such as `Dijkstra`, `python` , `Playwright`, `Chromium`, 欧拉筛, 积性函数, and similar domain terms.
 - Personal technical-blog tone, including expressions like “估计是”, “应该是”, “可能是”, “考虑是不是”, “我自己用这个方法解决了”.
 - Real-world details: commands, paths, filenames, screenshots, logs, versions, complete snippets, and concrete error messages.
 
-Do not make uncertain judgments sound certain. Do not soften direct conclusions without reason. Do not replace the author's problem-solving order with a knowledge-system order.
+Do not make uncertain judgments sound certain. 
+
+Do not soften direct conclusions without reason. 
+
+Do not replace the author's problem-solving order with a knowledge-system order.
 
 ## Safe Corrections
 
@@ -65,25 +69,48 @@ Correct only clear issues:
 - formula markup errors
 - unmarked mathematical expressions that should be LaTeX
 
-For formulas:
+For formulas or codes:
 
-- Keep valid existing LaTeX unchanged.
-- Use `$...$` for short inline formulas.
-- Use `$$...$$` for standalone formulas.
+- Keep valid existing LaTeX and code block unchanged.
+- Use "$...$" for short inline formulas.
+- Use "$$...$$" for standalone formulas.
+- Use "`...`" for short inline code block.
+- Use "```...```" with correct language for standalone code block.
+- Use english half-width symbol instead of chinese full width symbol.
 - Preserve variables, notation, and mathematical meaning.
-- Do not derive, simplify, or reinterpret formulas.
+- Do not derive, simplify, or reinterpret formulas or codes.
 
 Example:
 
-```md
-时间复杂度为 O(n log n)
+```markdown
+时间复杂度为 O(n log n) -> 时间复杂度为 $O(n \log n)$
+zip（）返回一个包含一些元组的迭代器 -> `zip()` 返回一个包含一些元组的迭代器
 ```
 
-can become:
+## Output
 
-```md
-时间复杂度为 $O(n \log n)$
+Return the corrected article in the original file.
+
+Tell the user revision note using this structure:
+
+```markdown
+**修改说明**
+
+- 简短说明修改了哪些类型的问题。
+- 只列出有意义的修改，不逐个列出所有标点和空格调整。
+
+**需确认项**
+
+- 如果没有需确认项，写“无”。
 ```
+
+Good summary items:
+
+- 修正错别字。
+- 修正 Markdown 标题或列表格式。
+- 调整中英文间空格。
+- 将未标记公式改为 LaTeX 公式。
+- 保留疑似术语并列入需确认项。
 
 ## Protected Content
 
@@ -104,35 +131,10 @@ If protected content looks suspicious but is not clearly wrong, keep it unchange
 When a term, command, path, version, formula, or technical statement may be wrong but cannot be confidently corrected:
 
 1. Keep the original text unchanged.
-2. Add it to `需确认项`.
+2. Add it to "**需确认项**" in the revision note.
 3. Briefly explain why it needs confirmation.
 
 Do not guess.
-
-## Output
-
-Return the corrected article in the original file.
-
-Create a separate Markdown revision note using this structure:
-
-```md
-## 修改说明
-
-- 简短说明修改了哪些类型的问题。
-- 只列出有意义的修改，不逐个列出所有标点和空格调整。
-
-## 需确认项
-
-- 如果没有需确认项，写“无”。
-```
-
-Good summary items:
-
-- 修正错别字。
-- 修正 Markdown 标题或列表格式。
-- 调整中英文间空格。
-- 将未标记公式改为 LaTeX 公式。
-- 保留疑似术语并列入需确认项。
 
 ## Final Check
 
@@ -142,5 +144,4 @@ Before finishing, verify:
 - Code blocks, inline code, URLs, logs, tables, and valid formulas were not changed accidentally.
 - No facts or conclusions were added.
 - No technical conclusion changed.
-- Uncertain items are listed in `需确认项`.
-- The article still reads like the author's practical technical blog, not formal documentation.
+- The article still reads like the author's personal blog, not formal documentation.
