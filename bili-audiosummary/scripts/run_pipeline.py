@@ -223,10 +223,6 @@ def parse_args() -> argparse.Namespace:
 
 def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
     options = PipelineOptions.from_args(args)
-    print(
-        "ASR provider: faster-whisper by default. Qwen3-ASR is available with --asr-provider qwen3 "
-        "after CUDA, optional dependencies, and local Qwen3 models are prepared."
-    )
     fetch_args = make_fetch_args(options)
     fetch_result = fetch_audio.run_fetch(fetch_args)
     manifest_path = fetch_result["manifest_path"]
