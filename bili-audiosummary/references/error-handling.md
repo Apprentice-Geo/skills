@@ -4,10 +4,11 @@ Use this reference only when a command fails or debugging is required.
 
 ## Setup Failures
 
-- If setup fails because no compatible Python is available, tell the user to install `uv` from `https://docs.astral.sh/uv/` and rerun setup. For other setup failures, check the environment setup section in `README.md`.
-- If pip, ffmpeg, or model downloads fail, check mirror variables in `README.md`.
+- If setup fails because neither `uv` nor `py -3.12` is available, tell the user to install `uv` from `https://docs.astral.sh/uv/` and rerun `.\scripts\setup\setup_windows.bat`.
+- If an existing `.venv` is not Python 3.12, stop. Do not delete it automatically.
+- If pip, packaged ffmpeg, or model downloads fail, read the `.cache/logs/setup-*.log` path printed by setup and check mirror variables in `README.md`.
 - If model downloads fail after the network and mirror settings look correct, verify that the `HF_HOME` and `HUGGINGFACE_HUB_CACHE` paths printed by setup are writable.
-- If the default faster-whisper path fails, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
+- If the default faster-whisper path fails, verify `.venv`, packaged ffmpeg, and `models/faster-whisper-small/`.
 
 ## Bilibili Fetch Failures
 
@@ -24,9 +25,9 @@ Use this reference only when a command fails or debugging is required.
 
 ## ASR Failures
 
-- If STT fails on the default path, verify `.venv`, ffmpeg, and `tools/models/faster-whisper-small/`.
+- If STT fails on the default path, verify `.venv`, packaged ffmpeg, and `models/faster-whisper-small/`.
 - If `--asr-provider qwen3` was requested, check the transcript JSON `source` field to confirm whether the run actually used `qwen3-asr` or fell back to `faster-whisper`.
-- If Qwen3 did not run, verify the machine has available CUDA and that both Qwen3 runtime dependencies and local model files were prepared under `tools/models/qwen3-asr-0.6b/` and `tools/models/qwen3-forcedaligner-0.6b/`.
+- If Qwen3 did not run, verify the machine has available CUDA and rerun `.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py`. The model files belong under `models/qwen3-asr-0.6b/` and `models/qwen3-forcedaligner-0.6b/`.
 - `--asr-provider qwen3` means try Qwen3-ASR first; it is not a strict Qwen3-only mode.
 
 ## Terminal Failure Cases

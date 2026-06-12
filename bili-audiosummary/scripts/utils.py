@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import shutil
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any, Optional
@@ -100,11 +99,4 @@ def resolve_ffmpeg_binaries_location() -> Optional[str]:
 
 
 def resolve_ffmpeg_location() -> Optional[str]:
-    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
-        return None
-
-    package_location = resolve_ffmpeg_binaries_location()
-    if package_location:
-        return package_location
-
-    return None
+    return resolve_ffmpeg_binaries_location()

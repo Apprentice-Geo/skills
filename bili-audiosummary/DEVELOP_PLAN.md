@@ -6,7 +6,7 @@
 
 **Architecture:** 先处理低风险高收益的缓存路径、摘要校验和语言命名问题，再增强日志与 prompt 结构，最后单独推进长视频分段与断点续跑。改动保持外科式：优先扩展现有 `scripts/` 入口、`tests/` 单测和 `SKILL.md` 文档，不重构无关代码。
 
-**Tech Stack:** Python 3.12, PowerShell, yt-dlp, faster-whisper, optional Qwen3-ASR, pytest.
+**Tech Stack:** Python 3.12, Windows BAT, yt-dlp, faster-whisper, optional Qwen3-ASR, pytest.
 
 ---
 
@@ -19,8 +19,8 @@
 
 ## File Map
 
-- Modify: `scripts/setup_windows.ps1`  
-  设置 Hugging Face 相关缓存默认落到项目内可写目录，并在模型下载失败时给出明确提示。
+- Modify: `scripts/setup/`
+  使用薄 BAT 启动 Python 3.12 setup 模块，设置项目内缓存、简化终端输出并保留完整日志。
 
 - Modify: `scripts/run_pipeline.py`  
   增加 `--summary-language`、改进 summary prompt 顺序、输出更透明的阶段日志、报告分 P 信息。
@@ -97,16 +97,18 @@
 
 **Problem** 目前的脚本运行时会输出大量信息污染上下文并且浪费 token，应该只输出简洁的状态提示，详细信息以及报错写入log文件
 
-#### Task4.1 拆分依赖安装脚本
+#### Task4.1 拆分依赖安装脚本（已完成）
 
 **Problem** 目前的依赖安装由一个ps1脚本实现，当调用pip等工具时会产生大量输出污染上下文
 
-修改目标：
+完成结果：
 
-- 重构依赖安装脚本，使用py脚本负责调用uv创建指定py312版本的虚拟环境，如果没有uv但是本机py有312，也可用本机py的venv创建.venv,如果以上两个条件均不满足，退出并给出明确提示
-- 使用py脚本在虚拟环境中安装依赖，脚本应该把pip的大量正常输出变为简洁的状态提示，例如“[xx/all] installing xxx”，但是报错信息可以原样输出。此脚本应该只可使用Python虚拟环境创建后就有的包，读入skill根目录下的requirements.txt，并调用虚拟环境中的pip安装需要列出的依赖
-- 通过subprocess调用.venv内的pip安装依赖，即`pip install -r requirements.txt --disable-pip-version-check --progress-bar off` 。主进程接受子进程的pip输出并将其简化为安装状态输出到命令行
-- 安装过程中的输出和报错信息应该写入log文件中，便于排查。
+- 公共入口改为 `.\scripts\setup\setup_windows.bat`，优先 uv，回退 `py -3.12`。
+- Python 安装实现拆分到 `scripts/setup/`；`.venv` 严格要求 Python 3.12。
+- pip 正常输出写入 `.cache/logs/setup-YYYYMMDD-HHMMSS.log`，终端只显示步骤和失败回放。
+- requirements 使用 `.venv` pip 自带的版本解析能力校验。
+- `ffmpeg-binaries-compat` 成为唯一 ffmpeg 来源。
+- Qwen3 使用 `.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py` 一次安装依赖和模型。
 
 #### Task4.2 规范化处理脚本输出
 

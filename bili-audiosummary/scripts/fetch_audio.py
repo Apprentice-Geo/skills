@@ -150,8 +150,12 @@ def make_base_options(options: FetchOptions) -> dict[str, Any]:
     }
 
     ffmpeg_location = resolve_ffmpeg_location()
-    if ffmpeg_location:
-        ydl_options["ffmpeg_location"] = ffmpeg_location
+    if not ffmpeg_location:
+        raise RuntimeError(
+            "ffmpeg-binaries-compat is unavailable. Run "
+            r".\scripts\setup\setup_windows.bat to repair the environment."
+        )
+    ydl_options["ffmpeg_location"] = ffmpeg_location
 
     add_cookie_options(ydl_options, options)
     return ydl_options

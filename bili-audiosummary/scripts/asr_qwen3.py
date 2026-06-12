@@ -216,7 +216,8 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
         from qwen_asr import Qwen3ASRModel
     except ImportError as exc:
         raise RuntimeError(
-            "Qwen3 ASR dependencies are not installed. Re-run setup_windows.ps1 with -InstallQwen3."
+            "Qwen3 ASR dependencies are not installed. Run "
+            r".\.venv\Scripts\python.exe scripts\setup\install_qwen3.py."
         ) from exc
 
     if not torch.cuda.is_available():
@@ -224,7 +225,8 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
 
     if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
         raise RuntimeError(
-            "Qwen3 local models are missing. Re-run setup_windows.ps1 with -DownloadQwen3Models."
+            "Qwen3 local models are missing. Run "
+            r".\.venv\Scripts\python.exe scripts\setup\install_qwen3.py."
         )
 
     os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)

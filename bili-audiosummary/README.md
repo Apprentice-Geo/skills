@@ -12,17 +12,24 @@ bili-audiosummary/
 ├─ README.md
 ├─ requirements.txt
 ├─ .gitignore
-├─ .venv/                         # setup_windows.ps1 创建，本地 Python >= 3.12 虚拟环境
+├─ .venv/                         # Python 3.12 虚拟环境
 ├─ .cache/
 │  ├─ uv/                          # setup 默认 uv 缓存
-│  └─ huggingface/                 # setup 默认 Hugging Face 下载缓存
+│  ├─ huggingface/                 # setup 默认 Hugging Face 下载缓存
+│  └─ logs/                        # setup 完整日志
 ├─ models/
 │  ├─ faster-whisper-small/         # 默认 STT 本地模型
 │  ├─ qwen3-asr-0.6b/               # 可选 Qwen3 ASR 本地模型
 │  └─ qwen3-forcedaligner-0.6b/     # 可选 Qwen3 对齐模型
 ├─ scripts/
-│  ├─ setup_windows.bat
-│  ├─ setup_windows.ps1
+│  ├─ setup/
+│  │  ├─ setup_windows.bat
+│  │  ├─ setup.py
+│  │  ├─ environment.py
+│  │  ├─ install_core.py
+│  │  ├─ download_models.py
+│  │  ├─ install_qwen3.py
+│  │  └─ process_logging.py
 │  ├─ run_pipeline.py             # 总入口：抓字幕/音频，优先用字幕，必要时执行 STT，生成 summary prompt
 │  ├─ fetch_audio.py              # 解析 URL，下载目标语言字幕和音频
 │  ├─ transcribe.py               # 默认使用 faster-whisper，可选优先尝试 Qwen3-ASR 生成转写结果
@@ -69,20 +76,20 @@ URL
 Windows 默认使用：
 
 ```powershell
-.\scripts\setup_windows.ps1
+.\scripts\setup\setup_windows.bat
 ```
 
 脚本会：
 
-- 已有 `.venv/` 且其 Python 版本大于等于 3.12 时复用
-- 否则优先使用 `uv` 创建 Python 3.12 虚拟环境 `.venv/`
-- 如果系统没有 `uv`，自动尝试使用本机 Python 3.12 或更高版本创建虚拟环境
-- 默认升级 pip，并将相关 Python 依赖安装到 `.venv/`
-- 优先检测系统 `ffmpeg/ffprobe`
-- 系统缺失时使用 `ffmpeg-binaries-compat` 随 Python 依赖安装的二进制
+- 优先使用 `uv` 启动 Python 3.12；没有 `uv` 时回退到 `py -3.12`
+- 使用 Python 3.12 创建 `.venv/`；已有 `.venv/` 不是 Python 3.12 时停止，不自动删除
+- 通过 `.venv` Python 单次执行 `pip install -r requirements.txt --disable-pip-version-check --progress-bar off`
+- 按 `requirements.txt` 的精确版本、版本范围或无版本声明校验安装结果
+- 只使用 `ffmpeg-binaries-compat` 提供的 `ffmpeg/ffprobe`，不读取系统 PATH
 - 下载默认模型 `Systran/faster-whisper-small` 到 `models/faster-whisper-small/`
 - 未显式设置 `UV_CACHE_DIR` 时，默认将 uv 缓存放到 `.cache/uv/`
 - 未显式设置 `HF_HOME` 时，默认将 Hugging Face 下载缓存放到 `.cache/huggingface/`
+- 将完整 stdout/stderr 写入 `.cache/logs/setup-YYYYMMDD-HHMMSS.log`，终端只显示简短进度和失败命令输出
 
 推荐安装 [`uv`](https://docs.astral.sh/uv/) 以获得更稳定使用体验。
 
@@ -90,10 +97,10 @@ Windows 默认使用：
 默认 setup 只准备 faster-whisper。Qwen3-ASR 是有可用 CUDA 时的可选项，需要显式执行：
 
 ```powershell
-.\scripts\setup_windows.ps1 -InstallQwen3 -DownloadQwen3Models
+.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py
 ```
 
-Qwen3 的可选依赖安装仍然继续兼容 `PIP_INDEX_URL` 和 `HF_ENDPOINT` 的国内镜像优化。其中 `torch` 与 `torchaudio` 会在启用 `-InstallQwen3` 时单独走 PyTorch 官方 CUDA wheel 源，避免从普通 PyPI 安装成 CPU 版；Qwen3 模型下载继续通过 `huggingface_hub` 完成。当前设计要求本地模型已存在后才能使用 Qwen3 运行转写。
+该命令一次完成 Qwen3 可选依赖和两个本地模型的准备。`torch` 与 `torchaudio` 单独使用 PyTorch 官方 CUDA wheel 源，其余依赖继续支持 `PIP_INDEX_URL`，模型下载继续支持 `HF_ENDPOINT`。
 
 setup 脚本会默认使用 [PyPI 清华源](https://pypi.tuna.tsinghua.edu.cn/simple)与 [Hugging Face 镜像站](https://hf-mirror.com)。
 如果 pip 通过配置镜像安装依赖失败，脚本会自动重试官方 PyPI 源 `https://pypi.org/simple`。实际使用中，系统代理可能导致镜像源的 simple 索引解析异常，表现为常见包提示 `from versions: none`；遇到这类情况可以先关闭代理重试，或直接使用官方源。
@@ -105,7 +112,7 @@ $env:PIP_INDEX_URL="https://pypi.org/simple/"
 $env:HF_ENDPOINT="https://huggingface.co/"
 ```
 
-ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries-compat`。
+`ffmpeg-binaries-compat` 是唯一 ffmpeg 来源。缺失时运行时会停止并要求重新执行 setup。
 
 ## 使用方式
 
@@ -178,15 +185,15 @@ Qwen3 路径实际运行时内部固定使用：
 Qwen3 的安装策略：
 
 - 默认依赖继续走当前 `PIP_INDEX_URL`，例如清华源
-- `torch` 和 `torchaudio` 在 `-InstallQwen3` 时单独从 PyTorch 官方 CUDA wheel 源安装
+- `torch` 和 `torchaudio` 单独从 PyTorch 官方 CUDA wheel 源安装
 - Qwen3 模型和 aligner 仍通过 `huggingface_hub` 下载，继续受 `HF_ENDPOINT` 控制
-- 使用 `--asr-provider qwen3` 前，需要先执行 `-InstallQwen3` 和 `-DownloadQwen3Models`
+- 使用 `--asr-provider qwen3` 前，需要先执行 Qwen3 setup 命令
 - `--asr-provider qwen3` 表示优先尝试 Qwen3-ASR，不是严格只允许 Qwen3；可查看 transcript JSON 的 `source` 字段确认实际使用的是 `qwen3-asr` 还是 `faster-whisper`
 
 ## 依赖组件
 
 - 视频元信息、字幕和音频下载：`yt-dlp`
-- 音频处理：`ffmpeg`或`ffmpeg-binaries-compat`
+- 音频处理：`ffmpeg-binaries-compat`
 - 默认语音转写：`faster-whisper`
 - 中文 faster-whisper 转写会使用简体中文提示，并通过 OpenCC 将输出规范化为简体中文。
 - 可选 CUDA 语音转写：`qwen-asr` + `torch` + `torchaudio` + `transformers` + `accelerate` + `huggingface_hub` + `numpy` + `soundfile` + `librosa`

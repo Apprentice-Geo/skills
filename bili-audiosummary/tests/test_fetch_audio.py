@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 import fetch_audio
+import pytest
 from utils import read_json
 
 
@@ -46,6 +47,13 @@ def test_select_valid_srt_files_filters_invalid_subtitles(
     )
 
     assert valid_files == [sample_srt_path]
+
+
+def test_make_base_options_requires_packaged_ffmpeg(mocker) -> None:
+    mocker.patch("fetch_audio.resolve_ffmpeg_location", return_value=None)
+
+    with pytest.raises(RuntimeError, match=r"scripts\\setup\\setup_windows\.bat"):
+        fetch_audio.make_base_options(make_args(Path(".")))
 
 
 def test_run_fetch_skip_subtitles_does_not_download_subtitles(workspace_tmp_path: Path, mocker) -> None:
