@@ -121,6 +121,10 @@ def transcribe_audio(
             logger.warning(
                 "Qwen3 local models not found; falling back to faster-whisper."
             )
+        logger.warning(
+            "Warning: Qwen3 unavailable; falling back to faster-whisper.",
+            extra={"terminal": True},
+        )
 
     from faster_whisper import WhisperModel
 

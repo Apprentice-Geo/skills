@@ -138,7 +138,7 @@ $env:HF_ENDPOINT="https://huggingface.co/"
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
 ```
 
-正常运行时，终端只显示抓取、字幕转换或 ASR、构建 prompt 等关键阶段，以及最终 `Result`、`Summary Prompt` 和 `Final Summary Path`。BVID、manifest、metadata、transcript 路径、缓存命中、segments、fallback 原因和 yt-dlp warning 写入完整日志。
+正常运行时，终端只显示抓取、字幕转换或 ASR、构建 prompt 等关键阶段，以及最终 `Result`、`Summary Prompt` 和 `Final Summary Path`。BVID、manifest、metadata、transcript 路径、缓存命中、segments、详细 fallback 原因和 yt-dlp warning 写入完整日志。Qwen3 不可用并回退到 faster-whisper 时，终端会额外显示一条简短 warning。
 
 pipeline 日志启动时写入 `.cache/logs/pipeline-<timestamp>.log`。识别 BVID 后，日志迁移到 `results/<BVID>/pipeline-<timestamp>.log`；若元信息提取失败，日志保留在 `.cache/logs/`。失败时终端会回放 traceback 并显示日志路径。
 

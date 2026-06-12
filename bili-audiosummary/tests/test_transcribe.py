@@ -119,6 +119,54 @@ def test_transcribe_audio_returns_model_segments_with_simplified_chinese(
     ]
 
 
+@pytest.mark.parametrize("models_available", [False, True])
+def test_qwen3_fallback_warns_terminal_and_keeps_details_in_log(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+    mocker,
+    models_available: bool,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def transcribe(self, *_args, **_kwargs):
+            return iter([]), SimpleNamespace(language="en")
+
+    faster_whisper = types.ModuleType("faster_whisper")
+    faster_whisper.WhisperModel = FakeWhisperModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
+    mocker.patch("transcribe.has_model_weights", return_value=models_available)
+    qwen3_mock = mocker.patch(
+        "transcribe.transcribe_with_qwen3",
+        side_effect=RuntimeError("qwen3 detail"),
+    )
+    log_path = workspace_tmp_path / "transcribe.log"
+
+    with LoggingSession(log_path):
+        _info, _segments, source = transcribe.transcribe_audio(
+            audio_path,
+            TranscribeOptions(asr_provider="qwen3", language="en"),
+        )
+
+    assert source == "faster-whisper"
+    assert capsys.readouterr().out == (
+        "Warning: Qwen3 unavailable; falling back to faster-whisper.\n"
+    )
+    log_text = log_path.read_text(encoding="utf-8")
+    if models_available:
+        qwen3_mock.assert_called_once()
+        assert "qwen3 detail" in log_text
+        assert "Traceback (most recent call last)" in log_text
+    else:
+        qwen3_mock.assert_not_called()
+        assert "Qwen3 local models not found" in log_text
+
+
 def test_transcribe_cli_rejects_word_timestamps_option(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,

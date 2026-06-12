@@ -110,7 +110,7 @@
 - `ffmpeg-binaries-compat` 成为唯一 ffmpeg 来源。
 - Qwen3 使用 `.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py` 一次安装依赖和模型。
 
-#### Task4.2 规范化处理脚本输出
+#### Task4.2 规范化处理脚本输出（已完成）
 
 **Problem** 目前的处理脚本 run_pipeline 会产生以下阶段性输出，并且没有log功能
 
@@ -157,7 +157,7 @@
 - 新增 `scripts/process_logging.py`，统一 setup、pipeline、fetch、字幕转换和 ASR 的 Python `logging`；删除 setup 专用日志模块。
 - 完整运行信息和 traceback 写入文件，终端 handler 只放行 `terminal=True` 的关键阶段与最终结果。
 - pipeline 日志先写入 `.cache/logs/pipeline-<timestamp>.log`，识别 BVID 后迁移到 `results/<BVID>/`；迁移失败不影响处理。
-- yt-dlp、缓存状态、BVID、manifest、metadata、transcript 路径、segments、fallback 和非致命 warning 仅写日志。
+- yt-dlp、缓存状态、BVID、manifest、metadata、transcript 路径、segments、详细 fallback 原因和第三方 warning 仅写日志；Qwen3 降级时终端显示一条简短 warning。
 - setup 保留步骤输出、成功命令静默和失败完整回放；fetch、transcribe、subtitle 独立入口使用相同简洁输出。
 - 未新增 CLI 参数，未实现 ASR 百分比或分段进度。
 
