@@ -1,6 +1,7 @@
 yt-dlp==2026.3.17
 faster-whisper==1.2.1
 ffmpeg-binaries-compat
+opencc-python-reimplemented
 typer
 rich
 requests

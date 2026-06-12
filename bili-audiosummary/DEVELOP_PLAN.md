@@ -178,13 +178,23 @@ Using auto-detected cookies: D:/codes/skills/bili-audiosummary/www.bilibili.com_
 - 文档明确当前默认只处理当前 URL 指向的 P。
 - 后续 `--page` / `--all-pages` 可单独开发，不在本任务实现。
 
-### Task 4: 细化 whisper 转写切分精度
+### Task 4: 细化 whisper 转写切分精度（已完成）
 
 **Problem:** 目前Qwen3的ASR链路和字幕复用的切分效果较好，但是whisper的输出切分粒度太粗
 
 
-**Success Criteria:**
-- 使用 whisper 时寻找方案做进一步的细化切分
+完成结果：
+
+- faster-whisper 默认从批处理转写改为非批处理转写，直接使用模型生成的较细 segments。
+- 不增加词级时间戳选项，transcript JSON/Markdown 继续只输出段级时间戳。
+- 补充 `opencc-python-reimplemented` 运行时依赖，保证中文 Whisper 结果能够规范化为简体中文。
+- 本地 306 秒中文样本从约 30 秒粒度的 11 段细化为连续的 31 段；接受单进程 CPU 转写耗时增加。
+
+后续研究：
+
+- 多进程转写作为独立任务处理，不在本任务提前实现 worker 或切分抽象。
+- 需要研究基于静音/VAD 的切分、边界重叠、避免截断句子、片段时间偏移和重叠文本去重。
+- 合并后的 segments 必须保持时间单调、无明显缺段，并维持现有 transcript JSON/Markdown 结构。
 
 ---
 

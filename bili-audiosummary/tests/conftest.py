@@ -26,13 +26,7 @@ except ImportError:
             self.args = args
             self.kwargs = kwargs
 
-    class BatchedInferencePipeline:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
     faster_whisper_stub.WhisperModel = WhisperModel
-    faster_whisper_stub.BatchedInferencePipeline = BatchedInferencePipeline
     sys.modules["faster_whisper"] = faster_whisper_stub
 
 

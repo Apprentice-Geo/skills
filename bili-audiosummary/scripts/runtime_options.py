@@ -8,7 +8,6 @@ from config import (
     DEFAULT_ASR_PROVIDER,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
-    DEFAULT_TRANSCRIBE_BATCH_SIZE,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
@@ -71,11 +70,9 @@ class TranscribeOptions:
     language: str = DEFAULT_TRANSCRIBE_LANGUAGE
     device: str = DEFAULT_TRANSCRIBE_DEVICE
     compute_type: str = DEFAULT_TRANSCRIBE_COMPUTE_TYPE
-    batch_size: int = DEFAULT_TRANSCRIBE_BATCH_SIZE
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE
     cpu_threads: int = 0
     num_workers: int = 1
-    word_timestamps: bool = False
 
     @classmethod
     def from_args(
@@ -93,11 +90,9 @@ class TranscribeOptions:
             language=getattr(args, "language", DEFAULT_TRANSCRIBE_LANGUAGE),
             device=getattr(args, "device", DEFAULT_TRANSCRIBE_DEVICE),
             compute_type=getattr(args, "compute_type", DEFAULT_TRANSCRIBE_COMPUTE_TYPE),
-            batch_size=getattr(args, "batch_size", DEFAULT_TRANSCRIBE_BATCH_SIZE),
             beam_size=getattr(args, "beam_size", DEFAULT_TRANSCRIBE_BEAM_SIZE),
             cpu_threads=getattr(args, "cpu_threads", 0),
             num_workers=getattr(args, "num_workers", 1),
-            word_timestamps=getattr(args, "word_timestamps", False),
         )
 
 

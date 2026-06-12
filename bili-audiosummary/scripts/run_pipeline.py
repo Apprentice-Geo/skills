@@ -56,11 +56,9 @@ def make_transcribe_args(
         language=resolve_transcribe_language(options),
         device=transcribe.DEFAULT_TRANSCRIBE_DEVICE,
         compute_type=transcribe.DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
-        batch_size=transcribe.DEFAULT_TRANSCRIBE_BATCH_SIZE,
         beam_size=transcribe.DEFAULT_TRANSCRIBE_BEAM_SIZE,
         cpu_threads=0,
         num_workers=1,
-        word_timestamps=False,
     )
 
 

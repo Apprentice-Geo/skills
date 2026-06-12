@@ -195,6 +195,7 @@ Qwen3 的安装策略：
 - 视频元信息、字幕和音频下载：`yt-dlp`
 - 音频处理：`ffmpeg-binaries-compat`
 - 默认语音转写：`faster-whisper`
+- faster-whisper 默认使用非批处理转写，以获得更细的段落时间戳；相较批处理模式会增加单进程转写耗时。
 - 中文 faster-whisper 转写会使用简体中文提示，并通过 OpenCC 将输出规范化为简体中文。
 - 可选 CUDA 语音转写：`qwen-asr` + `torch` + `torchaudio` + `transformers` + `accelerate` + `huggingface_hub` + `numpy` + `soundfile` + `librosa`
 

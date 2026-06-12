@@ -15,7 +15,6 @@ from transcript_output import write_markdown
 
 from config import (
     DEFAULT_ASR_PROVIDER,
-    DEFAULT_TRANSCRIBE_BATCH_SIZE,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
@@ -43,28 +42,13 @@ def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:
     return resolve_path(str(audio_files[0]))
 
 
-def make_segment(segment: Any, include_words: bool) -> dict[str, Any]:
-    data: dict[str, Any] = {
+def make_segment(segment: Any) -> dict[str, Any]:
+    return {
         "id": segment.id,
         "start": round(float(segment.start), 3),
         "end": round(float(segment.end), 3),
         "text": segment.text.strip(),
     }
-
-    if include_words and segment.words:
-        words = []
-        for word in segment.words:
-            word_data = {
-                "start": round(float(word.start), 3),
-                "end": round(float(word.end), 3),
-                "word": word.word,
-            }
-            if word.probability is not None:
-                word_data["probability"] = round(float(word.probability), 4)
-            words.append(word_data)
-        data["words"] = words
-
-    return data
 
 
 def is_chinese_language(language: str) -> bool:
@@ -125,7 +109,7 @@ def transcribe_audio(
         else:
             print("Qwen3 local models not found; falling back to faster-whisper.")
 
-    from faster_whisper import BatchedInferencePipeline, WhisperModel
+    from faster_whisper import WhisperModel
 
     model_path = options.model or default_model_path()
     model = WhisperModel(
@@ -136,19 +120,16 @@ def transcribe_audio(
         num_workers=options.num_workers,
     )
 
-    transcriber = BatchedInferencePipeline(model=model)
-    segments, info = transcriber.transcribe(
+    segments, info = model.transcribe(
         path_to_posix(audio_path),
         language=options.language,
-        batch_size=options.batch_size,
         beam_size=options.beam_size,
         vad_filter=True,
-        word_timestamps=options.word_timestamps,
         initial_prompt=SIMPLIFIED_CHINESE_PROMPT if is_chinese_language(options.language) else None,
     )
 
     segment_list = normalize_segments_for_language(
-        [make_segment(segment, options.word_timestamps) for segment in segments],
+        [make_segment(segment) for segment in segments],
         options.language,
     )
     info_data = {
@@ -159,9 +140,7 @@ def transcribe_audio(
         "model": model_path,
         "device": options.device,
         "compute_type": options.compute_type,
-        "batch_size": options.batch_size,
         "beam_size": options.beam_size,
-        "word_timestamps": options.word_timestamps,
         "text_normalization": "simplified-chinese" if is_chinese_language(options.language) else None,
     }
     return info_data, segment_list, "faster-whisper"
@@ -189,11 +168,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_TRANSCRIBE_BATCH_SIZE)
     parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
     parser.add_argument("--cpu-threads", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=1)
-    parser.add_argument("--word-timestamps", action="store_true")
     return parser.parse_args()
 
 
