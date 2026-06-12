@@ -3,6 +3,7 @@ from pathlib import Path
 
 import fetch_audio
 import pytest
+from process_logging import LoggingSession
 from utils import read_json
 
 
@@ -77,3 +78,29 @@ def test_run_fetch_skip_subtitles_does_not_download_subtitles(workspace_tmp_path
     assert result["subtitle_files"] == []
     assert manifest["subtitle_files"] == []
     assert manifest["audio_files"] == [audio_path.as_posix()]
+
+
+def test_run_fetch_only_emits_stage_extraction_and_title(
+    workspace_tmp_path: Path,
+    capsys,
+    mocker,
+) -> None:
+    info = {
+        "id": "BVTEST",
+        "title": "测试视频",
+        "webpage_url": "https://www.bilibili.com/video/BVTEST/",
+    }
+    audio_path = workspace_tmp_path / "BVTEST" / "resource" / "BVTEST.m4a"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"audio")
+    mocker.patch("fetch_audio.extract_metadata", return_value=info)
+    mocker.patch("fetch_audio.download_audio", return_value=[audio_path])
+
+    with LoggingSession(workspace_tmp_path / "fetch.log"):
+        fetch_audio.run_fetch(make_args(workspace_tmp_path, skip_subtitles=True))
+
+    assert capsys.readouterr().out == (
+        "[Stage] Fetch metadata, subtitles, and audio\n"
+        "[BiliBili] Extracting URL: https://www.bilibili.com/video/BVTEST/\n"
+        "Title: 测试视频\n"
+    )

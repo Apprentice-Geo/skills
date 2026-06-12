@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 import run_pipeline
+from process_logging import LoggingSession
 from utils import write_json
 
 
@@ -143,3 +144,116 @@ def test_pipeline_fails_before_asr_when_no_audio_is_available(
         run_pipeline.run_pipeline(make_args(skip_subtitles=True))
 
     transcribe_mock.assert_not_called()
+
+
+def test_pipeline_stdout_matches_subtitle_contract(
+    workspace_tmp_path: Path,
+    sample_srt_path: Path,
+    capsys,
+    mocker,
+) -> None:
+    results_dir = workspace_tmp_path / "results"
+    audio_path = results_dir / "BVTEST" / "resource" / "BVTEST.m4a"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"audio")
+    info = {
+        "id": "BVTEST",
+        "title": "测试视频",
+        "webpage_url": "https://www.bilibili.com/video/BVTEST/",
+    }
+    mocker.patch.object(run_pipeline, "RESULTS_DIR", results_dir)
+    mocker.patch("run_pipeline.fetch_audio.extract_metadata", return_value=info)
+    mocker.patch(
+        "run_pipeline.fetch_audio.download_subtitles",
+        return_value=[sample_srt_path],
+    )
+    mocker.patch(
+        "run_pipeline.fetch_audio.download_audio",
+        return_value=[audio_path],
+    )
+
+    with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
+        result = run_pipeline.run_pipeline(make_args())
+
+    result_dir = result["fetch"]["paths"]["result"]
+    expected = (
+        "[Stage] Fetch metadata, subtitles, and audio\n"
+        "[BiliBili] Extracting URL: https://www.bilibili.com/video/BVTEST/\n"
+        "Title: 测试视频\n"
+        "[Stage] Build transcript from subtitle\n"
+        "[Stage] Build summary prompt\n"
+        "Pipeline completed.\n"
+        f"Result: {result_dir.as_posix()}\n"
+        f"Summary Prompt: {result['prompt']['prompt_path'].as_posix()}\n"
+        f"Final Summary Path: {result['prompt']['summary_path'].as_posix()}\n"
+        "Agent should read the summary prompt file above to generate the final summary.\n"
+    )
+    assert capsys.readouterr().out == expected
+    assert result["log_path"] == result_dir / "pipeline.log"
+    log_text = result["log_path"].read_text(encoding="utf-8")
+    assert "BVID: BVTEST" in log_text
+    assert "Manifest:" in log_text
+    assert "Transcript JSON:" in log_text
+    assert "Segments: 2" in log_text
+
+
+def test_pipeline_stdout_matches_asr_stage_contract(
+    workspace_tmp_path: Path,
+    manifest_payload: dict,
+    metadata_payload: dict,
+    capsys,
+    mocker,
+) -> None:
+    audio_path = workspace_tmp_path / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        [],
+        [audio_path],
+        manifest_payload,
+        metadata_payload,
+    )
+
+    def fake_fetch(_args):
+        logger = run_pipeline.get_logger("fetch_audio")
+        logger.info(
+            "[Stage] Fetch metadata, subtitles, and audio",
+            extra={"terminal": True},
+        )
+        logger.info(
+            "[BiliBili] Extracting URL: https://www.bilibili.com/video/BVTEST/",
+            extra={"terminal": True},
+        )
+        logger.info("Title: 测试视频", extra={"terminal": True})
+        return fetch_result
+
+    mocker.patch("run_pipeline.fetch_audio.run_fetch", side_effect=fake_fetch)
+    def fake_transcribe(_args):
+        run_pipeline.terminal_info(
+            run_pipeline.get_logger("transcribe"),
+            "[Stage] Transcribe audio with whisper",
+        )
+        return make_transcribe_result(fetch_result["paths"]["result"])
+
+    mocker.patch(
+        "run_pipeline.transcribe.run_transcribe",
+        side_effect=fake_transcribe,
+    )
+
+    with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
+        result = run_pipeline.run_pipeline(make_args(skip_subtitles=True))
+
+    terminal = capsys.readouterr().out
+    result_dir = fetch_result["paths"]["result"]
+    assert terminal == (
+        "[Stage] Fetch metadata, subtitles, and audio\n"
+        "[BiliBili] Extracting URL: https://www.bilibili.com/video/BVTEST/\n"
+        "Title: 测试视频\n"
+        "[Stage] Transcribe audio with whisper\n"
+        "[Stage] Build summary prompt\n"
+        "Pipeline completed.\n"
+        f"Result: {result_dir.as_posix()}\n"
+        f"Summary Prompt: {result['prompt']['prompt_path'].as_posix()}\n"
+        f"Final Summary Path: {result['prompt']['summary_path'].as_posix()}\n"
+        "Agent should read the summary prompt file above to generate the final summary.\n"
+    )

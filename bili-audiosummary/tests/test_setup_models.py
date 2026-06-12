@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from scripts.setup.download_models import download_model, model_has_weights
-from scripts.setup.process_logging import ProcessResult, SetupError
+from process_logging import ProcessResult, SetupError
 
 
 class ModelDownloadLogger:

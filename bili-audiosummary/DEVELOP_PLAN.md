@@ -112,9 +112,94 @@
 
 #### Task4.2 规范化处理脚本输出
 
-**Problem** 目前的处理脚本
+**Problem** 目前的处理脚本 run_pipeline 会产生以下阶段性输出，并且没有log功能
+
+- Using auto-detected cookies:
+
+- [BiliBili] Extracting URL （保留）
+- [BiliBili] 1W1JxzjEty:
+- [BiliBili] BV1W1JxzjEty
+- [BiliBili] Format(s)
+- [BiliBili] 114555233502974:
+- Using cached audio files
+- Title （保留）
+- BVID
+- Canonical URL
+- Result （保留）
+- Metadata:
+- Raw metadata:
+- Manifest:
+- Audio files:
+- Subtitle files
+- Skipping subtitles; using ASR from audio
+- Audio
+- JSON
+- Markdown
+- Segments
+- Pipeline completed
+- Result
+- Manifest
+- Transcript JSON
+- Transcript Markdown
+- Summary Prompt:  （保留）
+- Final Summary Path （保留）
+- Agent should read the summary prompt file above to generate the final summary. （保留）
 
 修改目标：
+
+- 为 run_pipeline 涉及的流程文件增加 log 功能，可以考虑复用当前setup下的process_logging，将其提到外面一级文件夹来作文通用log入口
+
+- 除了标注保留的内容，其余内容写入log但是不打印到stdout
+- 也可以考虑有没有需要进一步增加的内容，例如转写过程目前完全没有提示，难以判断进度，而后续还需要接入多进程同步转写，因此目前也可以先不动ASR转写过程
+
+完成结果：
+
+- 新增 `scripts/process_logging.py`，统一 setup、pipeline、fetch、字幕转换和 ASR 的 Python `logging`；删除 setup 专用日志模块。
+- 完整运行信息和 traceback 写入文件，终端 handler 只放行 `terminal=True` 的关键阶段与最终结果。
+- pipeline 日志先写入 `.cache/logs/pipeline-<timestamp>.log`，识别 BVID 后迁移到 `results/<BVID>/`；迁移失败不影响处理。
+- yt-dlp、缓存状态、BVID、manifest、metadata、transcript 路径、segments、fallback 和非致命 warning 仅写日志。
+- setup 保留步骤输出、成功命令静默和失败完整回放；fetch、transcribe、subtitle 独立入口使用相同简洁输出。
+- 未新增 CLI 参数，未实现 ASR 百分比或分段进度。
+
+注：
+
+测试时原始输出如下：
+
+```powershell
+PS D:\codes\skills\bili-audiosummary> .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV1W1JxzjEty/" --skip
+Using auto-detected cookies: D:/codes/skills/bili-audiosummary/www.bilibili.com_cookies.txt
+[BiliBili] Extracting URL: https://www.bilibili.com/video/BV1W1JxzjEty/
+[BiliBili] 1W1JxzjEty: Downloading webpage
+[BiliBili] BV1W1JxzjEty: Extracting videos in anthology
+[BiliBili] Format(s) 1080P 高码率, 1080P 高清, 720P 准高清 are missing; you have to become a premium member to download them. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies
+[BiliBili] 114555233502974: Extracting chapters
+Using cached audio files: 1
+Title: 当法官变身为知心姐姐，一个离谱的判决和宣传
+BVID: BV1W1JxzjEty
+Canonical URL: https://www.bilibili.com/video/BV1W1JxzjEty/
+Result: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty
+Metadata: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/metadata.json
+Raw metadata: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/metadata.raw.json
+Manifest: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/fetch_manifest.json
+Audio files: 1
+Subtitle files: 0
+Skipping subtitles; using ASR from audio.
+Audio: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/BV1W1JxzjEty.m4a
+JSON: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.json
+Markdown: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.md
+Segments: 31
+
+Pipeline completed.
+Result: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty
+Manifest: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/fetch_manifest.json
+Transcript JSON: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.json
+Transcript Markdown: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.md
+Summary Prompt: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_summary_prompt.md
+Final Summary Path: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_summary_zh.md
+Agent should read the summary prompt file above to generate the final summary.
+```
+
+
 
 ### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据
 

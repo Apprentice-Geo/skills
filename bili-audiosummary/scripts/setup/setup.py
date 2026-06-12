@@ -5,6 +5,12 @@ import sys
 from pathlib import Path
 
 if __package__:
+    from ..process_logging import ProcessLogger, SetupError
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from process_logging import ProcessLogger, SetupError
+
+if __package__:
     from .download_models import download_model
     from .environment import (
         SetupPaths,
@@ -20,7 +26,6 @@ if __package__:
         verify_ffmpeg_executables,
         verify_requirements,
     )
-    from .process_logging import ProcessLogger, SetupError
 else:
     from download_models import download_model
     from environment import (
@@ -37,7 +42,6 @@ else:
         verify_ffmpeg_executables,
         verify_requirements,
     )
-    from process_logging import ProcessLogger, SetupError
 
 
 WHISPER_MODEL_REPO = "Systran/faster-whisper-small"
@@ -49,40 +53,45 @@ def run_setup(root: Path | None = None) -> Path:
     configure_environment(paths, os.environ)
     logger = ProcessLogger(create_log_path(paths))
     print(f"Full log: {logger.log_path}")
+    try:
+        logger.step(1, 4, "Prepare Python 3.12 virtual environment")
+        ensure_virtual_environment(paths, current_python(), logger)
 
-    logger.step(1, 4, "Prepare Python 3.12 virtual environment")
-    ensure_virtual_environment(paths, current_python(), logger)
+        logger.step(2, 4, "Install and verify core requirements")
+        install_requirements(
+            paths.venv_python,
+            paths.requirements_path,
+            logger,
+            os.environ,
+        )
+        verify_requirements(paths.venv_python, paths.requirements_path, logger)
 
-    logger.step(2, 4, "Install and verify core requirements")
-    install_requirements(
-        paths.venv_python,
-        paths.requirements_path,
-        logger,
-        os.environ,
-    )
-    verify_requirements(paths.venv_python, paths.requirements_path, logger)
+        logger.step(3, 4, "Verify core imports and packaged ffmpeg")
+        verify_core_imports(paths.venv_python, logger, os.environ)
+        ffmpeg, ffprobe = resolve_packaged_ffmpeg(
+            paths.venv_python,
+            logger,
+            os.environ,
+        )
+        verify_ffmpeg_executables(ffmpeg, ffprobe, logger)
 
-    logger.step(3, 4, "Verify core imports and packaged ffmpeg")
-    verify_core_imports(paths.venv_python, logger, os.environ)
-    ffmpeg, ffprobe = resolve_packaged_ffmpeg(
-        paths.venv_python,
-        logger,
-        os.environ,
-    )
-    verify_ffmpeg_executables(ffmpeg, ffprobe, logger)
+        logger.step(4, 4, "Download and verify faster-whisper model")
+        download_model(
+            paths.venv_python,
+            WHISPER_MODEL_REPO,
+            paths.whisper_model_dir,
+            ("model.bin",),
+            logger,
+            os.environ,
+        )
 
-    logger.step(4, 4, "Download and verify faster-whisper model")
-    download_model(
-        paths.venv_python,
-        WHISPER_MODEL_REPO,
-        paths.whisper_model_dir,
-        ("model.bin",),
-        logger,
-        os.environ,
-    )
-
-    print("Setup completed.")
-    return logger.log_path
+        print("Setup completed.")
+        return logger.log_path
+    except Exception:
+        logger.logger.exception("Setup failed")
+        raise
+    finally:
+        logger.close()
 
 
 def main() -> int:

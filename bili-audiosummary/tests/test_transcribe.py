@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import transcribe
+from process_logging import LoggingSession
 from runtime_options import TranscribeOptions
 from utils import write_json
 
@@ -127,3 +128,33 @@ def test_transcribe_cli_rejects_word_timestamps_option(monkeypatch) -> None:
 
     with pytest.raises(SystemExit):
         transcribe.parse_args()
+
+
+def test_run_transcribe_only_emits_stage(
+    workspace_tmp_path: Path,
+    capsys,
+    mocker,
+) -> None:
+    result_dir = workspace_tmp_path / "results" / "BVTEST"
+    resource_dir = result_dir / "resource"
+    resource_dir.mkdir(parents=True)
+    audio_path = resource_dir / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    manifest_path = resource_dir / "fetch_manifest.json"
+    write_json(
+        manifest_path,
+        {"id": "BVTEST", "audio_files": [audio_path.as_posix()]},
+    )
+    mocker.patch(
+        "transcribe.transcribe_audio",
+        return_value=(
+            {"language": "zh"},
+            [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试"}],
+            "faster-whisper",
+        ),
+    )
+
+    with LoggingSession(workspace_tmp_path / "transcribe.log"):
+        transcribe.run_transcribe(make_args(manifest_path, result_dir))
+
+    assert capsys.readouterr().out == "[Stage] Transcribe audio with whisper\n"

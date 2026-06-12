@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import subtitle_transcript
+from process_logging import LoggingSession
 from utils import read_json
 
 
@@ -46,3 +47,21 @@ def test_subtitle_to_transcript_writes_json_and_markdown(
     assert payload["segments"][0]["text"] == "第一句话。"
     assert "source: subtitle" in markdown
     assert "[00:00:01 - 00:00:03] 第一句话。" in markdown
+
+
+def test_subtitle_to_transcript_only_emits_stage(
+    workspace_tmp_path: Path,
+    sample_srt_path: Path,
+    manifest_payload: dict,
+    metadata_payload: dict,
+    capsys,
+) -> None:
+    with LoggingSession(workspace_tmp_path / "subtitle.log"):
+        subtitle_transcript.subtitle_to_transcript(
+            subtitle_path=sample_srt_path,
+            manifest=manifest_payload,
+            metadata=metadata_payload,
+            output_dir=workspace_tmp_path,
+        )
+
+    assert capsys.readouterr().out == "[Stage] Build transcript from subtitle\n"

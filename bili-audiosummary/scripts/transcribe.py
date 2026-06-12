@@ -12,6 +12,12 @@ from manifest_io import (
 )
 from runtime_options import TranscribeOptions
 from transcript_output import write_markdown
+from process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    get_logger,
+    terminal_info,
+)
 
 from config import (
     DEFAULT_ASR_PROVIDER,
@@ -22,11 +28,13 @@ from config import (
     DEFAULT_WHISPER_MODEL_DIR,
     QWEN3_ALIGNER_MODEL_DIR,
     QWEN3_ASR_MODEL_DIR,
+    SKILL_ROOT,
 )
 from utils import ensure_dir, path_to_posix, write_json
 
 
 SIMPLIFIED_CHINESE_PROMPT = "以下是普通话内容，请使用简体中文转写。"
+logger = get_logger(__name__)
 
 
 def default_model_path() -> str:
@@ -104,10 +112,15 @@ def transcribe_audio(
                 )
                 return info_data, segment_list, "qwen3-asr"
             except Exception as exc:
-                print(f"Qwen3 ASR failed: {exc}")
-                print("Falling back to faster-whisper.")
+                logger.warning(
+                    "Qwen3 ASR failed; falling back to faster-whisper: %s",
+                    exc,
+                    exc_info=True,
+                )
         else:
-            print("Qwen3 local models not found; falling back to faster-whisper.")
+            logger.warning(
+                "Qwen3 local models not found; falling back to faster-whisper."
+            )
 
     from faster_whisper import WhisperModel
 
@@ -205,12 +218,26 @@ def resolve_inputs(
 
 def main() -> int:
     options = TranscribeOptions.from_args(parse_args())
-    run_transcribe(options)
+    log_path = create_timestamped_log_path(
+        SKILL_ROOT / ".cache" / "logs",
+        "transcribe",
+    )
+    with LoggingSession(log_path) as session:
+        try:
+            run_transcribe(options)
+        except Exception as exc:
+            session.report_failure(exc)
+            return 1
     return 0
 
 
 def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, Any]:
     options = TranscribeOptions.from_args(args)
+    terminal_info(
+        logger,
+        "[Stage] Transcribe audio with %s",
+        options.asr_provider,
+    )
     manifest_path, audio_path, manifest = resolve_inputs(options)
     metadata = load_metadata_from_manifest(manifest)
 
@@ -219,6 +246,9 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
 
     output_dir = infer_result_dir(manifest_path, audio_path, options.output_dir)
     ensure_dir(output_dir)
+    session = LoggingSession.current()
+    if session is not None:
+        session.move_to(output_dir)
 
     video_id = manifest.get("id") or audio_path.stem
     output_stem = f"{video_id}_transcript"
@@ -241,10 +271,10 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
     write_json(json_path, payload)
     write_markdown(md_path, payload)
 
-    print(f"Audio: {path_to_posix(audio_path)}")
-    print(f"JSON: {path_to_posix(json_path)}")
-    print(f"Markdown: {path_to_posix(md_path)}")
-    print(f"Segments: {len(segments)}")
+    logger.info("Audio: %s", path_to_posix(audio_path))
+    logger.info("JSON: %s", path_to_posix(json_path))
+    logger.info("Markdown: %s", path_to_posix(md_path))
+    logger.info("Segments: %d", len(segments))
     return {
         "audio_path": audio_path,
         "json_path": json_path,

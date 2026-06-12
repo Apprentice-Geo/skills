@@ -32,5 +32,7 @@ def test_live_pipeline_can_force_asr_with_url_and_cookies() -> None:
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "Skipping subtitles; using ASR from audio." in completed.stdout
+    assert "[Stage] Transcribe audio with " in completed.stdout
     assert "Summary Prompt:" in completed.stdout
+    assert "Skipping subtitles; using ASR from audio." not in completed.stdout
+    assert "Transcript JSON:" not in completed.stdout

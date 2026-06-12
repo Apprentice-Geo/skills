@@ -10,7 +10,7 @@ from scripts.setup.environment import (
     create_log_path,
     ensure_virtual_environment,
 )
-from scripts.setup.process_logging import ProcessLogger, SetupError
+from process_logging import ProcessLogger, SetupError
 
 
 def test_configure_environment_uses_project_local_caches(

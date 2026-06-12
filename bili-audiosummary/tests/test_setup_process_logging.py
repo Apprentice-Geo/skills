@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.setup.process_logging import ProcessLogger, SetupError
+from process_logging import ProcessLogger, SetupError
 
 
 def test_process_logger_keeps_success_output_out_of_terminal(

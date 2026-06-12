@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Mapping
 
-try:
-    from .process_logging import ProcessLogger, SetupError
-except ImportError:
-    from process_logging import ProcessLogger, SetupError
+if __package__:
+    from ..process_logging import ProcessLogger, SetupError, get_logger
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from process_logging import ProcessLogger, SetupError, get_logger
+
+module_logger = get_logger(__name__)
 
 
 OFFICIAL_PYPI_URL = "https://pypi.org/simple"
@@ -70,9 +74,10 @@ def install_requirements(
     if result.returncode == 0:
         return
 
-    print(
+    module_logger.warning(
         "Configured pip index failed; retrying with official PyPI "
-        f"({OFFICIAL_PYPI_URL})."
+        "(%s).",
+        OFFICIAL_PYPI_URL,
     )
     fallback_env = dict(env)
     fallback_env["PIP_INDEX_URL"] = OFFICIAL_PYPI_URL

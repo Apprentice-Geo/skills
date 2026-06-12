@@ -13,7 +13,7 @@ from scripts.setup.install_core import (
     verify_ffmpeg_executables,
     verify_requirements,
 )
-from scripts.setup.process_logging import ProcessLogger, ProcessResult, SetupError
+from process_logging import ProcessLogger, ProcessResult, SetupError
 
 
 class RecordingLogger:

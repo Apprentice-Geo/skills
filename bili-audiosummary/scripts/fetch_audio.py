@@ -16,6 +16,13 @@ from config import (
     SUBTITLE_LANGUAGE_PRIORITY,
 )
 from runtime_options import FetchOptions
+from process_logging import (
+    LoggingSession,
+    YtDlpLogger,
+    create_timestamped_log_path,
+    get_logger,
+    terminal_info,
+)
 from subtitle_utils import infer_subtitle_language
 from utils import (
     ensure_dir,
@@ -26,6 +33,8 @@ from utils import (
     sanitize_filename,
     write_json,
 )
+
+logger = get_logger(__name__)
 
 
 class CookieRequiredError(RuntimeError):
@@ -124,8 +133,11 @@ def select_valid_srt_files(
     for path in sort_subtitle_files(paths, preferred_languages):
         segments, error = subtitle_transcript.probe_srt(path)
         if segments is None:
-            print(
-                f"Warning: {context} subtitle is unusable: {path_to_posix(path)} ({error})"
+            logger.warning(
+                "%s subtitle is unusable: %s (%s)",
+                context,
+                path_to_posix(path),
+                error,
             )
             continue
         valid_files.append(path)
@@ -146,7 +158,8 @@ def make_base_options(options: FetchOptions) -> dict[str, Any]:
         "socket_timeout": options.socket_timeout,
         "windowsfilenames": True,
         "quiet": options.quiet,
-        "no_warnings": options.quiet,
+        "no_warnings": False,
+        "logger": YtDlpLogger(logger),
     }
 
     ffmpeg_location = resolve_ffmpeg_location()
@@ -242,7 +255,7 @@ def download_subtitles(
         "Cached",
     )
     if cached_subtitle_files:
-        print(f"Using cached subtitle files: {len(cached_subtitle_files)}")
+        logger.info("Using cached subtitle files: %d", len(cached_subtitle_files))
         return cached_subtitle_files
 
     cached_srt_files = select_cached_subtitle_files(
@@ -250,7 +263,7 @@ def download_subtitles(
         preferred_languages,
     )
     if cached_srt_files:
-        print(
+        logger.warning(
             "Warning: cached subtitle files are invalid; attempting to re-download subtitles."
         )
 
@@ -272,7 +285,7 @@ def download_subtitles(
     except Exception as exc:
         if is_http_412_error(exc):
             raise make_cookie_required_error() from exc
-        print(f"Warning: subtitle download failed: {exc}")
+        logger.warning("Subtitle download failed: %s", exc, exc_info=True)
 
     subtitle_files = filter_subtitle_files_by_language(
         list_current_files(subtitle_dir, video_id),
@@ -304,7 +317,7 @@ def download_audio(
 
     cached_audio_files = list_current_files(audio_dir, video_id)
     if cached_audio_files:
-        print(f"Using cached audio files: {len(cached_audio_files)}")
+        logger.info("Using cached audio files: %d", len(cached_audio_files))
         return cached_audio_files
 
     ydl_options = make_base_options(options)
@@ -328,7 +341,7 @@ def download_audio(
     except Exception as exc:
         if is_http_412_error(exc):
             raise make_cookie_required_error() from exc
-        print(f"Warning: audio download failed: {exc}")
+        logger.warning("Audio download failed: %s", exc, exc_info=True)
 
     return list_current_files(audio_dir, video_id)
 
@@ -429,26 +442,34 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     options = FetchOptions.from_args(parse_args())
-    try:
-        run_fetch(options)
-    except CookieRequiredError as exc:
-        print(f"Error: {exc}")
-        return 2
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "fetch")
+    with LoggingSession(log_path) as session:
+        try:
+            run_fetch(options)
+        except Exception as exc:
+            session.report_failure(exc)
+            return 2 if isinstance(exc, CookieRequiredError) else 1
     return 0
 
 
 def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     options = FetchOptions.from_args(args)
     ensure_dir(options.output_dir)
+    normalized_url = normalize_bilibili_video_url(options.url)
+    terminal_info(logger, "[Stage] Fetch metadata, subtitles, and audio")
+    terminal_info(logger, "[BiliBili] Extracting URL: %s", normalized_url)
 
     cookie_path = resolve_cookie_path(options)
     if cookie_path and not options.cookies:
-        print(f"Using auto-detected cookies: {path_to_posix(cookie_path)}")
+        logger.info("Using auto-detected cookies: %s", path_to_posix(cookie_path))
 
     info = extract_metadata(options.url, options)
     video_id = get_video_id(info)
     canonical_url = build_canonical_url(info, video_id)
     paths = build_result_paths(info, options.output_dir)
+    session = LoggingSession.current()
+    if session is not None:
+        session.move_to(paths["result"])
 
     metadata_path = paths["resource"] / "metadata.json"
     write_json(metadata_path, compact_metadata(info))
@@ -470,15 +491,15 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
         paths["result"], info, audio_files, subtitle_files, canonical_url
     )
 
-    print(f"Title: {info.get('title') or info.get('id')}")
-    print(f"BVID: {video_id}")
-    print(f"Canonical URL: {canonical_url}")
-    print(f"Result: {path_to_posix(paths['result'])}")
-    print(f"Metadata: {path_to_posix(metadata_path)}")
-    print(f"Raw metadata: {path_to_posix(raw_metadata_path)}")
-    print(f"Manifest: {path_to_posix(manifest_path)}")
-    print(f"Audio files: {len(audio_files)}")
-    print(f"Subtitle files: {len(subtitle_files)}")
+    terminal_info(logger, "Title: %s", info.get("title") or info.get("id"))
+    logger.info("BVID: %s", video_id)
+    logger.info("Canonical URL: %s", canonical_url)
+    logger.info("Result: %s", path_to_posix(paths["result"]))
+    logger.info("Metadata: %s", path_to_posix(metadata_path))
+    logger.info("Raw metadata: %s", path_to_posix(raw_metadata_path))
+    logger.info("Manifest: %s", path_to_posix(manifest_path))
+    logger.info("Audio files: %d", len(audio_files))
+    logger.info("Subtitle files: %d", len(subtitle_files))
     return {
         "info": info,
         "video_id": video_id,
@@ -488,6 +509,7 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
         "manifest_path": manifest_path,
         "audio_files": audio_files,
         "subtitle_files": subtitle_files,
+        "log_path": session.log_path if session is not None else None,
     }
 
 

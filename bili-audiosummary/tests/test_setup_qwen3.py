@@ -4,7 +4,7 @@ from scripts.setup.install_qwen3 import (
     QWEN3_TORCH_INDEX_URL,
     install_cuda_torch,
 )
-from scripts.setup.process_logging import ProcessResult
+from process_logging import ProcessResult
 
 
 class RecordingLogger:

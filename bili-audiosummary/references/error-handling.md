@@ -12,6 +12,7 @@ Use this reference only when a command fails or debugging is required.
 
 ## Bilibili Fetch Failures
 
+- Processing commands write complete details and tracebacks to a log. Before metadata identifies the video, read `.cache/logs/<command>-*.log`; afterward, read the log moved to `results/<BVID>/`.
 - If Bilibili download fails, report the network or yt-dlp error and ask for a reachable URL if needed.
 - If Bilibili returns `HTTP 412`, stop immediately. Do not query other sources or generate a summary. Tell the user to provide a Netscape-format cookie file by following the cookie export instructions in `README.md`.
 - The pipeline auto-detects `cookies.txt`, `www.bilibili.com_cookies.txt`, and `bilibili_cookies.txt` in the skill root. Otherwise rerun with `--cookies .\cookies.txt`.
@@ -33,4 +34,5 @@ Use this reference only when a command fails or debugging is required.
 ## Terminal Failure Cases
 
 - If both subtitles and audio are unavailable, the pipeline should stop with a clear error instead of attempting STT.
+- Treat the terminal as a concise status view. Use the `Full log` path printed on failure for BVID, manifest, metadata, transcript paths, cache decisions, fallback reasons, yt-dlp warnings, and traceback details.
 - If the problem cannot be solved from local logs and README guidance, report the specific failure to the user.

@@ -16,20 +16,20 @@ bili-audiosummary/
 ├─ .cache/
 │  ├─ uv/                          # setup 默认 uv 缓存
 │  ├─ huggingface/                 # setup 默认 Hugging Face 下载缓存
-│  └─ logs/                        # setup 完整日志
+│  └─ logs/                        # setup 日志及尚未识别 BVID 的处理日志
 ├─ models/
 │  ├─ faster-whisper-small/         # 默认 STT 本地模型
 │  ├─ qwen3-asr-0.6b/               # 可选 Qwen3 ASR 本地模型
 │  └─ qwen3-forcedaligner-0.6b/     # 可选 Qwen3 对齐模型
 ├─ scripts/
+│  ├─ process_logging.py          # setup 与处理脚本共用的 logging 配置
 │  ├─ setup/
 │  │  ├─ setup_windows.bat
 │  │  ├─ setup.py
 │  │  ├─ environment.py
 │  │  ├─ install_core.py
 │  │  ├─ download_models.py
-│  │  ├─ install_qwen3.py
-│  │  └─ process_logging.py
+│  │  └─ install_qwen3.py
 │  ├─ run_pipeline.py             # 总入口：抓字幕/音频，优先用字幕，必要时执行 STT，生成 summary prompt
 │  ├─ fetch_audio.py              # 解析 URL，下载目标语言字幕和音频
 │  ├─ transcribe.py               # 默认使用 faster-whisper，可选优先尝试 Qwen3-ASR 生成转写结果
@@ -52,6 +52,7 @@ bili-audiosummary/
       │     └─ <BVID>.<lang>.srt
       ├─ <BVID>_transcript.json
       ├─ <BVID>_transcript.md
+      ├─ pipeline-<timestamp>.log
       └─ <BVID>_summary_prompt.md
 ```
 
@@ -89,7 +90,7 @@ Windows 默认使用：
 - 下载默认模型 `Systran/faster-whisper-small` 到 `models/faster-whisper-small/`
 - 未显式设置 `UV_CACHE_DIR` 时，默认将 uv 缓存放到 `.cache/uv/`
 - 未显式设置 `HF_HOME` 时，默认将 Hugging Face 下载缓存放到 `.cache/huggingface/`
-- 将完整 stdout/stderr 写入 `.cache/logs/setup-YYYYMMDD-HHMMSS.log`，终端只显示简短进度和失败命令输出
+- 将完整 stdout/stderr 写入 `.cache/logs/setup-<timestamp>.log`，终端只显示简短进度和失败命令输出
 
 推荐安装 [`uv`](https://docs.astral.sh/uv/) 以获得更稳定使用体验。
 
@@ -137,6 +138,10 @@ $env:HF_ENDPOINT="https://huggingface.co/"
 .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
 ```
 
+正常运行时，终端只显示抓取、字幕转换或 ASR、构建 prompt 等关键阶段，以及最终 `Result`、`Summary Prompt` 和 `Final Summary Path`。BVID、manifest、metadata、transcript 路径、缓存命中、segments、fallback 原因和 yt-dlp warning 写入完整日志。
+
+pipeline 日志启动时写入 `.cache/logs/pipeline-<timestamp>.log`。识别 BVID 后，日志迁移到 `results/<BVID>/pipeline-<timestamp>.log`；若元信息提取失败，日志保留在 `.cache/logs/`。失败时终端会回放 traceback 并显示日志路径。
+
 跳过字幕复用/下载并强制使用 ASR：
 
 ```powershell
@@ -153,7 +158,7 @@ $env:HF_ENDPOINT="https://huggingface.co/"
 
 - `fetch_audio.py` 会优先复用符合当前请求语言且可正常解析的 `.srt` 字幕缓存；缓存损坏时会尝试重新拉取字幕
 - 已下载音频会直接复用
-- 字幕或音频下载失败时先输出 warning，不会立即中止流程
+- 字幕或音频下载失败时将 warning 写入日志，不会立即中止流程
 - `run_pipeline.py --skip-subtitles` 会跳过字幕复用和下载，直接使用音频 ASR
 - `run_pipeline.py` 只有在既没有可用字幕、也没有可用音频可供 STT 回退时才会报错退出
 

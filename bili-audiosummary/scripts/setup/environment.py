@@ -3,14 +3,22 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import MutableMapping
 
-try:
-    from .process_logging import ProcessLogger, SetupError
-except ImportError:
-    from process_logging import ProcessLogger, SetupError
+if __package__:
+    from ..process_logging import (
+        ProcessLogger,
+        SetupError,
+        create_timestamped_log_path,
+    )
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from process_logging import (
+        ProcessLogger,
+        SetupError,
+        create_timestamped_log_path,
+    )
 
 
 DEFAULT_PIP_INDEX_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
@@ -88,8 +96,7 @@ def configure_environment(
 
 
 def create_log_path(paths: SetupPaths) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return paths.logs_dir / f"setup-{timestamp}.log"
+    return create_timestamped_log_path(paths.logs_dir, "setup")
 
 
 def assert_python_312(version: tuple[int, int, int], context: str) -> None:
