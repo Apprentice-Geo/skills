@@ -73,6 +73,21 @@ def make_transcribe_result(result_dir: Path) -> dict:
     return {"json_path": json_path, "markdown_path": markdown_path, "segments": []}
 
 
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (12.34, "12.34s"),
+        (59.999, "1m 00.00s"),
+        (72.34, "1m 12.34s"),
+        (3599.994, "59m 59.99s"),
+        (3599.999, "1h 0m 00.00s"),
+        (3723.45, "1h 2m 03.45s"),
+    ],
+)
+def test_format_duration(seconds: float, expected: str) -> None:
+    assert run_pipeline.format_duration(seconds) == expected
+
+
 def test_summary_prompt_links_untrusted_transcript_without_embedding_it(
     workspace_tmp_path: Path,
     monkeypatch,
@@ -249,6 +264,10 @@ def test_pipeline_stdout_matches_subtitle_contract(
         "run_pipeline.fetch_audio.download_audio",
         return_value=[audio_path],
     )
+    mocker.patch(
+        "run_pipeline.time.perf_counter",
+        side_effect=[0.0, 1.0, 13.34, 72.34],
+    )
 
     with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
         result = run_pipeline.run_pipeline(make_args())
@@ -258,9 +277,10 @@ def test_pipeline_stdout_matches_subtitle_contract(
         "[Stage] Fetch metadata, subtitles, and audio\n"
         "[BiliBili] Extracting URL: https://www.bilibili.com/video/BVTEST/\n"
         "Title: 测试视频\n"
+        "[Stage] Fetch completed in 12.34s\n"
         "[Stage] Build transcript from subtitle\n"
         "[Stage] Build summary prompt\n"
-        "Pipeline completed.\n"
+        "Pipeline completed in 1m 12.34s\n"
         f"Result: {result_dir.as_posix()}\n"
         f"Summary Prompt: {result['prompt']['prompt_path'].as_posix()}\n"
         f"Final Summary Path: {result['prompt']['summary_path'].as_posix()}\n"
@@ -317,6 +337,10 @@ def test_pipeline_stdout_matches_asr_stage_contract(
         "run_pipeline.transcribe.run_transcribe",
         side_effect=fake_transcribe,
     )
+    mocker.patch(
+        "run_pipeline.time.perf_counter",
+        side_effect=[0.0, 1.0, 3.5, 4.0, 69.67, 3723.45],
+    )
 
     with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
         result = run_pipeline.run_pipeline(make_args(skip_subtitles=True))
@@ -327,11 +351,69 @@ def test_pipeline_stdout_matches_asr_stage_contract(
         "[Stage] Fetch metadata, subtitles, and audio\n"
         "[BiliBili] Extracting URL: https://www.bilibili.com/video/BVTEST/\n"
         "Title: 测试视频\n"
+        "[Stage] Fetch completed in 2.50s\n"
         "[Stage] Transcribe audio with whisper\n"
+        "[Stage] Transcribe completed in 1m 05.67s\n"
         "[Stage] Build summary prompt\n"
-        "Pipeline completed.\n"
+        "Pipeline completed in 1h 2m 03.45s\n"
         f"Result: {result_dir.as_posix()}\n"
         f"Summary Prompt: {result['prompt']['prompt_path'].as_posix()}\n"
         f"Final Summary Path: {result['prompt']['summary_path'].as_posix()}\n"
         "Agent should read the summary prompt file above to generate the final summary.\n"
     )
+
+
+def test_fetch_failure_does_not_report_completed(
+    workspace_tmp_path: Path,
+    capsys,
+    mocker,
+) -> None:
+    mocker.patch(
+        "run_pipeline.fetch_audio.run_fetch",
+        side_effect=RuntimeError("fetch failed"),
+    )
+    mocker.patch("run_pipeline.time.perf_counter", side_effect=[0.0, 1.0])
+
+    with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
+        with pytest.raises(RuntimeError, match="fetch failed"):
+            run_pipeline.run_pipeline(make_args())
+
+    terminal = capsys.readouterr().out
+    assert "[Stage] Fetch completed" not in terminal
+    assert "Pipeline completed" not in terminal
+
+
+def test_transcribe_failure_does_not_report_completed(
+    workspace_tmp_path: Path,
+    manifest_payload: dict,
+    metadata_payload: dict,
+    capsys,
+    mocker,
+) -> None:
+    audio_path = workspace_tmp_path / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        [],
+        [audio_path],
+        manifest_payload,
+        metadata_payload,
+    )
+    mocker.patch("run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    mocker.patch(
+        "run_pipeline.transcribe.run_transcribe",
+        side_effect=RuntimeError("transcribe failed"),
+    )
+    mocker.patch(
+        "run_pipeline.time.perf_counter",
+        side_effect=[0.0, 1.0, 3.5, 4.0],
+    )
+
+    with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
+        with pytest.raises(RuntimeError, match="transcribe failed"):
+            run_pipeline.run_pipeline(make_args(skip_subtitles=True))
+
+    terminal = capsys.readouterr().out
+    assert "[Stage] Fetch completed in 2.50s" in terminal
+    assert "[Stage] Transcribe completed" not in terminal
+    assert "Pipeline completed" not in terminal

@@ -1,4 +1,5 @@
 import argparse
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,19 @@ from runtime_options import FetchOptions, PipelineOptions, TranscribeOptions
 from utils import ensure_dir, path_to_posix, read_json
 
 logger = get_logger(__name__)
+
+
+def format_duration(seconds: float) -> str:
+    rounded_seconds = round(seconds, 2)
+    if rounded_seconds < 60:
+        return f"{rounded_seconds:.2f}s"
+
+    minutes, remaining_seconds = divmod(rounded_seconds, 60)
+    if rounded_seconds < 3600:
+        return f"{int(minutes)}m {remaining_seconds:05.2f}s"
+
+    hours, remaining_minutes = divmod(int(minutes), 60)
+    return f"{hours}h {remaining_minutes}m {remaining_seconds:05.2f}s"
 
 
 def resolve_transcribe_language(options: PipelineOptions) -> str:
@@ -198,7 +212,14 @@ def run_asr_transcript(
         fetch_result["manifest_path"],
         fetch_result["paths"]["result"],
     )
-    return transcribe.run_transcribe(transcribe_args)
+    transcribe_started_at = time.perf_counter()
+    result = transcribe.run_transcribe(transcribe_args)
+    terminal_info(
+        logger,
+        "[Stage] Transcribe completed in %s",
+        format_duration(time.perf_counter() - transcribe_started_at),
+    )
+    return result
 
 
 def select_usable_subtitle(
@@ -244,9 +265,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
+    pipeline_started_at = time.perf_counter()
     options = PipelineOptions.from_args(args)
     fetch_args = make_fetch_args(options)
+    fetch_started_at = time.perf_counter()
     fetch_result = fetch_audio.run_fetch(fetch_args)
+    terminal_info(
+        logger,
+        "[Stage] Fetch completed in %s",
+        format_duration(time.perf_counter() - fetch_started_at),
+    )
     manifest_path = fetch_result["manifest_path"]
     result_dir = fetch_result["paths"]["result"]
 
@@ -286,7 +314,11 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
         transcript_result = run_asr_transcript(options, fetch_result, audio_files)
         terminal_info(logger, "[Stage] Build summary prompt")
         prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
-    terminal_info(logger, "Pipeline completed.")
+    terminal_info(
+        logger,
+        "Pipeline completed in %s",
+        format_duration(time.perf_counter() - pipeline_started_at),
+    )
     terminal_info(logger, "Result: %s", path_to_posix(result_dir))
     logger.info("Manifest: %s", path_to_posix(manifest_path))
     if transcript_result:
