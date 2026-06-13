@@ -5,6 +5,17 @@ from pathlib import Path
 import utils
 
 
+def test_normalize_bilibili_watchlater_url_returns_canonical_video_url() -> None:
+    url = (
+        "https://www.bilibili.com/list/watchlater/"
+        "?bvid=BV1W1JxzjEty&oid=114827194271844"
+    )
+
+    assert utils.normalize_bilibili_video_url(url) == (
+        "https://www.bilibili.com/video/BV1W1JxzjEty/"
+    )
+
+
 def make_ffmpeg_module(ffmpeg_path: Path) -> types.ModuleType:
     module = types.ModuleType("ffmpeg_binaries")
     module.FFMPEG_PATH = str(ffmpeg_path)

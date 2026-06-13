@@ -2,7 +2,7 @@ import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 from typing import Any, Optional
 
 
@@ -40,11 +40,16 @@ def sanitize_filename(value: str, max_length: int = 120) -> str:
 
 
 def normalize_bilibili_video_url(value: str) -> str:
+    parts = urlsplit(value)
+    if parts.path == "/list/watchlater/":
+        bvid_values = parse_qs(parts.query).get("bvid", [])
+        if bvid_values and re.fullmatch(r"BV[0-9A-Za-z]+", bvid_values[0]):
+            return f"https://www.bilibili.com/video/{bvid_values[0]}/"
+
     match = re.search(r"/video/(BV[0-9A-Za-z]+)/?", value)
     if not match:
         return value
 
-    parts = urlsplit(value)
     normalized_path = f"/video/{match.group(1)}/"
     return urlunsplit((parts.scheme or "https", parts.netloc or "www.bilibili.com", normalized_path, "", ""))
 

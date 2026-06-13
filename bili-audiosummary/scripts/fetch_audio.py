@@ -463,7 +463,7 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     if cookie_path and not options.cookies:
         logger.info("Using auto-detected cookies: %s", path_to_posix(cookie_path))
 
-    info = extract_metadata(options.url, options)
+    info = extract_metadata(normalized_url, options)
     video_id = get_video_id(info)
     canonical_url = build_canonical_url(info, video_id)
     paths = build_result_paths(info, options.output_dir)

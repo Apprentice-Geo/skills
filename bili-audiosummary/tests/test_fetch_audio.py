@@ -80,6 +80,39 @@ def test_run_fetch_skip_subtitles_does_not_download_subtitles(workspace_tmp_path
     assert manifest["audio_files"] == [audio_path.as_posix()]
 
 
+def test_run_fetch_uses_canonical_url_for_watchlater_video(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    watchlater_url = (
+        "https://www.bilibili.com/list/watchlater/"
+        "?bvid=BV1W1JxzjEty&oid=114827194271844"
+    )
+    canonical_url = "https://www.bilibili.com/video/BV1W1JxzjEty/"
+    info = {
+        "id": "BV1W1JxzjEty",
+        "title": "测试视频",
+        "webpage_url": canonical_url,
+    }
+    args = make_args(workspace_tmp_path)
+    args.url = watchlater_url
+
+    extract_metadata = mocker.patch("fetch_audio.extract_metadata", return_value=info)
+    download_subtitles = mocker.patch(
+        "fetch_audio.download_subtitles",
+        return_value=[],
+    )
+    download_audio = mocker.patch("fetch_audio.download_audio", return_value=[])
+
+    result = fetch_audio.run_fetch(args)
+    manifest = read_json(result["manifest_path"])
+
+    assert extract_metadata.call_args.args[0] == canonical_url
+    assert download_subtitles.call_args.args[0] == canonical_url
+    assert download_audio.call_args.args[0] == canonical_url
+    assert manifest["url"] == canonical_url
+
+
 def test_run_fetch_only_emits_stage_extraction_and_title(
     workspace_tmp_path: Path,
     capsys,
