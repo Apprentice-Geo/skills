@@ -59,6 +59,7 @@ def read_json(path: Path) -> Any:
 
 
 def path_to_posix(path: Path) -> str:
+    # 把 Path 对象转换成使用 / 分隔的字符串路径
     return path.as_posix()
 
 

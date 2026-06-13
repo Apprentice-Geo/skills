@@ -125,7 +125,7 @@
 - Title （保留）
 - BVID
 - Canonical URL
-- Result （保留）
+- Result 
 - Metadata:
 - Raw metadata:
 - Manifest:
@@ -137,7 +137,7 @@
 - Markdown
 - Segments
 - Pipeline completed
-- Result
+- Result（保留）
 - Manifest
 - Transcript JSON
 - Transcript Markdown
@@ -157,7 +157,7 @@
 - 新增 `scripts/process_logging.py`，统一 setup、pipeline、fetch、字幕转换和 ASR 的 Python `logging`；删除 setup 专用日志模块。
 - 完整运行信息和 traceback 写入文件，终端 handler 只放行 `terminal=True` 的关键阶段与最终结果。
 - pipeline 日志先写入 `.cache/logs/pipeline-<timestamp>.log`，识别 BVID 后迁移到 `results/<BVID>/`；迁移失败不影响处理。
-- yt-dlp、缓存状态、BVID、manifest、metadata、transcript 路径、segments、详细 fallback 原因和第三方 warning 仅写日志；Qwen3 降级时终端显示一条简短 warning。
+- yt-dlp、缓存状态、BVID、manifest、metadata、transcript 路径、segments、fallback 和非致命 warning 仅写日志。
 - setup 保留步骤输出、成功命令静默和失败完整回放；fetch、transcribe、subtitle 独立入口使用相同简洁输出。
 - 未新增 CLI 参数，未实现 ASR 百分比或分段进度。
 
@@ -218,6 +218,27 @@ Agent should read the summary prompt file above to generate the final summary.
 
 - 总结方式改为使用subagent总结并写入文件
 - 如果无法使用subagent，允许在同一个对话中完成总结并写入文件
+
+### Task 7: 拆分和修改目前的文档（已完成）
+
+**Problem** 目前的文档出现了杂糅现象，例如README中有过多架构相关信息，SKILL.md的操作步骤被解释分隔，并包含了过多正常使用不需要的信息
+
+修改目标：
+
+- README只包含skill介绍（包括功能亮点）、能力边界、使用方式、第三方依赖（yt-dlp，Qwen3，whisper，两种测试过的cookies导出方法等应该列出的）。
+- 能力边界指明总结只根据ASR结果，目前只支持bili视频
+- 使用方式写两种，作为skill安装，以及clone代码在代码目录直接运行
+- SKILL.md只包含yaml头，使用场景，主要步骤，处理时间估算（待补充）
+- 使用场景中需要增加一句对于两种模型的简略说明，并指出使用Qwen3可以获得更好的转写效果与转写效率
+- 在reference中增加一个项目架构说明，说明各脚本的行为和项目文件目录的作用，因此README和SKILL中不需要再介绍，但是需要保留相对路径引用链接
+- 将skill.md中的错误处理指导全部移到error-handing中去，考虑到错误情况可能较多，在错误指导文档开头需要增加一个简要目录供快速查阅
+
+完成结果：
+
+- `README.md` 已收敛为面向使用者的项目介绍、功能亮点、能力边界、两种使用方式、cookies 导出和第三方依赖说明。
+- `SKILL.md` 保留 YAML frontmatter，正文仅保留使用场景、主要步骤和处理时间估算。
+- 新增 `references/architecture.md`，集中记录 pipeline、目录、脚本职责和输出位置。
+- `references/error-handling.md` 已增加快速目录，并集中 setup、下载、cookies、字幕缓存、ASR、Qwen3 fallback、日志和终止条件。
 
 ---
 

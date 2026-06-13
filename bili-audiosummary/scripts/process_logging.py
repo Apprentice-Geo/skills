@@ -76,6 +76,7 @@ class LoggingSession:
         self._stream_handler = logging.StreamHandler(sys.stdout)
         self._stream_handler.setLevel(logging.DEBUG)
         self._stream_handler.setFormatter(logging.Formatter("%(message)s"))
+        # Filter 过滤器，只输出 extra={"terminal": True} 的日志记录到终端
         self._stream_handler.addFilter(TerminalFilter())
         self._logger.handlers[:] = [self._file_handler, self._stream_handler]
         self._started = True
@@ -93,8 +94,11 @@ class LoggingSession:
         source_path = self.log_path
         file_handler = self._file_handler
         if file_handler is not None:
+            # 把缓冲区里的日志强制写入磁盘，避免还有日志停留在内存里没落盘
             file_handler.flush()
+            # 关闭文件句柄。因为 FileHandler 内部一直持有目标日志文件，如果不关闭，文件可能仍然被占用
             file_handler.close()
+            # 把这个 FileHandler 从 logger 上移除。否则 logger 后续还会尝试往这个已经关闭的 handler 写日志。
             self._logger.removeHandler(file_handler)
 
         try:
