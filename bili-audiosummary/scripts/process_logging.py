@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import traceback
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,24 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 class TerminalFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return bool(getattr(record, "terminal", False))
+
+
+class ForwardingHandler(logging.Handler):
+    def __init__(self, target: logging.Logger) -> None:
+        super().__init__()
+        self.target = target
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.target.handle(record)
+
+
+@dataclass
+class CapturedLoggerState:
+    handlers: list[logging.Handler]
+    level: int
+    propagate: bool
+    disabled: bool
+    forwarding_handler: ForwardingHandler
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
@@ -49,6 +68,8 @@ class LoggingSession:
         self._logger = get_logger()
         self._file_handler: logging.FileHandler | None = None
         self._stream_handler: logging.StreamHandler | None = None
+        self._captured_loggers: dict[str, CapturedLoggerState] = {}
+        self._previous_showwarning = None
         self._started = False
 
     @classmethod
@@ -81,7 +102,44 @@ class LoggingSession:
         self._logger.handlers[:] = [self._file_handler, self._stream_handler]
         self._started = True
         LoggingSession._current = self
+        self.capture_logger("py.warnings")
+        self._previous_showwarning = warnings.showwarning
+        warnings.showwarning = self._showwarning
         return self
+
+    def capture_logger(self, name: str) -> None:
+        if name in self._captured_loggers:
+            return
+
+        external_logger = logging.getLogger(name)
+        forwarding_handler = ForwardingHandler(self._logger)
+        self._captured_loggers[name] = CapturedLoggerState(
+            handlers=list(external_logger.handlers),
+            level=external_logger.level,
+            propagate=external_logger.propagate,
+            disabled=external_logger.disabled,
+            forwarding_handler=forwarding_handler,
+        )
+        external_logger.handlers[:] = [forwarding_handler]
+        external_logger.propagate = False
+
+    def _showwarning(
+        self,
+        message,
+        category,
+        filename,
+        lineno,
+        file=None,
+        line=None,
+    ) -> None:
+        warning_text = warnings.formatwarning(
+            message,
+            category,
+            filename,
+            lineno,
+            line,
+        ).rstrip()
+        logging.getLogger("py.warnings").warning(warning_text)
 
     def move_to(self, directory: Path) -> Path:
         if not self._started:
@@ -128,6 +186,20 @@ class LoggingSession:
     def close(self) -> None:
         if not self._started:
             return
+
+        if self._previous_showwarning is not None:
+            warnings.showwarning = self._previous_showwarning
+            self._previous_showwarning = None
+
+        for name, state in reversed(list(self._captured_loggers.items())):
+            external_logger = logging.getLogger(name)
+            external_logger.handlers[:] = state.handlers
+            external_logger.setLevel(state.level)
+            external_logger.propagate = state.propagate
+            external_logger.disabled = state.disabled
+            state.forwarding_handler.close()
+        self._captured_loggers.clear()
+
         for handler in (self._file_handler, self._stream_handler):
             if handler is None:
                 continue

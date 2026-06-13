@@ -17,7 +17,7 @@ from config import (
     QWEN3_MAX_INFERENCE_BATCH_SIZE,
     QWEN3_MAX_NEW_TOKENS,
 )
-from process_logging import get_logger
+from process_logging import LoggingSession, get_logger
 from utils import path_to_posix
 
 
@@ -215,6 +215,12 @@ def build_sentence_segments(
 def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     try:
         import torch
+        from transformers import GenerationConfig
+
+        session = LoggingSession.current()
+        if session is not None:
+            session.capture_logger("transformers")
+
         from qwen_asr import Qwen3ASRModel
     except ImportError as exc:
         raise RuntimeError(
@@ -235,6 +241,10 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
     asr_model = path_to_posix(QWEN3_ASR_MODEL_DIR)
     aligner_model = path_to_posix(QWEN3_ALIGNER_MODEL_DIR)
     dtype = getattr(torch, QWEN3_DTYPE)
+    generation_config = GenerationConfig.from_pretrained(
+        asr_model,
+        temperature=None,
+    )
     logger.info(
         "Loading Qwen3 ASR model=%s aligner=%s device=%s dtype=%s",
         asr_model,
@@ -251,6 +261,7 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
         device_map=QWEN3_DEVICE_MAP,
         max_inference_batch_size=QWEN3_MAX_INFERENCE_BATCH_SIZE,
         max_new_tokens=QWEN3_MAX_NEW_TOKENS,
+        generation_config=generation_config,
     )
     result = asr.transcribe(path_to_posix(audio_path), return_time_stamps=True)[0]
     alignment_items = normalize_alignment_items(list(getattr(result.time_stamps, "items", [])))

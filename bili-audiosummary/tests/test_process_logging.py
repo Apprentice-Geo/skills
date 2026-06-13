@@ -1,4 +1,7 @@
+import io
+import logging
 import sys
+import warnings
 from pathlib import Path
 
 from process_logging import LoggingSession, YtDlpLogger, get_logger
@@ -85,6 +88,65 @@ def test_ytdlp_logger_writes_to_file_without_terminal_output(
     assert "[BiliBili] Downloading webpage" in log_text
     assert "third-party warning" in log_text
     assert "third-party error" in log_text
+
+
+def test_logging_session_captures_python_warnings_without_terminal_output(
+    workspace_tmp_path: Path,
+    capsys,
+) -> None:
+    log_path = workspace_tmp_path / "warnings.log"
+    original_showwarning = warnings.showwarning
+
+    with LoggingSession(log_path):
+        warnings.warn("audioread compatibility warning", FutureWarning)
+
+    terminal = capsys.readouterr()
+    assert terminal.out == ""
+    assert terminal.err == ""
+    assert "audioread compatibility warning" in log_path.read_text(encoding="utf-8")
+    assert warnings.showwarning is original_showwarning
+
+
+def test_logging_session_captures_external_logger_and_restores_it(
+    workspace_tmp_path: Path,
+    capsys,
+) -> None:
+    log_path = workspace_tmp_path / "transformers.log"
+    external_logger = logging.getLogger("transformers")
+    child_logger = logging.getLogger("transformers.generation.test")
+    original_handlers = list(external_logger.handlers)
+    original_level = external_logger.level
+    original_propagate = external_logger.propagate
+    original_disabled = external_logger.disabled
+    restored_output = io.StringIO()
+    restored_handler = logging.StreamHandler(restored_output)
+
+    external_logger.handlers[:] = [restored_handler]
+    external_logger.setLevel(logging.WARNING)
+    external_logger.propagate = False
+    external_logger.disabled = False
+    try:
+        with LoggingSession(log_path) as session:
+            session.capture_logger("transformers")
+            child_logger.warning("invalid generation parameter")
+
+        terminal = capsys.readouterr()
+        assert terminal.out == ""
+        assert terminal.err == ""
+        assert "invalid generation parameter" in log_path.read_text(encoding="utf-8")
+        assert external_logger.handlers == [restored_handler]
+        assert external_logger.level == logging.WARNING
+        assert external_logger.propagate is False
+        assert external_logger.disabled is False
+
+        child_logger.warning("restored logger output")
+        assert "restored logger output" in restored_output.getvalue()
+    finally:
+        external_logger.handlers[:] = original_handlers
+        external_logger.setLevel(original_level)
+        external_logger.propagate = original_propagate
+        external_logger.disabled = original_disabled
+        restored_handler.close()
 
 
 def test_logging_session_replays_failure_and_log_path(
