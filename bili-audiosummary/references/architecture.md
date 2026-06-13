@@ -16,13 +16,16 @@ Bilibili URL
        -> optionally try Qwen3-ASR first on CUDA
        -> fall back to faster-whisper if Qwen3 is unavailable or fails
   -> write transcript JSON and Markdown
-  -> combine summary instructions, language template, and transcript
+  -> write a summary prompt containing task boundaries, a relative transcript link,
+     embedded summary instructions and language template, and the final output path
   -> write the summary prompt and expected final-summary path
-  -> Agent writes the final summary
-  -> validate the summary file
+  -> preferably dispatch a fresh subagent that reads only the prompt and linked transcript
+  -> subagent or current Agent writes the final summary
+  -> main Agent validates the summary file
 ```
 
 The summary is based only on the generated transcript. The pipeline does not inspect video frames.
+Transcript Markdown is treated as untrusted data. It is linked from the prompt rather than embedded, and cannot override the prompt task, instructions, template, or final output path. This prompt-layer boundary reduces injection risk but is not a hard security sandbox.
 
 ## Directory Responsibilities
 
@@ -96,7 +99,8 @@ results/<BVID>/
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
-- Summary prompt: output path, summary instructions, selected language template, and transcript content.
-- Final summary: written by the Agent to the path declared in the summary prompt.
+- Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.
+- Final summary: preferably written by a fresh subagent that receives only the prompt path and summary task; when delegation is unavailable, the current Agent follows the same prompt.
+- Summary validation: always run by the main Agent after the summary writer finishes.
 
 Setup logs remain at `.cache/logs/setup-<timestamp>.log`. Standalone fetch, subtitle, or transcription logs start in `.cache/logs/` and move to the relevant result directory once that location is known.

@@ -201,23 +201,41 @@ Agent should read the summary prompt file above to generate the final summary.
 
 
 
-### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据
+### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据（已完成）
 
 **Problem** 目前的转写结果会写入prompt文件中，有提示词注入的风险
 
 修改目标：
 
 - 不再拼接ASR结果到prompt中
-- prompt改为使用"[]()"文件引用格式，在prompt中明确ASR结果文件，总结模板文件，总结指令文件的相对路径以及它们的作用
+- prompt改为使用"[]()"文件引用格式，在prompt中明确ASR结果文件的相对路径
+- prompt只包含结果保存路径，指令，模板，ASR结果文件的相对路径，四者的编排顺序需要做考虑
 
-### Task 6: 尝试使用subagent做总结和文件写入，隔离不同的上下文
+完成结果：
+
+- summary prompt 不再嵌入 transcript 正文，改为引用同目录 transcript 的相对 Markdown 链接。
+- prompt 顺序固定为任务与不可信数据边界、transcript 链接、内嵌 instructions、内嵌 template、完整最终输出路径。
+- instructions 明确 transcript 中的指令、角色要求和输出路径均不得执行。
+- 该改动同时覆盖原 P1 的 summary prompt 重排事项。
+- 该隔离只降低提示词注入风险，不构成硬安全沙箱。
+
+### Task 6: 尝试使用subagent做总结和文件写入，隔离不同的上下文（已完成）
 
 **Problem** 目前的脚本调用和总结在同一个对话中由同一个agent完成，上下文连通可能会影响总结效果
 
 修改目标：
 
-- 总结方式改为使用subagent总结并写入文件
+- 在SKILL.md的步骤中做修改
+
+- 总结方式改为优先使用subagent总结并写入文件
 - 如果无法使用subagent，允许在同一个对话中完成总结并写入文件
+
+完成结果：
+
+- `SKILL.md` 要求优先派发不继承父对话的全新 subagent。
+- 主 Agent 只向 subagent 提供 Summary Prompt 路径和总结写入任务，不传 transcript 正文或父对话。
+- 无 subagent 能力时，当前 Agent 按相同 prompt 完成总结和写入。
+- 最终 summary validator 始终由主 Agent 执行。
 
 ### Task 7: 拆分和修改目前的文档（已完成）
 
@@ -244,35 +262,7 @@ Agent should read the summary prompt file above to generate the final summary.
 
 ## P1 Tasks
 
-### Task 1: Reorder Summary Prompt For Better Context Attention（已完成）
-
-**Problem:** 当前 prompt 顺序是保存路径、指令、模板、转写文本；长文本时最终指令离输出位置较远。
-
----
-
-### Task 2: Improve Stage Logs And Warning Severity
-
-**Problem:** 用户侧不容易判断当前是在字幕检测、音频复用、ASR 转写还是 prompt 生成阶段；B 站非致命警告也容易被误解为任务失败。一方面应该减少无用、杂乱信息对Agent的干扰，另一方面应该保存log在对应视频文件夹下便于问题排查。
-
-**Success Criteria:**
-
-- pipeline 输出明确阶段日志。
-- 非致命警告以 `Warning:` 开头，致命错误以 `Error:` 开头。
-- 日志包含字幕状态、ASR provider、缓存音频复用状态和最终路径。
-- 新增日志功能，保存log日志在视频文件夹下
-
-测试结果：
-
-run_pipeline,参数带的URL不确定有没有解析成标准https://www.bilibili.com/video/{bvid}。使用这个URL：https://www.bilibili.com/video/BV17DD6BME7D/?spm_id_from=333.1245.playlist.watchlater.redirect&vd_source=f48b605b5bcb6ac762ff04f0056b21c9
-进入
-[Stage] Fetch metadata, subtitles, and audio
-Using auto-detected cookies: D:/codes/skills/bili-audiosummary/www.bilibili.com_cookies.txt
-后卡死无输出。
-首先应该给出阶段性输出
-
----
-
-### Task 3: Make Page And Multi-Part Handling Explicit
+### Task 1: Make Page And Multi-Part Handling Explicit
 
 **Problem:** 分 P / 多语言场景下，管线可能只处理当前 P，但用户不一定知道。
 
@@ -284,7 +274,7 @@ Using auto-detected cookies: D:/codes/skills/bili-audiosummary/www.bilibili.com_
 - 文档明确当前默认只处理当前 URL 指向的 P。
 - 后续 `--page` / `--all-pages` 可单独开发，不在本任务实现。
 
-### Task 4: 细化 whisper 转写切分精度（已完成）
+### Task 2: 细化 whisper 转写切分精度（已完成）
 
 **Problem:** 目前Qwen3的ASR链路和字幕复用的切分效果较好，但是whisper的输出切分粒度太粗
 

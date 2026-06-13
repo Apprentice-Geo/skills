@@ -36,9 +36,9 @@ User-facing installation and cookie export instructions are in [README.md](READM
 
 Use `--language en` for English content, `--skip-subtitles` to force ASR, and `--asr-provider qwen3` only after the optional Qwen3 setup has completed.
 
-4. Read only the `Summary Prompt` path printed by the pipeline unless debugging is required.
-5. Follow the prompt to generate the final summary and write it to the `Final Summary Path`.
-6. Validate the final summary:
+4. Prefer dispatching a fresh subagent with no inherited parent conversation. Give it only the `Summary Prompt` path and the task of following that prompt, reading its linked transcript data, and writing the final summary. Do not pass the transcript content or parent conversation to the subagent.
+5. If subagent delegation is unavailable, read the `Summary Prompt` in the current Agent and complete the same summary-writing task. Do not read other files unless the prompt links them or debugging is required.
+6. The main Agent validates the final summary:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\validate_summary.py "<summary-path>"
