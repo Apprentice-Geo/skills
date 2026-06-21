@@ -1,10 +1,10 @@
 ---
-name: article-correction
+name: article-format-correction
 description: Corrects Markdown technical articles, notes, algorithm writeups, and debugging records by fixing obvious writing, punctuation, Markdown formatting, and formula markup errors while preserving the author's meaning, structure, and personal technical-blog style. Use when the user asks to revise, correct, format, proofread, or polish only clear errors in Markdown articles.
 license: Apache-2.0
 ---
 
-# Article Correction
+# Article Format Correction
 
 ## Purpose
 
@@ -22,7 +22,7 @@ The skill is designed for:
 - 修正 Markdown、公式、标题、列表、代码块周边格式
 - 校订技术博客、调试记录、配置记录、算法题解、技术笔记
 
-Do not use this skill for translation, summarization, expansion, heavy rewriting, article generation, or style polishing that is not tied to a clear error.
+Do not use this skill for translation, summarization, expansion, heavy rewriting, article generation, or modify articles not written in Chinese or English.
 
 ## Editing Contract
 
@@ -68,6 +68,15 @@ Correct only clear issues:
 - malformed headings, lists, tables, links, images, or fences when the intended Markdown is obvious
 - formula markup errors
 - unmarked mathematical expressions that should be LaTeX
+- using Chinese symbols for Chinese sentences
+- using English symbols for English sentences, codes and formulas
+
+Symbols examples:
+
+- Chinese： `，。、：`
+- English: `,.:`
+
+Exceptionally, use `「」[]` and ` ` instead of `“”【】` and `　` for Chinese sentences.
 
 For formulas or codes:
 
@@ -82,9 +91,17 @@ For formulas or codes:
 
 Example:
 
-```markdown
-时间复杂度为 O(n log n) -> 时间复杂度为 $O(n \log n)$
-zip（）返回一个包含一些元组的迭代器 -> `zip()` 返回一个包含一些元组的迭代器
+```text
+时间复杂度为 O(n log n)
+└--> 时间复杂度为 $O \left (n \log n \right )$
+zip（）返回一个包含一些元组的迭代器
+└--> `zip()` 返回一个包含一些元组的迭代器
+统计满足x*y=k的x，y数量
+└--> 统计满足 $x \times y = k$ 的数对 $x,y$ 数量
+统计满足x《=y《=z的数对（x，y，z）数量
+└--> 统计满足 $x \le y \le z$ 的数对 $\left ( x,y,z \right )$ 数量
+递推公式为dpi=dpi-1+dpi-2，i》=2
+└--> 递推公式为 $dp_i = dp_{i-1} + dp_{i-2}, i \ge 2$
 ```
 
 ## Output
