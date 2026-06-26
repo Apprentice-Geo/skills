@@ -24,8 +24,8 @@ Use this reference only when setup or processing fails.
 
 ## Environment and Dependencies
 
-- Setup preserves existing `UV_CACHE_DIR`, `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, and `HF_ENDPOINT` values. Check them in the setup log when cache or mirror behavior is unexpected.
-- Without explicit overrides, setup uses `.cache/uv/`, `.cache/huggingface/`, and the configured Hugging Face endpoint.
+- Setup preserves existing `UV_CACHE_DIR`, `UV_DEFAULT_INDEX`, `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, and `HF_ENDPOINT` values. Check them in the setup log when cache or mirror behavior is unexpected.
+- Without explicit overrides, setup uses `.cache/uv/`, the configured uv default index, `.cache/huggingface/`, and the configured Hugging Face endpoint.
 - If dependency sync fails, inspect the `uv sync` output and `pyproject.toml` / `uv.lock` dependency constraints.
 - If model downloads fail after network settings are correct, verify that `HF_HOME` and `HUGGINGFACE_HUB_CACHE` are writable.
 - `ffmpeg-binaries-compat` is the only supported ffmpeg source. If `ffmpeg` or `ffprobe` cannot be resolved, rerun setup; do not rely on system PATH as a substitute.

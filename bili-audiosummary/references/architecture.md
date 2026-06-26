@@ -61,7 +61,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 ### Setup Entry Points
 
-- `scripts/setup/setup_windows.bat`: thin Windows launcher. Requires `uv`, runs `uv sync --python 3.12 --no-dev`, then starts core setup.
+- `scripts/setup/setup_windows.bat`: thin Windows launcher. Requires `uv`, sets project-local uv cache and default package index when unset, runs `uv sync --python 3.12 --no-dev`, then starts core setup.
 - `scripts/setup/setup.py`: verifies the uv-managed Python 3.12 environment, core imports, packaged ffmpeg, and faster-whisper model download.
 - `scripts/setup/install_qwen3.py`: optional Qwen3 setup. Verifies the `qwen3` extra dependencies and downloads both Qwen3 models.
 

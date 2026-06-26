@@ -106,60 +106,13 @@
 
 **主要改动:** 新增通用 `scripts/process_logging.py`，让 setup、pipeline、fetch、字幕转换和 ASR 共用日志；终端只输出关键阶段和最终路径，完整运行信息、traceback、yt-dlp 细节、缓存状态、fallback 和 warning 写入日志文件。
 
-#### Task4.3 补充对 uv 路径的规范化输出和默认源设置
+#### Task4.3 补充对 uv 路径的规范化输出和默认源设置（已完成）
 
 **Problem** 全量切换到 uv 以后，没有做默认依赖源优化和 uv 安装输出规范化
 
-修改目标：
+**修改目标:** 为 uv 路径设置默认国内依赖源，并在 setup 入口打印规范化的 uv sync 命令头，保留 uv 原生安装、完成和重复安装输出。
 
-- 为 uv 路径设置默认依赖源，与之前的 pip 默认国内源一致
-- uv 的安装输出格式如下：
-
-安装中：
-```
-uv sync --extra qwen3
-
-sing CPython 3.12.13
-Creating virtual environment at: .venv
-Resolved 128 packages in 1ms
-      Built sox==1.5.0
-⠇ Preparing packages... (51/91)
-httpx                       ------------------------------     0 B/71.79 KiB
-cffi                        ------------------------------ 175.80 KiB/179.25 KiB
-werkzeug                    ------------------------------ 169.52 KiB/221.15 KiB
-librosa                     ------------------------------ 171.46 KiB/254.64 KiB
-regex                       ------------------------------ 174.81 KiB/271.27 KiB
-joblib                      ------------------------------ 163.89 KiB/301.83 KiB
-rich                        ------------------------------ 179.56 KiB/303.37 KiB
-tzdata                      ------------------------------ 177.61 KiB/341.13 KiB
-...
-```
-
-安装完成：
-```
-uv sync --extra qwen3
-
-Installed 107 packages in 40.75s
- + accelerate==1.12.0
- + annotated-doc==0.0.4
- + annotated-types==0.7.0
- + anyio==4.14.1
- + audioread==3.1.0
- + av==17.1.0
- + blinker==1.9.0
- + brotli==1.2.0
- + certifi==2026.6.17
- + cffi==2.0.0
- + charset-normalizer==3.4.7
-```
-
-重复安装：
-```
-uv sync --extra qwen3
-
-Resolved 128 packages in 1ms
-Checked 107 packages in 12ms
-```
+**主要改动:** `pyproject.toml` 将清华 PyPI 配置为 uv 默认源并保留 PyTorch CUDA 显式源；`setup_windows.bat` 在用户未显式设置时提供 `UV_DEFAULT_INDEX`，继续使用项目内 `UV_CACHE_DIR`，并在执行前打印 `uv sync --python 3.12 --no-dev`；同步 README、错误处理和架构文档，补充 launcher 与 uv index 配置测试。
 
 ### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据（已完成）
 

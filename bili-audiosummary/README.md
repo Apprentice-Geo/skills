@@ -34,7 +34,7 @@
 .\scripts\setup\setup_windows.bat
 ```
 
-默认 setup 会通过 `uv sync` 准备 Python 3.12 虚拟环境、核心依赖、`ffmpeg-binaries-compat` 和 faster-whisper 模型。随后运行：
+默认 setup 会通过 `uv sync` 准备 Python 3.12 虚拟环境、核心依赖、`ffmpeg-binaries-compat` 和 faster-whisper 模型。uv 默认使用清华 PyPI 源；如需覆盖，可在运行前设置 `UV_DEFAULT_INDEX`。随后运行：
 
 ```powershell
 uv run --no-sync python scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"

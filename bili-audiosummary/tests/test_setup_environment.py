@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,10 @@ from scripts.setup.environment import (
     create_log_path,
 )
 from process_logging import SetupError
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_UV_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
 def test_configure_environment_uses_project_local_caches(
@@ -56,3 +61,26 @@ def test_create_log_path_uses_setup_timestamp_name(
     assert log_path.parent == paths.logs_dir
     assert log_path.name.startswith("setup-")
     assert log_path.name.endswith(".log")
+
+
+def test_pyproject_sets_default_uv_index_without_affecting_pytorch_index() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text("utf-8"))
+
+    indexes = pyproject["tool"]["uv"]["index"]
+    default_indexes = [index for index in indexes if index.get("default")]
+    pytorch_indexes = [index for index in indexes if index["name"] == "pytorch-cu126"]
+
+    assert default_indexes == [
+        {
+            "name": "tsinghua-pypi",
+            "url": DEFAULT_UV_INDEX,
+            "default": True,
+        }
+    ]
+    assert pytorch_indexes == [
+        {
+            "name": "pytorch-cu126",
+            "url": "https://download.pytorch.org/whl/cu126",
+            "explicit": True,
+        }
+    ]
