@@ -4,8 +4,6 @@ description: Corrects Markdown technical articles, notes, algorithm writeups, an
 license: Apache-2.0
 ---
 
-# Article Format Correction
-
 ## Purpose
 
 Correct Markdown technical articles with a light hand.
@@ -47,8 +45,8 @@ Keep these traits:
 - Short to medium sentences, with longer causal sentences only where the original already uses them.
 - Practice-first organization: background/problem -> attempt -> error/phenomenon -> cause judgment -> final solution -> summary.
 - Algorithm organization: problem -> core idea -> mapping/derivation -> code -> complexity or optimization.
-- Direct technical terms such as `Dijkstra`, `python` , `Playwright`, `Chromium`, 欧拉筛, 积性函数, and similar domain terms.
-- Personal technical-blog tone, including expressions like “估计是”, “应该是”, “可能是”, “考虑是不是”, “我自己用这个方法解决了”.
+- Direct technical terms such as `Dijkstra`, `python` , `Playwright`, `Electron` and similar domain terms.
+- Personal technical-blog tone.
 - Real-world details: commands, paths, filenames, screenshots, logs, versions, complete snippets, and concrete error messages.
 
 Do not make uncertain judgments sound certain. 
@@ -76,7 +74,7 @@ Symbols examples:
 - Chinese： `，。、：`
 - English: `,.:`
 
-Exceptionally, use `「」[]` and ` ` instead of `“”【】` and `　` for Chinese sentences.
+**Exceptionally**, use `「」[]` and ` ` (half-width space)  instead of `“”【】` and `　` (full width space) for Chinese sentences.
 
 For formulas or codes:
 
