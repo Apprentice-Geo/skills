@@ -10,7 +10,6 @@ from process_logging import LoggingSession
 def test_qwen3_disables_temperature_for_greedy_generation(
     workspace_tmp_path: Path,
     monkeypatch,
-    mocker,
 ) -> None:
     asr_model_dir = workspace_tmp_path / "qwen3-asr"
     aligner_model_dir = workspace_tmp_path / "qwen3-aligner"
@@ -42,10 +41,25 @@ def test_qwen3_disables_temperature_for_greedy_generation(
             timestamps = types.SimpleNamespace(items=[])
             return [types.SimpleNamespace(text="test transcript", time_stamps=timestamps)]
 
+    class FakeGenerationConfig:
+        def __init__(self, temperature):
+            self.temperature = temperature
+
+        @classmethod
+        def from_pretrained(cls, _model_path, **kwargs):
+            return cls(temperature=kwargs.get("temperature"))
+
+    torch = types.ModuleType("torch")
+    torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    torch.float16 = object()
+    torch.bfloat16 = object()
+    transformers = types.ModuleType("transformers")
+    transformers.GenerationConfig = FakeGenerationConfig
     qwen_asr = types.ModuleType("qwen_asr")
     qwen_asr.Qwen3ASRModel = FakeQwen3ASRModel
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
     monkeypatch.setitem(sys.modules, "qwen_asr", qwen_asr)
-    mocker.patch("torch.cuda.is_available", return_value=True)
     monkeypatch.setattr(asr_qwen3, "QWEN3_ASR_MODEL_DIR", asr_model_dir)
     monkeypatch.setattr(asr_qwen3, "QWEN3_ALIGNER_MODEL_DIR", aligner_model_dir)
 

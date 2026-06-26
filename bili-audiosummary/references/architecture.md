@@ -61,16 +61,15 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 ### Setup Entry Points
 
-- `scripts/setup/setup_windows.bat`: thin Windows launcher. Prefers `uv` with Python 3.12 and falls back to `py -3.12`.
-- `scripts/setup/setup.py`: orchestrates core setup: environment creation, dependency installation and verification, packaged ffmpeg verification, and faster-whisper model download.
-- `scripts/setup/install_qwen3.py`: optional Qwen3 setup. Installs CUDA PyTorch and Qwen3 requirements, verifies imports, and downloads both Qwen3 models.
+- `scripts/setup/setup_windows.bat`: thin Windows launcher. Requires `uv`, runs `uv sync --python 3.12 --no-dev`, then starts core setup.
+- `scripts/setup/setup.py`: verifies the uv-managed Python 3.12 environment, core imports, packaged ffmpeg, and faster-whisper model download.
+- `scripts/setup/install_qwen3.py`: optional Qwen3 setup. Verifies the `qwen3` extra dependencies and downloads both Qwen3 models.
 
 ### Setup Helpers
 
-- `scripts/setup/environment.py`: defines setup paths, creates cache and output directories, applies default mirror and cache environment variables, and enforces Python 3.12.
-- `scripts/setup/install_core.py`: installs core requirements, retries official PyPI when the configured index fails, verifies requirements and imports, and resolves packaged ffmpeg binaries.
+- `scripts/setup/environment.py`: defines setup paths, creates cache and output directories, applies default Hugging Face mirror and cache environment variables, and enforces Python 3.12.
+- `scripts/setup/install_core.py`: verifies core imports and resolves packaged ffmpeg binaries.
 - `scripts/setup/download_models.py`: downloads Hugging Face snapshots and verifies required model weights.
-- `scripts/setup/requirements_check.py`: validates installed packages against exact pins, ranges, markers, and unpinned requirements.
 - `scripts/setup/__init__.py`: marks the setup directory as a Python package.
 
 ## Generated Artifacts

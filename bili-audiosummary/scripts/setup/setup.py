@@ -14,33 +14,31 @@ if __package__:
     from .download_models import download_model
     from .environment import (
         SetupPaths,
+        assert_python_312,
         configure_environment,
         create_log_path,
         current_python,
-        ensure_virtual_environment,
+        read_python_version,
     )
     from .install_core import (
-        install_requirements,
         resolve_packaged_ffmpeg,
         verify_core_imports,
         verify_ffmpeg_executables,
-        verify_requirements,
     )
 else:
     from download_models import download_model
     from environment import (
         SetupPaths,
+        assert_python_312,
         configure_environment,
         create_log_path,
         current_python,
-        ensure_virtual_environment,
+        read_python_version,
     )
     from install_core import (
-        install_requirements,
         resolve_packaged_ffmpeg,
         verify_core_imports,
         verify_ffmpeg_executables,
-        verify_requirements,
     )
 
 
@@ -52,32 +50,24 @@ def run_setup(root: Path | None = None) -> Path:
     paths = SetupPaths.from_root(root)
     configure_environment(paths, os.environ)
     logger = ProcessLogger(create_log_path(paths))
+    python = current_python()
     print(f"Full log: {logger.log_path}")
     try:
-        logger.step(1, 4, "Prepare Python 3.12 virtual environment")
-        ensure_virtual_environment(paths, current_python(), logger)
+        logger.step(1, 3, "Verify uv-managed Python 3.12 environment")
+        assert_python_312(read_python_version(python, logger), "Current environment")
 
-        logger.step(2, 4, "Install and verify core requirements")
-        install_requirements(
-            paths.venv_python,
-            paths.requirements_path,
-            logger,
-            os.environ,
-        )
-        verify_requirements(paths.venv_python, paths.requirements_path, logger)
-
-        logger.step(3, 4, "Verify core imports and packaged ffmpeg")
-        verify_core_imports(paths.venv_python, logger, os.environ)
+        logger.step(2, 3, "Verify core imports and packaged ffmpeg")
+        verify_core_imports(python, logger, os.environ)
         ffmpeg, ffprobe = resolve_packaged_ffmpeg(
-            paths.venv_python,
+            python,
             logger,
             os.environ,
         )
         verify_ffmpeg_executables(ffmpeg, ffprobe, logger)
 
-        logger.step(4, 4, "Download and verify faster-whisper model")
+        logger.step(3, 3, "Download and verify faster-whisper model")
         download_model(
-            paths.venv_python,
+            python,
             WHISPER_MODEL_REPO,
             paths.whisper_model_dir,
             ("model.bin",),

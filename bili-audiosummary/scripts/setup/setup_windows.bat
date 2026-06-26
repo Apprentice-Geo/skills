@@ -6,20 +6,23 @@ if not defined UV_CACHE_DIR (
 )
 
 where uv >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    uv run --python 3.12 --no-project python "%~dp0setup.py" %*
-    exit /b %ERRORLEVEL%
+if %ERRORLEVEL% NEQ 0 (
+    echo Error: setup requires uv.
+    echo Install uv from https://docs.astral.sh/uv/ and rerun this command.
+    exit /b 1
 )
 
-where py >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    py -3.12 -c "import sys" >nul 2>nul
-    if %ERRORLEVEL% EQU 0 (
-        py -3.12 "%~dp0setup.py" %*
-        exit /b %ERRORLEVEL%
-    )
-)
+pushd "%~dp0..\.." || exit /b 1
 
-echo Error: setup requires uv or a local Python 3.12 runtime.
-echo Install uv from https://docs.astral.sh/uv/ and rerun this command.
-exit /b 1
+call uv sync --python 3.12 --no-dev
+if %ERRORLEVEL% NEQ 0 goto setup_failed
+
+call uv run --no-sync python "%~dp0setup.py" %*
+set "SETUP_RC=%ERRORLEVEL%"
+popd
+exit /b %SETUP_RC%
+
+:setup_failed
+set "SETUP_RC=%ERRORLEVEL%"
+popd
+exit /b %SETUP_RC%

@@ -32,38 +32,23 @@ def run_launcher(command_dir: Path, log_path: Path) -> subprocess.CompletedProce
     )
 
 
-def test_setup_launcher_prefers_uv(workspace_tmp_path: Path) -> None:
+def test_setup_launcher_syncs_with_uv_and_runs_setup(workspace_tmp_path: Path) -> None:
     command_dir = workspace_tmp_path / "bin"
     command_dir.mkdir()
     write_fake_command(command_dir / "uv.cmd", "uv")
-    write_fake_command(command_dir / "py.cmd", "py")
     log_path = workspace_tmp_path / "launch.log"
 
     result = run_launcher(command_dir, log_path)
 
     assert result.returncode == 0
     invocation = log_path.read_text(encoding="utf-8")
-    assert "uv run --python 3.12 --no-project python" in invocation
+    assert "uv sync --python 3.12 --no-dev" in invocation
+    assert "uv run --no-sync python" in invocation
     assert "scripts\\setup\\setup.py" in invocation
     assert str(REPO_ROOT / ".cache" / "uv") in invocation
-    assert "py -3.12" not in invocation
 
 
-def test_setup_launcher_falls_back_to_py_312(workspace_tmp_path: Path) -> None:
-    command_dir = workspace_tmp_path / "bin"
-    command_dir.mkdir()
-    write_fake_command(command_dir / "py.cmd", "py")
-    log_path = workspace_tmp_path / "launch.log"
-
-    result = run_launcher(command_dir, log_path)
-
-    assert result.returncode == 0
-    invocation = log_path.read_text(encoding="utf-8")
-    assert "py -3.12" in invocation
-    assert "scripts\\setup\\setup.py" in invocation
-
-
-def test_setup_launcher_reports_missing_python_312(workspace_tmp_path: Path) -> None:
+def test_setup_launcher_reports_missing_uv(workspace_tmp_path: Path) -> None:
     command_dir = workspace_tmp_path / "bin"
     command_dir.mkdir()
     log_path = workspace_tmp_path / "launch.log"
@@ -71,5 +56,4 @@ def test_setup_launcher_reports_missing_python_312(workspace_tmp_path: Path) -> 
     result = run_launcher(command_dir, log_path)
 
     assert result.returncode != 0
-    assert "uv" in result.stdout
-    assert "Python 3.12" in result.stdout
+    assert "setup requires uv" in result.stdout

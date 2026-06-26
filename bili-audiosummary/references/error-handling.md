@@ -17,16 +17,16 @@ Use this reference only when setup or processing fails.
 ## Setup and Python
 
 - Run setup with `.\scripts\setup\setup_windows.bat`.
-- If neither `uv` nor `py -3.12` is available, install `uv` from <https://docs.astral.sh/uv/> and rerun setup.
+- If `uv` is unavailable, install it from <https://docs.astral.sh/uv/> and rerun setup.
 - If an existing `.venv` does not use Python 3.12, stop. Do not delete or replace it automatically.
 - If `.venv` exists but is incomplete, remove or repair it only with explicit user approval, then rerun setup.
-- Use the `.venv` Python for all processing commands.
+- Use `uv run --no-sync python` for processing commands after setup.
 
 ## Environment and Dependencies
 
-- Setup preserves existing `UV_CACHE_DIR`, `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `PIP_INDEX_URL`, and `HF_ENDPOINT` values. Check them in the setup log when cache or mirror behavior is unexpected.
-- Without explicit overrides, setup uses `.cache/uv/`, `.cache/huggingface/`, the configured PyPI mirror, and the configured Hugging Face endpoint.
-- If the configured pip index fails, setup retries official PyPI. If both attempts fail, inspect the exact package and index error in the setup log.
+- Setup preserves existing `UV_CACHE_DIR`, `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, and `HF_ENDPOINT` values. Check them in the setup log when cache or mirror behavior is unexpected.
+- Without explicit overrides, setup uses `.cache/uv/`, `.cache/huggingface/`, and the configured Hugging Face endpoint.
+- If dependency sync fails, inspect the `uv sync` output and `pyproject.toml` / `uv.lock` dependency constraints.
 - If model downloads fail after network settings are correct, verify that `HF_HOME` and `HUGGINGFACE_HUB_CACHE` are writable.
 - `ffmpeg-binaries-compat` is the only supported ffmpeg source. If `ffmpeg` or `ffprobe` cannot be resolved, rerun setup; do not rely on system PATH as a substitute.
 - For default ASR environment failures, verify `.venv`, core imports, packaged ffmpeg, and `models/faster-whisper-small/`.
@@ -46,7 +46,7 @@ Use this reference only when setup or processing fails.
 - For another filename or location, rerun explicitly:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt
 ```
 
 - If cookies are still rejected, confirm that the export came from a logged-in Bilibili session, uses Netscape format, and has not expired.
@@ -73,7 +73,8 @@ Use this reference only when setup or processing fails.
 - Install or repair the optional environment with:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py
+uv sync --python 3.12 --no-dev --extra qwen3
+uv run --no-sync python scripts\setup\install_qwen3.py
 ```
 
 - If Qwen3 is unavailable or fails, the terminal prints a short fallback warning and the full reason is recorded in the log. The pipeline then attempts faster-whisper.

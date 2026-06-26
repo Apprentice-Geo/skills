@@ -1,7 +1,7 @@
 ---
 name: bili-audiosummary
 description: Use this skill when the user provides a Bilibili/B站/BV video URL and wants an audio-based summary, notes, key points, timestamps, or asks what the video says, e.g. “总结这个B站视频”, “这个视频讲了什么”, “提炼要点”, or “生成笔记”. Do not use it for visual analysis, PV/music/dance videos, editing, comments, covers, or original-video downloads.
-compatibility: Windows. Recommended uv for Python 3.12; otherwise a local Python 3.12 installation is required. Requires network access to Bilibili, PyPI, GitHub, and Hugging Face or configured mirrors.
+compatibility: Windows. Requires uv for Python 3.12 environment management. Requires network access to Bilibili, PyPI, GitHub, and Hugging Face or configured mirrors.
 license: Apache-2.0
 metadata:
   Github: https://github.com/Apprentice-Geo/skills/tree/main/bili-audiosummary
@@ -22,7 +22,7 @@ User-facing installation and cookie export instructions are in [README.md](READM
 ## Main Steps
 
 1. Confirm that the input is a Bilibili video URL and that an audio-based summary fits the request.
-2. If `.venv` or required dependencies are missing, run:
+2. If `.venv`, required dependencies, or the default faster-whisper model are missing, run:
 
 ```powershell
 .\scripts\setup\setup_windows.bat
@@ -31,7 +31,7 @@ User-facing installation and cookie export instructions are in [README.md](READM
 3. Run the pipeline:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>"
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>"
 ```
 
 Use `--language en` for English content, `--skip-subtitles` to force ASR, and `--asr-provider qwen3` only after the optional Qwen3 setup has completed.
@@ -41,7 +41,7 @@ Use `--language en` for English content, `--skip-subtitles` to force ASR, and `-
 6. The main Agent validates the final summary:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\validate_summary.py "<summary-path>"
+uv run --no-sync python scripts\validate_summary.py "<summary-path>"
 ```
 
 7. If a command fails, follow [references/error-handling.md](references/error-handling.md).

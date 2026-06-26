@@ -69,7 +69,7 @@ def make_simplified_chinese_converter() -> Any:
     except ImportError as exc:
         raise RuntimeError(
             "Chinese transcription requires opencc-python-reimplemented to normalize output to Simplified Chinese. "
-            r"Run .\scripts\setup\setup_windows.bat again to install updated requirements."
+            r"Run .\scripts\setup\setup_windows.bat again to sync dependencies."
         ) from exc
 
     return OpenCC("t2s")

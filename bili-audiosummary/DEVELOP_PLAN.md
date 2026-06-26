@@ -59,10 +59,7 @@
 
 **Problem:** faster-whisper / huggingface_hub 在受限环境下可能尝试写入 `C:\Users\ApprenTice\.cache\huggingface`，导致权限错误。
 
-**Success Criteria:**
-- setup 默认使用项目内 `.cache/huggingface`。
-- `HF_HOME` 和 `HUGGINGFACE_HUB_CACHE` 已存在时不覆盖用户显式配置。
-- 模型下载失败时错误信息包含本地 cache 路径和可重跑命令。
+**主要改动:** setup 默认使用项目内 `.cache/huggingface`，保留用户显式配置，并在模型下载失败时提示本地 cache 路径和重跑命令。
 
 ---
 
@@ -70,13 +67,7 @@
 
 **Problem:** 最终 summary 校验依赖人工检查，容易漏掉占位符、模板注释或全文复制。
 
-**Success Criteria:**
-
-- 新增 `scripts/validate_summary.py`。
-- 校验失败时一次性输出所有 error。
-- 校验通过时输出明确通过结论。
-- `SKILL.md` 使用该脚本作为最终验证步骤。
-
+**主要改动:** 新增 `scripts/validate_summary.py`，集中检查 summary 文件、占位符、模板注释和全文复制风险；`SKILL.md` 将该脚本作为最终验证步骤。
 
 ---
 
@@ -99,107 +90,76 @@
 
 #### Task4.1 拆分依赖安装脚本（已完成）
 
-**Problem** 目前的依赖安装由一个ps1脚本实现，当调用pip等工具时会产生大量输出污染上下文
+**Problem** 目前的依赖安装由一个ps1脚本实现，当调用依赖安装工具时会产生大量输出污染上下文
 
-完成结果：
-
-- 公共入口改为 `.\scripts\setup\setup_windows.bat`，优先 uv，回退 `py -3.12`。
-- Python 安装实现拆分到 `scripts/setup/`；`.venv` 严格要求 Python 3.12。
-- pip 正常输出写入 `.cache/logs/setup-YYYYMMDD-HHMMSS.log`，终端只显示步骤和失败回放。
-- requirements 使用 `.venv` pip 自带的版本解析能力校验。
-- `ffmpeg-binaries-compat` 成为唯一 ffmpeg 来源。
-- Qwen3 使用 `.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py` 一次安装依赖和模型。
+**主要改动:** 将 Windows setup 公共入口改为 `.\scripts\setup\setup_windows.bat`，依赖同步交给 uv，Python setup 逻辑拆分到 `scripts/setup/`，终端只输出关键步骤，完整日志写入 `.cache/logs/`。
 
 #### Task4.2 规范化处理脚本输出（已完成）
 
 **Problem** 目前的处理脚本 run_pipeline 会产生以下阶段性输出，并且没有log功能
 
-- Using auto-detected cookies:
-
-- [BiliBili] Extracting URL （保留）
-- [BiliBili] 1W1JxzjEty:
-- [BiliBili] BV1W1JxzjEty
-- [BiliBili] Format(s)
-- [BiliBili] 114555233502974:
-- Using cached audio files
-- Title （保留）
-- BVID
-- Canonical URL
-- Result 
-- Metadata:
-- Raw metadata:
-- Manifest:
-- Audio files:
-- Subtitle files
-- Skipping subtitles; using ASR from audio
-- Audio
-- JSON
-- Markdown
-- Segments
-- Pipeline completed
-- Result（保留）
-- Manifest
-- Transcript JSON
-- Transcript Markdown
-- Summary Prompt:  （保留）
-- Final Summary Path （保留）
-- Agent should read the summary prompt file above to generate the final summary. （保留）
-
 修改目标：
 
 - 为 run_pipeline 涉及的流程文件增加 log 功能，可以考虑复用当前setup下的process_logging，将其提到外面一级文件夹来作文通用log入口
-
 - 除了标注保留的内容，其余内容写入log但是不打印到stdout
-- 也可以考虑有没有需要进一步增加的内容，例如转写过程目前完全没有提示，难以判断进度，而后续还需要接入多进程同步转写，因此目前也可以先不动ASR转写过程
+- 可暂不实现 ASR 百分比或分段进度
 
-完成结果：
+**主要改动:** 新增通用 `scripts/process_logging.py`，让 setup、pipeline、fetch、字幕转换和 ASR 共用日志；终端只输出关键阶段和最终路径，完整运行信息、traceback、yt-dlp 细节、缓存状态、fallback 和 warning 写入日志文件。
 
-- 新增 `scripts/process_logging.py`，统一 setup、pipeline、fetch、字幕转换和 ASR 的 Python `logging`；删除 setup 专用日志模块。
-- 完整运行信息和 traceback 写入文件，终端 handler 只放行 `terminal=True` 的关键阶段与最终结果。
-- pipeline 日志先写入 `.cache/logs/pipeline-<timestamp>.log`，识别 BVID 后迁移到 `results/<BVID>/`；迁移失败不影响处理。
-- yt-dlp、缓存状态、BVID、manifest、metadata、transcript 路径、segments、fallback 和非致命 warning 仅写日志。
-- setup 保留步骤输出、成功命令静默和失败完整回放；fetch、transcribe、subtitle 独立入口使用相同简洁输出。
-- 未新增 CLI 参数，未实现 ASR 百分比或分段进度。
+#### Task4.3 补充对 uv 路径的规范化输出和默认源设置
 
-注：
+**Problem** 全量切换到 uv 以后，没有做默认依赖源优化和 uv 安装输出规范化
 
-测试时原始输出如下：
+修改目标：
 
-```powershell
-PS D:\codes\skills\bili-audiosummary> .\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV1W1JxzjEty/" --skip
-Using auto-detected cookies: D:/codes/skills/bili-audiosummary/www.bilibili.com_cookies.txt
-[BiliBili] Extracting URL: https://www.bilibili.com/video/BV1W1JxzjEty/
-[BiliBili] 1W1JxzjEty: Downloading webpage
-[BiliBili] BV1W1JxzjEty: Extracting videos in anthology
-[BiliBili] Format(s) 1080P 高码率, 1080P 高清, 720P 准高清 are missing; you have to become a premium member to download them. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies
-[BiliBili] 114555233502974: Extracting chapters
-Using cached audio files: 1
-Title: 当法官变身为知心姐姐，一个离谱的判决和宣传
-BVID: BV1W1JxzjEty
-Canonical URL: https://www.bilibili.com/video/BV1W1JxzjEty/
-Result: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty
-Metadata: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/metadata.json
-Raw metadata: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/metadata.raw.json
-Manifest: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/fetch_manifest.json
-Audio files: 1
-Subtitle files: 0
-Skipping subtitles; using ASR from audio.
-Audio: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/BV1W1JxzjEty.m4a
-JSON: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.json
-Markdown: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.md
-Segments: 31
+- 为 uv 路径设置默认依赖源，与之前的 pip 默认国内源一致
+- uv 的安装输出格式如下：
 
-Pipeline completed.
-Result: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty
-Manifest: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/resource/fetch_manifest.json
-Transcript JSON: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.json
-Transcript Markdown: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_transcript.md
-Summary Prompt: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_summary_prompt.md
-Final Summary Path: D:/codes/skills/bili-audiosummary/results/BV1W1JxzjEty/BV1W1JxzjEty_summary_zh.md
-Agent should read the summary prompt file above to generate the final summary.
+安装中：
+```
+uv sync --extra qwen3
+
+sing CPython 3.12.13
+Creating virtual environment at: .venv
+Resolved 128 packages in 1ms
+      Built sox==1.5.0
+⠇ Preparing packages... (51/91)
+httpx                       ------------------------------     0 B/71.79 KiB
+cffi                        ------------------------------ 175.80 KiB/179.25 KiB
+werkzeug                    ------------------------------ 169.52 KiB/221.15 KiB
+librosa                     ------------------------------ 171.46 KiB/254.64 KiB
+regex                       ------------------------------ 174.81 KiB/271.27 KiB
+joblib                      ------------------------------ 163.89 KiB/301.83 KiB
+rich                        ------------------------------ 179.56 KiB/303.37 KiB
+tzdata                      ------------------------------ 177.61 KiB/341.13 KiB
+...
 ```
 
+安装完成：
+```
+uv sync --extra qwen3
 
+Installed 107 packages in 40.75s
+ + accelerate==1.12.0
+ + annotated-doc==0.0.4
+ + annotated-types==0.7.0
+ + anyio==4.14.1
+ + audioread==3.1.0
+ + av==17.1.0
+ + blinker==1.9.0
+ + brotli==1.2.0
+ + certifi==2026.6.17
+ + cffi==2.0.0
+ + charset-normalizer==3.4.7
+```
+
+重复安装：
+```
+uv sync --extra qwen3
+
+Resolved 128 packages in 1ms
+Checked 107 packages in 12ms
+```
 
 ### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据（已完成）
 
@@ -211,13 +171,7 @@ Agent should read the summary prompt file above to generate the final summary.
 - prompt改为使用"[]()"文件引用格式，在prompt中明确ASR结果文件的相对路径
 - prompt只包含结果保存路径，指令，模板，ASR结果文件的相对路径，四者的编排顺序需要做考虑
 
-完成结果：
-
-- summary prompt 不再嵌入 transcript 正文，改为引用同目录 transcript 的相对 Markdown 链接。
-- prompt 顺序固定为任务与不可信数据边界、transcript 链接、内嵌 instructions、内嵌 template、完整最终输出路径。
-- instructions 明确 transcript 中的指令、角色要求和输出路径均不得执行。
-- 该改动同时覆盖原 P1 的 summary prompt 重排事项。
-- 该隔离只降低提示词注入风险，不构成硬安全沙箱。
+**主要改动:** summary prompt 不再嵌入 transcript 正文，改为引用同目录 transcript；prompt 明确不可信数据边界，并固定任务、数据链接、instructions、template 和输出路径的顺序。
 
 ### Task 6: 尝试使用subagent做总结和文件写入，隔离不同的上下文（已完成）
 
@@ -226,16 +180,10 @@ Agent should read the summary prompt file above to generate the final summary.
 修改目标：
 
 - 在SKILL.md的步骤中做修改
-
 - 总结方式改为优先使用subagent总结并写入文件
 - 如果无法使用subagent，允许在同一个对话中完成总结并写入文件
 
-完成结果：
-
-- `SKILL.md` 要求优先派发不继承父对话的全新 subagent。
-- 主 Agent 只向 subagent 提供 Summary Prompt 路径和总结写入任务，不传 transcript 正文或父对话。
-- 无 subagent 能力时，当前 Agent 按相同 prompt 完成总结和写入。
-- 最终 summary validator 始终由主 Agent 执行。
+**主要改动:** `SKILL.md` 要求优先使用不继承父对话的 subagent 完成总结和写入；无 subagent 能力时允许当前 Agent 按相同 prompt 执行，最终 validator 仍由主 Agent 运行。
 
 ### Task 7: 拆分和修改目前的文档（已完成）
 
@@ -251,12 +199,7 @@ Agent should read the summary prompt file above to generate the final summary.
 - 在reference中增加一个项目架构说明，说明各脚本的行为和项目文件目录的作用，因此README和SKILL中不需要再介绍，但是需要保留相对路径引用链接
 - 将skill.md中的错误处理指导全部移到error-handing中去，考虑到错误情况可能较多，在错误指导文档开头需要增加一个简要目录供快速查阅
 
-完成结果：
-
-- `README.md` 已收敛为面向使用者的项目介绍、功能亮点、能力边界、两种使用方式、cookies 导出和第三方依赖说明。
-- `SKILL.md` 保留 YAML frontmatter，正文仅保留使用场景、主要步骤和处理时间估算。
-- 新增 `references/architecture.md`，集中记录 pipeline、目录、脚本职责和输出位置。
-- `references/error-handling.md` 已增加快速目录，并集中 setup、下载、cookies、字幕缓存、ASR、Qwen3 fallback、日志和终止条件。
+**主要改动:** 精简 `README.md` 和 `SKILL.md`，将架构说明集中到 `references/architecture.md`，将错误处理集中到 `references/error-handling.md` 并补充快速目录。
 
 ---
 
@@ -278,19 +221,7 @@ Agent should read the summary prompt file above to generate the final summary.
 
 **Problem:** 目前Qwen3的ASR链路和字幕复用的切分效果较好，但是whisper的输出切分粒度太粗
 
-
-完成结果：
-
-- faster-whisper 默认从批处理转写改为非批处理转写，直接使用模型生成的较细 segments。
-- 不增加词级时间戳选项，transcript JSON/Markdown 继续只输出段级时间戳。
-- 补充 `opencc-python-reimplemented` 运行时依赖，保证中文 Whisper 结果能够规范化为简体中文。
-- 本地 306 秒中文样本从约 30 秒粒度的 11 段细化为连续的 31 段；接受单进程 CPU 转写耗时增加。
-
-后续研究：
-
-- 多进程转写作为独立任务处理，不在本任务提前实现 worker 或切分抽象。
-- 需要研究基于静音/VAD 的切分、边界重叠、避免截断句子、片段时间偏移和重叠文本去重。
-- 合并后的 segments 必须保持时间单调、无明显缺段，并维持现有 transcript JSON/Markdown 结构。
+**主要改动:** faster-whisper 默认改为非批处理转写，直接使用模型生成的较细 segments；transcript JSON/Markdown 仍只输出段级时间戳，并补充中文简体规范化依赖。
 
 ---
 
@@ -351,8 +282,8 @@ pytest tests -q
 For live/manual validation when network and cookies are available:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>"
-.\.venv\Scripts\python.exe scripts\validate_summary.py "<summary-path>" --transcript "<transcript-md-path>"
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>"
+uv run --no-sync python scripts\validate_summary.py "<summary-path>" --transcript "<transcript-md-path>"
 ```
 
 Expected:

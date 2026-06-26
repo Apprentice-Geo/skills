@@ -34,40 +34,41 @@
 .\scripts\setup\setup_windows.bat
 ```
 
-默认 setup 会准备 Python 3.12 虚拟环境、核心依赖、`ffmpeg-binaries-compat` 和 faster-whisper 模型。随后运行：
+默认 setup 会通过 `uv sync` 准备 Python 3.12 虚拟环境、核心依赖、`ffmpeg-binaries-compat` 和 faster-whisper 模型。随后运行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
+uv run --no-sync python scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
 ```
 
 处理英文内容：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --language en
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --language en
 ```
 
 跳过字幕并强制使用 ASR：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --skip-subtitles
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --skip-subtitles
 ```
 
 有可用 CUDA 时，可安装 Qwen3-ASR 的可选依赖和模型：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\setup\install_qwen3.py
+uv sync --python 3.12 --no-dev --extra qwen3
+uv run --no-sync python scripts\setup\install_qwen3.py
 ```
 
 安装完成后优先尝试 Qwen3-ASR：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --asr-provider qwen3
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --asr-provider qwen3
 ```
 
 pipeline 会打印 `Summary Prompt` 和 `Final Summary Path`。根据 prompt 写入最终 summary 后，可执行：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\validate_summary.py "<summary-path>"
+uv run --no-sync python scripts\validate_summary.py "<summary-path>"
 ```
 
 完整数据流、目录职责、脚本说明和输出位置见 [项目架构](references/architecture.md)。命令失败时见 [错误处理](references/error-handling.md)。
@@ -82,7 +83,7 @@ Bilibili 返回 `HTTP 412` 或请求需要登录态时，可准备 Netscape 格�
 将文件放到项目根目录并命名为 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，pipeline 会自动检测。也可以显式指定：
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt
+uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt
 ```
 
 ## 第三方依赖
@@ -91,4 +92,4 @@ Bilibili 返回 `HTTP 412` 或请求需要登录态时，可准备 Netscape 格�
 - [`ffmpeg-binaries-compat`](https://pypi.org/project/ffmpeg-binaries-compat/)：提供项目使用的 `ffmpeg` 和 `ffprobe`；不依赖系统 PATH 中的 ffmpeg。
 - [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper)：默认 ASR 引擎，可在 CPU 环境运行。
 - [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)：可选 CUDA ASR 引擎，配合 `Qwen/Qwen3-ASR-0.6B` 和 `Qwen/Qwen3-ForcedAligner-0.6B` 本地模型使用。
-- [`uv`](https://docs.astral.sh/uv/)：推荐的 Python 3.12 setup 启动方式；未安装时 launcher 会尝试本地 `py -3.12`。
+- [`uv`](https://docs.astral.sh/uv/)：唯一支持的 Python 3.12 环境与依赖同步入口。

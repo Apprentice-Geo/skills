@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Mapping
 
 if __package__:
     from ..process_logging import ProcessLogger, SetupError
@@ -20,7 +19,6 @@ if __package__:
         create_log_path,
         read_python_version,
     )
-    from .install_core import install_requirements, verify_requirements
 else:
     from download_models import download_model
     from environment import (
@@ -30,36 +28,10 @@ else:
         create_log_path,
         read_python_version,
     )
-    from install_core import install_requirements, verify_requirements
 
 
-QWEN3_TORCH_INDEX_URL = "https://download.pytorch.org/whl/cu126"
 QWEN3_ASR_MODEL_REPO = "Qwen/Qwen3-ASR-0.6B"
 QWEN3_ALIGNER_MODEL_REPO = "Qwen/Qwen3-ForcedAligner-0.6B"
-
-
-def install_cuda_torch(
-    python: Path,
-    logger: ProcessLogger,
-    env: Mapping[str, str],
-) -> None:
-    logger.run(
-        [
-            python,
-            "-m",
-            "pip",
-            "install",
-            "--index-url",
-            QWEN3_TORCH_INDEX_URL,
-            "torch",
-            "torchaudio",
-            "--disable-pip-version-check",
-            "--progress-bar",
-            "off",
-        ],
-        "Install CUDA torch and torchaudio",
-        env=env,
-    )
 
 
 def run_qwen3_setup(root: Path | None = None) -> Path:
@@ -73,28 +45,25 @@ def run_qwen3_setup(root: Path | None = None) -> Path:
         if python != paths.venv_python.resolve():
             raise SetupError(
                 "Run Qwen3 setup with "
-                r".\.venv\Scripts\python.exe scripts\setup\install_qwen3.py"
+                r"uv run --no-sync python scripts\setup\install_qwen3.py"
             )
         assert_python_312(read_python_version(python, logger), "Existing .venv")
 
-        logger.step(1, 4, "Install Qwen3 CUDA dependencies")
-        install_cuda_torch(python, logger, os.environ)
-        install_requirements(
-            python,
-            paths.qwen3_requirements_path,
-            logger,
-            os.environ,
-        )
-        verify_requirements(python, paths.qwen3_requirements_path, logger)
+        logger.step(1, 3, "Verify Qwen3 extra imports")
+        try:
+            logger.run(
+                [python, "-c", "import qwen_asr; import torch; import torchaudio"],
+                "Verify Qwen3 imports",
+                env=os.environ,
+            )
+        except SetupError as exc:
+            raise SetupError(
+                "Qwen3 dependencies are missing. Run "
+                r"uv sync --python 3.12 --no-dev --extra qwen3 "
+                "before Qwen3 setup."
+            ) from exc
 
-        logger.step(2, 4, "Verify Qwen3 imports")
-        logger.run(
-            [python, "-c", "import qwen_asr; import torch; import torchaudio"],
-            "Verify Qwen3 imports",
-            env=os.environ,
-        )
-
-        logger.step(3, 4, "Download and verify Qwen3 ASR model")
+        logger.step(2, 3, "Download and verify Qwen3 ASR model")
         download_model(
             python,
             QWEN3_ASR_MODEL_REPO,
@@ -104,7 +73,7 @@ def run_qwen3_setup(root: Path | None = None) -> Path:
             os.environ,
         )
 
-        logger.step(4, 4, "Download and verify Qwen3 aligner model")
+        logger.step(3, 3, "Download and verify Qwen3 aligner model")
         download_model(
             python,
             QWEN3_ALIGNER_MODEL_REPO,
