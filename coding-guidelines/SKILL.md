@@ -4,10 +4,11 @@ description: Use this skill when the user asks to implement, modify, debugg, or 
 license: Apache-2.0
 ---
 
+# coding-guidelines
+
 Apply these principles when producing or modifying code.
 
-Explicit user requirements, repository instructions, established project
-conventions, and available validation tools take precedence. 
+Explicit user requirements, repository instructions, established project conventions, and available validation tools take precedence. 
 
 ## 1. Think Before Coding
 
@@ -82,3 +83,24 @@ Avoid tests that primarily assert:
 - incidental files, logs, or cache behavior unless they are part of the contract
 
 A test is valuable only if its failure usually signals a real product or contract regression.
+
+## 6. Use Subagents Sensibly
+
+**The main agent plans, delegates, and verifies. Subagents execute isolated work.**
+
+Prefer subagents when:
+
+- The task involves many repetitive, mechanical, same-pattern code changes, such as API migration, renaming, configuration field updates, or replacing repeated call patterns.
+- A large coding task has already been split into clear substeps, and each substep has explicit inputs, outputs, and verification criteria.
+- The task requires searching, reading, analyzing, or editing across many files, and the intermediate context would pollute the main conversation.
+- An independent review is useful, such as code review, test coverage review, edge-case analysis, or performance-risk analysis.
+- Multiple independent subtasks can be handled in parallel.
+
+When using a subagent:
+
+- Define the task boundary clearly: what to change, what not to change, and which files or areas may be touched.
+- Define success criteria clearly: which tests should pass and which behaviors must remain unchanged.
+- Require a concise structured result: change summary, verification result, risks, and any questions requiring main-agent judgment.
+- The main agent must verify the subagent’s result. Do not assume the delegated output is correct.
+
+Do not use subagents for vague design decisions, tasks requiring frequent user confirmation, tasks that strongly depend on the current conversation context, or very small direct edits.

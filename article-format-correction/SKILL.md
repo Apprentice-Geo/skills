@@ -4,7 +4,7 @@ description: Corrects Markdown technical articles, notes, algorithm writeups, an
 license: Apache-2.0
 ---
 
-## Purpose
+# article-format-correction
 
 Correct Markdown technical articles with a light hand.
 
