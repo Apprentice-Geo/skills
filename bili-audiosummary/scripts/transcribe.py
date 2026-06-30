@@ -40,7 +40,11 @@ logger = get_logger(__name__)
 def default_model_path() -> str:
     if (DEFAULT_WHISPER_MODEL_DIR / "model.bin").exists():
         return path_to_posix(DEFAULT_WHISPER_MODEL_DIR)
-    return "small"
+    raise RuntimeError(
+        "Local faster-whisper model is missing. Run "
+        r"uv run --no-sync python scripts\setup\install_model.py --model faster-whisper "
+        "before using faster-whisper ASR."
+    )
 
 
 def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:

@@ -44,7 +44,7 @@ def run_launcher(
     )
 
 
-def test_setup_launcher_syncs_with_uv_and_runs_setup(workspace_tmp_path: Path) -> None:
+def test_setup_launcher_prepares_python_and_runs_setup(workspace_tmp_path: Path) -> None:
     command_dir = workspace_tmp_path / "bin"
     command_dir.mkdir()
     write_fake_command(command_dir / "uv.cmd", "uv")
@@ -54,12 +54,13 @@ def test_setup_launcher_syncs_with_uv_and_runs_setup(workspace_tmp_path: Path) -
 
     assert result.returncode == 0
     invocation = log_path.read_text(encoding="utf-8")
-    assert "uv sync --python 3.12 --no-dev" in invocation
-    assert "uv run --no-sync python" in invocation
+    assert "uv python install 3.12" in invocation
+    assert "uv run --python 3.12 --no-sync python" in invocation
+    assert "uv sync --python 3.12 --no-dev" not in invocation
     assert "scripts\\setup\\setup.py" in invocation
     assert str(REPO_ROOT / ".cache" / "uv") in invocation
     assert DEFAULT_UV_INDEX in invocation
-    assert "uv sync --python 3.12 --no-dev" in result.stdout
+    assert "uv python install 3.12" in result.stdout
     assert "Resolved 128 packages in 1ms" in result.stdout
     assert "Checked 107 packages in 12ms" in result.stdout
 

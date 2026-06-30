@@ -11,7 +11,6 @@ else:
     from process_logging import ProcessLogger, SetupError
 
 if __package__:
-    from .download_models import download_model
     from .environment import (
         SetupPaths,
         assert_python_312,
@@ -26,7 +25,6 @@ if __package__:
         verify_ffmpeg_executables,
     )
 else:
-    from download_models import download_model
     from environment import (
         SetupPaths,
         assert_python_312,
@@ -41,39 +39,38 @@ else:
         verify_ffmpeg_executables,
     )
 
-
-WHISPER_MODEL_REPO = "Systran/faster-whisper-small"
-
-
 def run_setup(root: Path | None = None) -> Path:
     root = root or Path(__file__).resolve().parents[2]
     paths = SetupPaths.from_root(root)
     configure_environment(paths, os.environ)
     logger = ProcessLogger(create_log_path(paths))
-    python = current_python()
+    launcher_python = current_python()
+    venv_python = paths.venv_python
     print(f"Full log: {logger.log_path}")
     try:
-        logger.step(1, 3, "Verify uv-managed Python 3.12 environment")
-        assert_python_312(read_python_version(python, logger), "Current environment")
+        logger.step(1, 3, "Verify setup Python 3.12")
+        assert_python_312(
+            read_python_version(launcher_python, logger),
+            "Setup launcher",
+        )
 
-        logger.step(2, 3, "Verify core imports and packaged ffmpeg")
-        verify_core_imports(python, logger, os.environ)
+        logger.step(2, 3, "Sync core dependencies")
+        logger.run(
+            ["uv", "sync", "--python", "3.12", "--no-dev"],
+            "Sync core dependencies",
+            env=os.environ,
+            cwd=root,
+        )
+        assert_python_312(read_python_version(venv_python, logger), "Existing .venv")
+
+        logger.step(3, 3, "Verify core imports and packaged ffmpeg")
+        verify_core_imports(venv_python, logger, os.environ)
         ffmpeg, ffprobe = resolve_packaged_ffmpeg(
-            python,
+            venv_python,
             logger,
             os.environ,
         )
         verify_ffmpeg_executables(ffmpeg, ffprobe, logger)
-
-        logger.step(3, 3, "Download and verify faster-whisper model")
-        download_model(
-            python,
-            WHISPER_MODEL_REPO,
-            paths.whisper_model_dir,
-            ("model.bin",),
-            logger,
-            os.environ,
-        )
 
         print("Setup completed.")
         return logger.log_path

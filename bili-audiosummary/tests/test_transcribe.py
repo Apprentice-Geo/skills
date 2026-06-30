@@ -109,7 +109,7 @@ def test_transcribe_audio_returns_model_segments_with_simplified_chinese(
 
     _info, segments, source = transcribe.transcribe_audio(
         audio_path,
-        TranscribeOptions(language="zh"),
+        TranscribeOptions(language="zh", model="small"),
     )
 
     assert source == "faster-whisper"
@@ -150,7 +150,7 @@ def test_qwen3_fallback_warns_terminal_and_keeps_details_in_log(
     with LoggingSession(log_path):
         _info, _segments, source = transcribe.transcribe_audio(
             audio_path,
-            TranscribeOptions(asr_provider="qwen3", language="en"),
+            TranscribeOptions(asr_provider="qwen3", language="en", model="small"),
         )
 
     assert source == "faster-whisper"
@@ -176,6 +176,16 @@ def test_transcribe_cli_rejects_word_timestamps_option(monkeypatch) -> None:
 
     with pytest.raises(SystemExit):
         transcribe.parse_args()
+
+
+def test_default_model_path_requires_local_faster_whisper_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(transcribe, "DEFAULT_WHISPER_MODEL_DIR", tmp_path / "missing")
+
+    with pytest.raises(RuntimeError, match="install_model.py --model faster-whisper"):
+        transcribe.default_model_path()
 
 
 def test_run_transcribe_only_emits_stage(

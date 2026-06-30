@@ -31,7 +31,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 - Repository root: public documentation, dependency declarations, license, and Agent Skill metadata.
 - `assets/`: summary instructions and language-specific summary templates embedded into each generated prompt.
-- `models/`: local faster-whisper model plus optional Qwen3 ASR and forced-aligner models.
+- `models/`: local ASR models. At least one of faster-whisper or Qwen3 must be installed before ASR use.
 - `.cache/`: setup caches, Hugging Face cache, and logs created before a BVID result directory is known.
 - `results/`: per-video downloaded resources, transcripts, prompts, summaries, and processing logs.
 - `scripts/`: setup, download, transcript, prompt, logging, and validation code.
@@ -61,9 +61,9 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 ### Setup Entry Points
 
-- `scripts/setup/setup_windows.bat`: thin Windows launcher. Requires `uv`, sets project-local uv cache and default package index when unset, runs `uv sync --python 3.12 --no-dev`, then starts core setup.
-- `scripts/setup/setup.py`: verifies the uv-managed Python 3.12 environment, core imports, packaged ffmpeg, and faster-whisper model download.
-- `scripts/setup/install_qwen3.py`: optional Qwen3 setup. Verifies the `qwen3` extra dependencies and downloads both Qwen3 models.
+- `scripts/setup/setup_windows.bat`: thin Windows launcher. Requires `uv`, sets project-local uv cache and default package index when unset, ensures Python 3.12 is available, then starts core setup.
+- `scripts/setup/setup.py`: syncs core dependencies and verifies the uv-managed Python 3.12 environment, core imports, and packaged ffmpeg.
+- `scripts/setup/install_model.py`: downloads local ASR models. Supports the default faster-whisper model and optional Qwen3 ASR plus forced-aligner models.
 
 ### Setup Helpers
 

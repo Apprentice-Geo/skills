@@ -104,7 +104,7 @@
 - 除了标注保留的内容，其余内容写入log但是不打印到stdout
 - 可暂不实现 ASR 百分比或分段进度
 
-**主要改动:** 新增通用 `scripts/process_logging.py`，让 setup、pipeline、fetch、字幕转换和 ASR 共用日志；终端只输出关键阶段和最终路径，完整运行信息、traceback、yt-dlp 细节、缓存状态、fallback 和 warning 写入日志文件。
+**主要改动:** 新增通用 `scripts/process_logging.py`，让 setup、pipeline、fetch、字幕转换和 ASR 共用日志；终端只输出关键阶段和最终路径，完整运行信息、traceback、yt-dlp 细节、缓存状态、fallback 和 warning 写入日志文件。进一步优化 setup 分层：`setup_windows.bat` 只确保 uv 和 Python 3.12 可用，Python setup 负责调用 uv 同步基础依赖；模型下载从基础 setup 拆出到 `scripts/setup/install_model.py`，支持 `--model faster-whisper|qwen3`，使用前至少安装一种本地 ASR 模型。
 
 #### Task4.3 补充对 uv 路径的规范化输出和默认源设置（已完成）
 
@@ -112,7 +112,7 @@
 
 **修改目标:** 为 uv 路径设置默认国内依赖源，并在 setup 入口打印规范化的 uv sync 命令头，保留 uv 原生安装、完成和重复安装输出。
 
-**主要改动:** `pyproject.toml` 将清华 PyPI 配置为 uv 默认源并保留 PyTorch CUDA 显式源；`setup_windows.bat` 在用户未显式设置时提供 `UV_DEFAULT_INDEX`，继续使用项目内 `UV_CACHE_DIR`，并在执行前打印 `uv sync --python 3.12 --no-dev`；同步 README、错误处理和架构文档，补充 launcher 与 uv index 配置测试。
+**主要改动:** `pyproject.toml` 将清华 PyPI 配置为 uv 默认源并保留 PyTorch CUDA 显式源；`setup_windows.bat` 在用户未显式设置时提供 `UV_DEFAULT_INDEX`，继续使用项目内 `UV_CACHE_DIR`，并在执行前打印 Python 3.12 准备命令；同步 README、错误处理和架构文档，补充 launcher 与 uv index 配置测试。
 
 ### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据（已完成）
 

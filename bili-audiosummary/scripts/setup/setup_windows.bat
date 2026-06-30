@@ -18,12 +18,12 @@ if %ERRORLEVEL% NEQ 0 (
 
 pushd "%~dp0..\.." || exit /b 1
 
-echo uv sync --python 3.12 --no-dev
+echo uv python install 3.12
 echo.
-call uv sync --python 3.12 --no-dev
+call uv python install 3.12
 if %ERRORLEVEL% NEQ 0 goto setup_failed
 
-call uv run --no-sync python "%~dp0setup.py" %*
+call uv run --python 3.12 --no-sync python "%~dp0setup.py" %*
 set "SETUP_RC=%ERRORLEVEL%"
 popd
 exit /b %SETUP_RC%

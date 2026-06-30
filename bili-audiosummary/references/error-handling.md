@@ -21,6 +21,7 @@ Use this reference only when setup or processing fails.
 - If an existing `.venv` does not use Python 3.12, stop. Do not delete or replace it automatically.
 - If `.venv` exists but is incomplete, remove or repair it only with explicit user approval, then rerun setup.
 - Use `uv run --no-sync python` for processing commands after setup.
+- Before ASR use, install at least one model with `uv run --no-sync python scripts\setup\install_model.py --model faster-whisper` or `--model qwen3`.
 
 ## Environment and Dependencies
 
@@ -74,7 +75,7 @@ uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --cookies .\coo
 
 ```powershell
 uv sync --python 3.12 --no-dev --extra qwen3
-uv run --no-sync python scripts\setup\install_qwen3.py
+uv run --no-sync python scripts\setup\install_model.py --model qwen3
 ```
 
 - If Qwen3 is unavailable or fails, the terminal prints a short fallback warning and the full reason is recorded in the log. The pipeline then attempts faster-whisper.
