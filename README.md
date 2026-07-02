@@ -1,17 +1,13 @@
-A respository included skills I currently use. 
+## Skills I created or modified
 
-The links of third party skills writed in [Third-party skills](./Third-party skills.md)
+| Name | Purpose |
+| --- | --- |
+| bili-audiosummary | Summarize Bilibili videos from audio. |
+| article-format-correction | Lightly correct Markdown technical articles while preserving meaning, structure, and author expression style. |
+| anti-sycophancy-review | Review claims, plans, predictions, and interpretations without unsupported agreement. |
+| coding-guidelines | Apply personal coding collaboration rules for repository work, scoped changes, verification, tests, and delegation. |
 
+Inspiration sources:
 
-
-Skills I created or modified.
-
-bili-audiosummary
-
-article-format-correction
-
-frontend-design,derived from https://github.com/anthropics/skills/tree/main/skills/frontend-design
-
-anti-sycophancy-review, derived from https://x.com/kaifulee/status/2067524130673467886
-
-coding-guidelines,derived from https://github.com/multica-ai/andrej-karpathy-skills
+- anti-sycophancy-review: https://x.com/kaifulee/status/2067524130673467886
+- coding-guidelines: https://github.com/multica-ai/andrej-karpathy-skills

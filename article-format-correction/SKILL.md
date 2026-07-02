@@ -1,26 +1,34 @@
 ---
 name: article-format-correction
-description: Corrects Markdown technical articles, notes, algorithm writeups, and debugging records by fixing obvious writing, punctuation, Markdown formatting, and formula markup errors while preserving the author's meaning, structure, and personal technical-blog style. Use when the user asks to revise, correct, format, proofread, or polish only clear errors in Markdown articles.
+description: Corrects Markdown technical articles(技术博客), notes, algorithm writeups(算法题解), and debugging records(调试记录) by fixing obvious writing, punctuation, Markdown formatting(格式调整), and formula markup errors while preserving the author's meaning, structure, and expression style. Use when the user asks to revise(修正), correct, format, proofread(校对), or polish clear errors(润色) in Markdown articles.
 license: Apache-2.0
 ---
 
-## Purpose
+# article-format-correction
 
 Correct Markdown technical articles with a light hand.
 
-This skill fixes clear errors in writing, punctuation, Markdown syntax, and formula markup. It must not rewrite the article into a textbook, official document, marketing article, or beginner tutorial.
+This skill fixes clear errors in writing, punctuation, Markdown syntax, and formula markup. It must not rewrite the article into a textbook, official document, marketing article, beginner tutorial, or knowledge-base article.
 
-The corrected article should still feel like the author's own technical blog: practical, direct, record-oriented, and based on the original problem-solving path.
+The corrected article should preserve the author's expression style. Do not improve, normalize, or rewrite style beyond clear error correction.
+
+## Default Editing Mode
+
+Use light correction mode (轻量校对) by default. Fix only clear errors that are visible from the text itself.
+
+If the user specifies a heading, section, paragraph, range, or "do not modify the rest" (其余不用改动), edit only that scope. Treat explicit scope limits as hard boundaries.
+
+Do not expand, summarize, translate, add examples, add background knowledge, or convert the article into formal documentation unless the user explicitly asks for that kind of rewrite.
 
 ## Capability Boundaries
 
 The skill is designed for:
 
-- 修正错误、校对文章、修改格式
-- 修正 Markdown、公式、标题、列表、代码块周边格式
-- 校订技术博客、调试记录、配置记录、算法题解、技术笔记
+- fixing clear errors, proofreading articles, and adjusting formatting
+- fixing Markdown, formulas, headings, lists, and formatting around code fences
+- proofreading technical blogs, debugging records, configuration notes, algorithm writeups, and technical notes
 
-Do not use this skill for translation, summarization, expansion, heavy rewriting, article generation, or modify articles not written in Chinese or English.
+Do not use this skill for translation, summarization, expansion, heavy rewriting, article generation, or modifying articles not written in Chinese or English.
 
 ## Editing Contract
 
@@ -31,23 +39,22 @@ Preserve:
 - original heading hierarchy unless clearly malformed
 - original paragraph boundaries unless Markdown syntax is clearly broken
 - code logic, commands, paths, URLs, logs, version numbers, and formulas
-- the author's uncertainty level and personal record tone
+- the author's uncertainty level, wording habits, and original tone
+- user-specified edit scope, including section-only edits and "do not modify the rest" (其余不用改动)
 
 Do not add facts, examples, explanations, conclusions, or background knowledge.
 
-## Preserve Author Style
+## Preserve Expression Style
 
-Apply this personal styles as a preservation guide, not as a reason to rewrite.
+Correct only clear errors. Do not improve the article's expression style.
 
-Keep these traits:
+Do not rewrite sentences that are understandable but stylistically imperfect.
 
-- Medium-high information density: direct conclusion, steps, and necessary explanation.
-- Short to medium sentences, with longer causal sentences only where the original already uses them.
-- Practice-first organization: background/problem -> attempt -> error/phenomenon -> cause judgment -> final solution -> summary.
-- Algorithm organization: problem -> core idea -> mapping/derivation -> code -> complexity or optimization.
-- Direct technical terms such as `Dijkstra`, `python` , `Playwright`, `Electron` and similar domain terms.
-- Personal technical-blog tone.
-- Real-world details: commands, paths, filenames, screenshots, logs, versions, complete snippets, and concrete error messages.
+Do not replace informal notes with formal documentation language.
+
+Do not reorder the author's explanation, problem-solving path, or argument structure.
+
+Do not normalize terms, examples, or wording choices just because another style would be more polished.
 
 Do not make uncertain judgments sound certain. 
 
@@ -83,7 +90,7 @@ For formulas or codes:
 - Use "$$...$$" for standalone formulas.
 - Use "`...`" for short inline code block.
 - Use "```...```" with correct language for standalone code block.
-- Use english half-width symbol instead of chinese full width symbol.
+- Use English half-width punctuation instead of Chinese full-width punctuation.
 - Preserve variables, notation, and mathematical meaning.
 - Do not derive, simplify, or reinterpret formulas or codes.
 
@@ -104,7 +111,9 @@ zip（）返回一个包含一些元组的迭代器
 
 ## Output
 
-Return the corrected article in the original file.
+If editing a file, update the original file. If the user pasted text directly, return the corrected text.
+
+Keep the revision note concise. Do not list every punctuation, spacing, or formatting change one by one.
 
 Tell the user revision note using this structure:
 
@@ -139,6 +148,8 @@ Do not modify these unless there is an explicit formatting error:
 - existing valid LaTeX formulas
 - technical terms whose correctness is uncertain
 
+Do not reformat code inside fenced code blocks, change indentation, normalize code style, or rewrite comments unless the user explicitly asks or the fenced block itself has a clear Markdown formatting error.
+
 If protected content looks suspicious but is not clearly wrong, keep it unchanged and list it under `需确认项`.
 
 ## Uncertainty
@@ -156,7 +167,10 @@ Do not guess.
 Before finishing, verify:
 
 - Markdown is still valid.
+- Code fence count and fence boundaries are still correct.
+- Markdown tables still keep their row and separator structure.
 - Code blocks, inline code, URLs, logs, tables, and valid formulas were not changed accidentally.
+- Commands, file paths, version numbers, and project-specific names were not normalized or rewritten accidentally.
 - No facts or conclusions were added.
 - No technical conclusion changed.
 - The article still reads like the author's personal blog, not formal documentation.
