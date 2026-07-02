@@ -1,7 +1,3 @@
-A repository included skills I currently use.
-
-The links of third party skills are listed in [Third-party skills](./Third-party%20skills.md).
-
 ## Skills I created or modified
 
 | Name | Purpose |
