@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-import run_pipeline
-from process_logging import LoggingSession
-from utils import write_json
+import scripts.run_pipeline as run_pipeline
+from scripts.process_logging import LoggingSession
+from scripts.utils import write_json
 
 
 def make_args(skip_subtitles: bool = False) -> argparse.Namespace:
@@ -182,8 +182,8 @@ def test_pipeline_prefers_usable_subtitle_without_calling_asr(
         manifest_payload,
         metadata_payload,
     )
-    mocker.patch("run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
-    transcribe_mock = mocker.patch("run_pipeline.transcribe.run_transcribe")
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    transcribe_mock = mocker.patch("scripts.run_pipeline.transcribe.run_transcribe")
 
     result = run_pipeline.run_pipeline(make_args())
 
@@ -208,9 +208,9 @@ def test_skip_subtitles_forces_asr_even_when_subtitle_exists(
         manifest_payload,
         metadata_payload,
     )
-    run_fetch_mock = mocker.patch("run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    run_fetch_mock = mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
     transcribe_mock = mocker.patch(
-        "run_pipeline.transcribe.run_transcribe",
+        "scripts.run_pipeline.transcribe.run_transcribe",
         return_value=make_transcribe_result(fetch_result["paths"]["result"]),
     )
 
@@ -230,8 +230,8 @@ def test_pipeline_fails_before_asr_when_no_audio_is_available(
     mocker,
 ) -> None:
     fetch_result = make_fetch_result(workspace_tmp_path, [], [], manifest_payload, metadata_payload)
-    mocker.patch("run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
-    transcribe_mock = mocker.patch("run_pipeline.transcribe.run_transcribe")
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    transcribe_mock = mocker.patch("scripts.run_pipeline.transcribe.run_transcribe")
 
     with pytest.raises(RuntimeError, match="No usable audio files available"):
         run_pipeline.run_pipeline(make_args(skip_subtitles=True))
@@ -255,17 +255,17 @@ def test_pipeline_stdout_matches_subtitle_contract(
         "webpage_url": "https://www.bilibili.com/video/BVTEST/",
     }
     mocker.patch.object(run_pipeline, "RESULTS_DIR", results_dir)
-    mocker.patch("run_pipeline.fetch_audio.extract_metadata", return_value=info)
+    mocker.patch("scripts.run_pipeline.fetch_audio.extract_metadata", return_value=info)
     mocker.patch(
-        "run_pipeline.fetch_audio.download_subtitles",
+        "scripts.run_pipeline.fetch_audio.download_subtitles",
         return_value=[sample_srt_path],
     )
     mocker.patch(
-        "run_pipeline.fetch_audio.download_audio",
+        "scripts.run_pipeline.fetch_audio.download_audio",
         return_value=[audio_path],
     )
     mocker.patch(
-        "run_pipeline.time.perf_counter",
+        "scripts.run_pipeline.time.perf_counter",
         side_effect=[0.0, 1.0, 13.34, 72.34],
     )
 
@@ -325,7 +325,7 @@ def test_pipeline_stdout_matches_asr_stage_contract(
         logger.info("Title: 测试视频", extra={"terminal": True})
         return fetch_result
 
-    mocker.patch("run_pipeline.fetch_audio.run_fetch", side_effect=fake_fetch)
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", side_effect=fake_fetch)
     def fake_transcribe(_args):
         run_pipeline.terminal_info(
             run_pipeline.get_logger("transcribe"),
@@ -334,11 +334,11 @@ def test_pipeline_stdout_matches_asr_stage_contract(
         return make_transcribe_result(fetch_result["paths"]["result"])
 
     mocker.patch(
-        "run_pipeline.transcribe.run_transcribe",
+        "scripts.run_pipeline.transcribe.run_transcribe",
         side_effect=fake_transcribe,
     )
     mocker.patch(
-        "run_pipeline.time.perf_counter",
+        "scripts.run_pipeline.time.perf_counter",
         side_effect=[0.0, 1.0, 3.5, 4.0, 69.67, 3723.45],
     )
 
@@ -369,10 +369,10 @@ def test_fetch_failure_does_not_report_completed(
     mocker,
 ) -> None:
     mocker.patch(
-        "run_pipeline.fetch_audio.run_fetch",
+        "scripts.run_pipeline.fetch_audio.run_fetch",
         side_effect=RuntimeError("fetch failed"),
     )
-    mocker.patch("run_pipeline.time.perf_counter", side_effect=[0.0, 1.0])
+    mocker.patch("scripts.run_pipeline.time.perf_counter", side_effect=[0.0, 1.0])
 
     with LoggingSession(workspace_tmp_path / ".cache" / "logs" / "pipeline.log"):
         with pytest.raises(RuntimeError, match="fetch failed"):
@@ -399,13 +399,13 @@ def test_transcribe_failure_does_not_report_completed(
         manifest_payload,
         metadata_payload,
     )
-    mocker.patch("run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
     mocker.patch(
-        "run_pipeline.transcribe.run_transcribe",
+        "scripts.run_pipeline.transcribe.run_transcribe",
         side_effect=RuntimeError("transcribe failed"),
     )
     mocker.patch(
-        "run_pipeline.time.perf_counter",
+        "scripts.run_pipeline.time.perf_counter",
         side_effect=[0.0, 1.0, 3.5, 4.0],
     )
 

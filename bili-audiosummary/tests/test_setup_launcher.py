@@ -56,8 +56,8 @@ def test_setup_launcher_prepares_python_and_runs_setup(workspace_tmp_path: Path)
     invocation = log_path.read_text(encoding="utf-8")
     assert "uv python install 3.12" in invocation
     assert "uv run --python 3.12 --no-sync python" in invocation
+    assert "-m scripts.setup.bootstrap" in invocation
     assert "uv sync --python 3.12 --no-dev" not in invocation
-    assert "scripts\\setup\\setup.py" in invocation
     assert str(REPO_ROOT / ".cache" / "uv") in invocation
     assert DEFAULT_UV_INDEX in invocation
     assert "uv python install 3.12" in result.stdout

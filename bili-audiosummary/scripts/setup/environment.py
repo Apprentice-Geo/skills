@@ -5,19 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import MutableMapping
 
-if __package__:
-    from ..process_logging import (
-        ProcessLogger,
-        SetupError,
-        create_timestamped_log_path,
-    )
-else:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from process_logging import (
-        ProcessLogger,
-        SetupError,
-        create_timestamped_log_path,
-    )
+from scripts.process_logging import (
+    ProcessLogger,
+    SetupError,
+    create_timestamped_log_path,
+)
 
 
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"

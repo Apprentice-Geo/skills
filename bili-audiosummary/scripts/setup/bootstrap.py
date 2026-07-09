@@ -4,42 +4,24 @@ import os
 import sys
 from pathlib import Path
 
-if __package__:
-    from ..process_logging import ProcessLogger, SetupError
-else:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from process_logging import ProcessLogger, SetupError
+from scripts.process_logging import ProcessLogger, SetupError
 
-if __package__:
-    from .environment import (
-        SetupPaths,
-        assert_python_312,
-        configure_environment,
-        create_log_path,
-        current_python,
-        read_python_version,
-    )
-    from .install_core import (
-        resolve_packaged_ffmpeg,
-        verify_core_imports,
-        verify_ffmpeg_executables,
-    )
-else:
-    from environment import (
-        SetupPaths,
-        assert_python_312,
-        configure_environment,
-        create_log_path,
-        current_python,
-        read_python_version,
-    )
-    from install_core import (
-        resolve_packaged_ffmpeg,
-        verify_core_imports,
-        verify_ffmpeg_executables,
-    )
 
 def run_setup(root: Path | None = None) -> Path:
+    from scripts.setup.environment import (
+        SetupPaths,
+        assert_python_312,
+        configure_environment,
+        create_log_path,
+        current_python,
+        read_python_version,
+    )
+    from scripts.setup.install_core import (
+        resolve_packaged_ffmpeg,
+        verify_core_imports,
+        verify_ffmpeg_executables,
+    )
+
     root = root or Path(__file__).resolve().parents[2]
     paths = SetupPaths.from_root(root)
     configure_environment(paths, os.environ)

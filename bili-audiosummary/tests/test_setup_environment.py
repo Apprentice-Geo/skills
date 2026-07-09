@@ -9,7 +9,7 @@ from scripts.setup.environment import (
     configure_environment,
     create_log_path,
 )
-from process_logging import SetupError
+from scripts.process_logging import SetupError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

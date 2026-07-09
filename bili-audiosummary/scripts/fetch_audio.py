@@ -4,10 +4,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-import subtitle_transcript
+from scripts import subtitle_transcript
 from yt_dlp import YoutubeDL
 
-from config import (
+from scripts.config import (
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
     DEFAULT_TRANSCRIBE_LANGUAGE,
@@ -15,16 +15,16 @@ from config import (
     SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
 )
-from runtime_options import FetchOptions
-from process_logging import (
+from scripts.runtime_options import FetchOptions
+from scripts.process_logging import (
     LoggingSession,
     YtDlpLogger,
     create_timestamped_log_path,
     get_logger,
     terminal_info,
 )
-from subtitle_utils import infer_subtitle_language
-from utils import (
+from scripts.subtitle_utils import infer_subtitle_language
+from scripts.utils import (
     ensure_dir,
     list_media_files,
     normalize_bilibili_video_url,

@@ -5,30 +5,15 @@ import os
 import sys
 from pathlib import Path
 
-if __package__:
-    from ..process_logging import ProcessLogger, SetupError
-else:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from process_logging import ProcessLogger, SetupError
-
-if __package__:
-    from .download_models import download_model
-    from .environment import (
-        SetupPaths,
-        assert_python_312,
-        configure_environment,
-        create_log_path,
-        read_python_version,
-    )
-else:
-    from download_models import download_model
-    from environment import (
-        SetupPaths,
-        assert_python_312,
-        configure_environment,
-        create_log_path,
-        read_python_version,
-    )
+from scripts.process_logging import ProcessLogger, SetupError
+from scripts.setup.download_models import download_model
+from scripts.setup.environment import (
+    SetupPaths,
+    assert_python_312,
+    configure_environment,
+    create_log_path,
+    read_python_version,
+)
 
 
 WHISPER_MODEL_REPO = "Systran/faster-whisper-small"
@@ -107,7 +92,7 @@ def run_model_setup(model: str, root: Path | None = None) -> Path:
         if python != paths.venv_python.resolve():
             raise SetupError(
                 "Run model setup with "
-                rf"uv run --no-sync python scripts\setup\install_model.py --model {model}"
+                rf"uv run --no-sync python -m scripts.setup.install_model --model {model}"
             )
 
         total_steps = 2 if model == "faster-whisper" else 4

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from utils import ensure_dir
+from scripts.utils import ensure_dir
 
 
 def format_timestamp(seconds: float) -> str:

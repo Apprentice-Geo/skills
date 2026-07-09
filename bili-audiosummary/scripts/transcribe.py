@@ -2,31 +2,31 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-import parallel_asr
-from asr_qwen3 import has_model_weights, transcribe_with_qwen3
-from asr_common import (
+from scripts.asr import parallel as parallel_asr
+from scripts.asr.common import (
     SIMPLIFIED_CHINESE_PROMPT,
     is_chinese_language,
     make_segment,
     normalize_segments_for_language,
 )
-from manifest_io import (
+from scripts.asr.qwen3 import has_model_weights, transcribe_with_qwen3
+from scripts.manifest_io import (
     infer_result_dir,
     load_manifest,
     load_metadata_from_manifest,
     resolve_manifest_path,
     resolve_path,
 )
-from runtime_options import TranscribeOptions
-from transcript_output import write_markdown
-from process_logging import (
+from scripts.runtime_options import TranscribeOptions
+from scripts.transcript_output import write_markdown
+from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     get_logger,
     terminal_info,
 )
 
-from config import (
+from scripts.config import (
     DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
@@ -37,7 +37,7 @@ from config import (
     QWEN3_ASR_MODEL_DIR,
     SKILL_ROOT,
 )
-from utils import ensure_dir, path_to_posix, write_json
+from scripts.utils import ensure_dir, path_to_posix, write_json
 
 
 logger = get_logger(__name__)
@@ -48,7 +48,7 @@ def default_model_path() -> str:
         return path_to_posix(DEFAULT_WHISPER_MODEL_DIR)
     raise RuntimeError(
         "Local faster-whisper model is missing. Run "
-        r"uv run --no-sync python scripts\setup\install_model.py --model faster-whisper "
+        r"uv run --no-sync python -m scripts.setup.install_model --model faster-whisper "
         "before using faster-whisper ASR."
     )
 

@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from scripts.setup import setup
-from process_logging import ProcessResult
+from scripts.process_logging import ProcessResult
+from scripts.setup import bootstrap
+from scripts.setup import environment, install_core
 
 
 class RecordingSetupLogger:
@@ -39,19 +40,19 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     checked_imports: list[Path] = []
     checked_ffmpeg: list[tuple[Path, Path]] = []
 
-    monkeypatch.setattr(setup, "ProcessLogger", make_logger)
+    monkeypatch.setattr(bootstrap, "ProcessLogger", make_logger)
     monkeypatch.setattr(
-        setup,
+        environment,
         "read_python_version",
         lambda *_args, **_kwargs: (3, 12, 0),
     )
     monkeypatch.setattr(
-        setup,
+        install_core,
         "verify_core_imports",
         lambda python, *_args, **_kwargs: checked_imports.append(python),
     )
     monkeypatch.setattr(
-        setup,
+        install_core,
         "resolve_packaged_ffmpeg",
         lambda *_args, **_kwargs: (
             workspace_tmp_path / "ffmpeg.exe",
@@ -59,14 +60,14 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
         ),
     )
     monkeypatch.setattr(
-        setup,
+        install_core,
         "verify_ffmpeg_executables",
         lambda ffmpeg, ffprobe, *_args, **_kwargs: checked_ffmpeg.append(
             (ffmpeg, ffprobe)
         ),
     )
 
-    setup.run_setup(workspace_tmp_path)
+    bootstrap.run_setup(workspace_tmp_path)
 
     logger = logger_holder["logger"]
     assert (["uv", "sync", "--python", "3.12", "--no-dev"], workspace_tmp_path) in logger.calls

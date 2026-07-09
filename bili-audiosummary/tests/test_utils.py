@@ -2,7 +2,7 @@ import sys
 import types
 from pathlib import Path
 
-import utils
+import scripts.utils as utils
 
 
 def test_normalize_bilibili_watchlater_url_returns_canonical_video_url() -> None:

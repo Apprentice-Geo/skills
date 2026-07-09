@@ -1,10 +1,10 @@
 import argparse
 from pathlib import Path
 
-import fetch_audio
+import scripts.fetch_audio as fetch_audio
 import pytest
-from process_logging import LoggingSession
-from utils import read_json
+from scripts.process_logging import LoggingSession
+from scripts.utils import read_json
 
 
 def make_args(workspace_tmp_path: Path, skip_subtitles: bool = False) -> argparse.Namespace:
@@ -51,7 +51,7 @@ def test_select_valid_srt_files_filters_invalid_subtitles(
 
 
 def test_make_base_options_requires_packaged_ffmpeg(mocker) -> None:
-    mocker.patch("fetch_audio.resolve_ffmpeg_location", return_value=None)
+    mocker.patch("scripts.fetch_audio.resolve_ffmpeg_location", return_value=None)
 
     with pytest.raises(RuntimeError, match=r"scripts\\setup\\setup_windows\.bat"):
         fetch_audio.make_base_options(make_args(Path(".")))
@@ -67,9 +67,9 @@ def test_run_fetch_skip_subtitles_does_not_download_subtitles(workspace_tmp_path
     audio_path.parent.mkdir(parents=True)
     audio_path.write_bytes(b"audio")
 
-    mocker.patch("fetch_audio.extract_metadata", return_value=info)
-    download_subtitles = mocker.patch("fetch_audio.download_subtitles")
-    mocker.patch("fetch_audio.download_audio", return_value=[audio_path])
+    mocker.patch("scripts.fetch_audio.extract_metadata", return_value=info)
+    download_subtitles = mocker.patch("scripts.fetch_audio.download_subtitles")
+    mocker.patch("scripts.fetch_audio.download_audio", return_value=[audio_path])
 
     result = fetch_audio.run_fetch(make_args(workspace_tmp_path, skip_subtitles=True))
     manifest = read_json(result["manifest_path"])
@@ -97,12 +97,12 @@ def test_run_fetch_uses_canonical_url_for_watchlater_video(
     args = make_args(workspace_tmp_path)
     args.url = watchlater_url
 
-    extract_metadata = mocker.patch("fetch_audio.extract_metadata", return_value=info)
+    extract_metadata = mocker.patch("scripts.fetch_audio.extract_metadata", return_value=info)
     download_subtitles = mocker.patch(
-        "fetch_audio.download_subtitles",
+        "scripts.fetch_audio.download_subtitles",
         return_value=[],
     )
-    download_audio = mocker.patch("fetch_audio.download_audio", return_value=[])
+    download_audio = mocker.patch("scripts.fetch_audio.download_audio", return_value=[])
 
     result = fetch_audio.run_fetch(args)
     manifest = read_json(result["manifest_path"])
@@ -126,8 +126,8 @@ def test_run_fetch_only_emits_stage_extraction_and_title(
     audio_path = workspace_tmp_path / "BVTEST" / "resource" / "BVTEST.m4a"
     audio_path.parent.mkdir(parents=True)
     audio_path.write_bytes(b"audio")
-    mocker.patch("fetch_audio.extract_metadata", return_value=info)
-    mocker.patch("fetch_audio.download_audio", return_value=[audio_path])
+    mocker.patch("scripts.fetch_audio.extract_metadata", return_value=info)
+    mocker.patch("scripts.fetch_audio.download_audio", return_value=[audio_path])
 
     with LoggingSession(workspace_tmp_path / "fetch.log"):
         fetch_audio.run_fetch(make_args(workspace_tmp_path, skip_subtitles=True))

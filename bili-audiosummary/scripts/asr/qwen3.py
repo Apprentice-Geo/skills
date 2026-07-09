@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from config import (
+from scripts.config import (
     DEFAULT_HF_ENDPOINT,
     QWEN3_ALIGNER_MODEL_DIR,
     QWEN3_ALIGNER_MODEL_REPO,
@@ -17,8 +17,8 @@ from config import (
     QWEN3_MAX_INFERENCE_BATCH_SIZE,
     QWEN3_MAX_NEW_TOKENS,
 )
-from process_logging import LoggingSession, get_logger
-from utils import path_to_posix
+from scripts.process_logging import LoggingSession, get_logger
+from scripts.utils import path_to_posix
 
 
 STRONG_PUNCTUATION = set("。.!！？?")
@@ -226,7 +226,7 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
         raise RuntimeError(
             "Qwen3 ASR dependencies are not installed. Run "
             r"uv sync --python 3.12 --no-dev --extra qwen3, then "
-            r"uv run --no-sync python scripts\setup\install_model.py --model qwen3."
+            r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
         ) from exc
 
     if not torch.cuda.is_available():
@@ -235,7 +235,7 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
     if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
         raise RuntimeError(
             "Qwen3 local models are missing. Run "
-            r"uv run --no-sync python scripts\setup\install_model.py --model qwen3."
+            r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
         )
 
     os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)

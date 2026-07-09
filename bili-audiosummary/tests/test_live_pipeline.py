@@ -19,7 +19,8 @@ def test_live_pipeline_can_force_asr_with_url_and_cookies() -> None:
     completed = subprocess.run(
         [
             sys.executable,
-            "scripts/run_pipeline.py",
+            "-m",
+            "scripts.run_pipeline",
             url,
             "--cookies",
             cookies,

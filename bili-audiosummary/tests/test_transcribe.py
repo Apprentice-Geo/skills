@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import transcribe
-from process_logging import LoggingSession
-from runtime_options import TranscribeOptions
-from utils import write_json
+import scripts.transcribe as transcribe
+from scripts.process_logging import LoggingSession
+from scripts.runtime_options import TranscribeOptions
+from scripts.utils import write_json
 
 
 def make_args(manifest_path: Path, output_dir: Path) -> argparse.Namespace:
@@ -63,9 +63,9 @@ def test_run_transcribe_writes_outputs_with_mocked_asr(workspace_tmp_path: Path,
             "audio_files": [audio_path.as_posix()],
         },
     )
-    mocker.patch("transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
+    mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
     mocker.patch(
-        "transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
             {"language": "zh", "duration": 1.0},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试文本"}],
@@ -141,9 +141,9 @@ def test_qwen3_fallback_warns_terminal_and_keeps_details_in_log(
     faster_whisper = types.ModuleType("faster_whisper")
     faster_whisper.WhisperModel = FakeWhisperModel
     monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
-    mocker.patch("transcribe.has_model_weights", return_value=models_available)
+    mocker.patch("scripts.transcribe.has_model_weights", return_value=models_available)
     qwen3_mock = mocker.patch(
-        "transcribe.transcribe_with_qwen3",
+        "scripts.transcribe.transcribe_with_qwen3",
         side_effect=RuntimeError("qwen3 detail"),
     )
     log_path = workspace_tmp_path / "transcribe.log"
@@ -185,7 +185,7 @@ def test_default_model_path_requires_local_faster_whisper_model(
 ) -> None:
     monkeypatch.setattr(transcribe, "DEFAULT_WHISPER_MODEL_DIR", tmp_path / "missing")
 
-    with pytest.raises(RuntimeError, match="install_model.py --model faster-whisper"):
+    with pytest.raises(RuntimeError, match=r"scripts\.setup\.install_model --model faster-whisper"):
         transcribe.default_model_path()
 
 
@@ -204,9 +204,9 @@ def test_run_transcribe_only_emits_stage(
         manifest_path,
         {"id": "BVTEST", "audio_files": [audio_path.as_posix()]},
     )
-    mocker.patch("transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
+    mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
     mocker.patch(
-        "transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
             {"language": "zh"},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试"}],
@@ -231,9 +231,9 @@ def test_run_transcribe_uses_parallel_asr_for_whisper(
     audio_path.write_bytes(b"audio")
     manifest_path = resource_dir / "fetch_manifest.json"
     write_json(manifest_path, {"id": "BVTEST", "audio_files": [audio_path.as_posix()]})
-    mocker.patch("transcribe.parallel_asr.probe_audio_duration", return_value=9.0)
+    mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration", return_value=9.0)
     parallel_mock = mocker.patch(
-        "transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
             {"language": "zh", "duration": 9.0},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "并行文本"}],
@@ -263,14 +263,14 @@ def test_run_transcribe_keeps_qwen3_on_whole_audio_path(
     args = make_args(manifest_path, result_dir)
     args.asr_provider = "qwen3"
     transcribe_mock = mocker.patch(
-        "transcribe.transcribe_audio",
+        "scripts.transcribe.transcribe_audio",
         return_value=(
             {"language": "zh"},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "整段文本"}],
             "qwen3-asr",
         ),
     )
-    parallel_mock = mocker.patch("transcribe.parallel_asr.run_parallel_whisper_transcribe")
+    parallel_mock = mocker.patch("scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe")
 
     result = transcribe.run_transcribe(args)
 

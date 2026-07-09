@@ -1,4 +1,4 @@
-import config
+import scripts.config as config
 
 
 def test_default_model_directories_live_under_root_models_dir() -> None:

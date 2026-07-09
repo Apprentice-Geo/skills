@@ -3,23 +3,23 @@ import re
 from pathlib import Path
 from typing import Any
 
-from manifest_io import (
+from scripts.manifest_io import (
     infer_result_dir,
     load_manifest,
     load_metadata_from_manifest,
     resolve_manifest_path,
     resolve_path,
 )
-from subtitle_utils import infer_subtitle_language
-from transcript_output import write_markdown
-from process_logging import (
+from scripts.subtitle_utils import infer_subtitle_language
+from scripts.transcript_output import write_markdown
+from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     get_logger,
     terminal_info,
 )
-from config import SKILL_ROOT
-from utils import ensure_dir, path_to_posix, write_json
+from scripts.config import SKILL_ROOT
+from scripts.utils import ensure_dir, path_to_posix, write_json
 
 
 SRT_TIME_PATTERN = re.compile(

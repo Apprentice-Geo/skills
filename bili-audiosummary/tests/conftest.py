@@ -8,12 +8,10 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_DIR = REPO_ROOT / "scripts"
 
-for path in (REPO_ROOT, SCRIPTS_DIR):
-    path_text = str(path)
-    if path_text not in sys.path:
-        sys.path.insert(0, path_text)
+repo_root_text = str(REPO_ROOT)
+if repo_root_text not in sys.path:
+    sys.path.insert(0, repo_root_text)
 
 
 try:

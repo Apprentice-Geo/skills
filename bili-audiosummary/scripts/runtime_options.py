@@ -4,7 +4,7 @@ import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from config import (
+from scripts.config import (
     DEFAULT_ASR_PROVIDER,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,

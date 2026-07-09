@@ -6,7 +6,7 @@ import pytest
 
 from scripts.setup import install_model
 from scripts.setup.environment import SetupPaths
-from process_logging import SetupError
+from scripts.process_logging import SetupError
 
 
 class RecordingLogger:

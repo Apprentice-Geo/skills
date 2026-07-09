@@ -39,44 +39,44 @@
 首次使用前，需要至少下载一种本地 ASR 模型。默认 CPU 路径推荐下载 faster-whisper：
 
 ```powershell
-uv run --no-sync python scripts\setup\install_model.py --model faster-whisper
+uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 ```
 
 随后运行：
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
+uv run --no-sync python -m scripts.run_pipeline "https://www.bilibili.com/video/BV12kXmBCEDi/"
 ```
 
 处理英文内容：
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --language en
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en
 ```
 
 跳过字幕并强制使用 ASR：
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --skip-subtitles
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --skip-subtitles
 ```
 
 有可用 CUDA 时，可安装 Qwen3-ASR 的可选依赖和模型：
 
 ```powershell
 uv sync --python 3.12 --no-dev --extra qwen3
-uv run --no-sync python scripts\setup\install_model.py --model qwen3
+uv run --no-sync python -m scripts.setup.install_model --model qwen3
 ```
 
 安装完成后优先尝试 Qwen3-ASR：
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --asr-provider qwen3
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider qwen3
 ```
 
 pipeline 会打印 `Summary Prompt` 和 `Final Summary Path`。根据 prompt 写入最终 summary 后，可执行：
 
 ```powershell
-uv run --no-sync python scripts\validate_summary.py "<summary-path>"
+uv run --no-sync python -m scripts.validate_summary "<summary-path>"
 ```
 
 完整数据流、目录职责、脚本说明和输出位置见 [项目架构](references/architecture.md)。命令失败时见 [错误处理](references/error-handling.md)。
@@ -91,7 +91,7 @@ Bilibili 返回 `HTTP 412` 或请求需要登录态时，可准备 Netscape 格�
 将文件放到项目根目录并命名为 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，pipeline 会自动检测。也可以显式指定：
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\cookies.txt
 ```
 
 ## 第三方依赖

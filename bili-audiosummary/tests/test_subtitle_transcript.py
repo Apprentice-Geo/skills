@@ -1,8 +1,8 @@
 from pathlib import Path
 
-import subtitle_transcript
-from process_logging import LoggingSession
-from utils import read_json
+import scripts.subtitle_transcript as subtitle_transcript
+from scripts.process_logging import LoggingSession
+from scripts.utils import read_json
 
 
 def test_parse_srt_timestamp() -> None:

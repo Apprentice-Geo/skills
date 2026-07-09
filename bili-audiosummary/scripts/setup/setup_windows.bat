@@ -23,7 +23,7 @@ echo.
 call uv python install 3.12
 if %ERRORLEVEL% NEQ 0 goto setup_failed
 
-call uv run --python 3.12 --no-sync python "%~dp0setup.py" %*
+call uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap %*
 set "SETUP_RC=%ERRORLEVEL%"
 popd
 exit /b %SETUP_RC%

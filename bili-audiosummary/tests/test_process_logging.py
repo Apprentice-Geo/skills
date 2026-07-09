@@ -4,7 +4,7 @@ import sys
 import warnings
 from pathlib import Path
 
-from process_logging import LoggingSession, YtDlpLogger, get_logger
+from scripts.process_logging import LoggingSession, YtDlpLogger, get_logger
 
 
 def test_logging_session_filters_terminal_and_keeps_traceback(

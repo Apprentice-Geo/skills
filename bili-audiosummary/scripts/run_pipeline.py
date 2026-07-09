@@ -3,10 +3,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-import fetch_audio
-import subtitle_transcript
-import transcribe
-from config import (
+from scripts import fetch_audio, subtitle_transcript, transcribe
+from scripts.config import (
     DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_LANGUAGE,
     RESULTS_DIR,
@@ -14,14 +12,14 @@ from config import (
     SUMMARY_INSTRUCTIONS_PATH,
     SUMMARY_TEMPLATE_BY_LANGUAGE,
 )
-from process_logging import (
+from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     get_logger,
     terminal_info,
 )
-from runtime_options import FetchOptions, PipelineOptions, TranscribeOptions
-from utils import ensure_dir, path_to_posix, read_json
+from scripts.runtime_options import FetchOptions, PipelineOptions, TranscribeOptions
+from scripts.utils import ensure_dir, path_to_posix, read_json
 
 logger = get_logger(__name__)
 

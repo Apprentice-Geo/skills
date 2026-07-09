@@ -8,4 +8,5 @@ __pycache__/
 *.py[cod]
 tests/.tmp/
 *cookies*
+*.m4a
 

@@ -3,8 +3,8 @@ import sys
 import types
 from pathlib import Path
 
-import asr_qwen3
-from process_logging import LoggingSession
+import scripts.asr.qwen3 as asr_qwen3
+from scripts.process_logging import LoggingSession
 
 
 def test_qwen3_disables_temperature_for_greedy_generation(

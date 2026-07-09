@@ -42,6 +42,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 ### Processing Entry Points
 
+- `scripts/`: Python package containing the pipeline and setup modules. Prefer `python -m scripts.<module>` entrypoints.
 - `scripts/run_pipeline.py`: main workflow. Fetches resources, selects a usable subtitle or ASR fallback, writes transcript outputs, and builds the summary prompt.
 - `scripts/fetch_audio.py`: extracts metadata, resolves BVID and canonical URL, reuses or downloads target-language subtitles and the lowest usable audio stream, and writes resource metadata and the fetch manifest.
 - `scripts/transcribe.py`: transcribes a manifest or audio file. Uses faster-whisper by default and coordinates optional Qwen3 fallback behavior.
@@ -50,7 +51,9 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 ### Processing Helpers
 
-- `scripts/asr_qwen3.py`: loads local Qwen3 ASR and forced-aligner models, runs CUDA transcription, and builds timestamped sentence segments.
+- `scripts/asr/common.py`: shared ASR segment normalization helpers.
+- `scripts/asr/qwen3.py`: loads local Qwen3 ASR and forced-aligner models, runs CUDA transcription, and builds timestamped sentence segments.
+- `scripts/asr/parallel/`: faster-whisper parallel ASR package. It contains planning, ffmpeg media splitting, resume state, worker execution, merge logic, metrics, and runner orchestration.
 - `scripts/config.py`: owns repository paths, language priorities, model locations, ASR defaults, and summary template selection.
 - `scripts/manifest_io.py`: resolves manifest-relative paths, loads manifests and metadata, and infers result directories.
 - `scripts/process_logging.py`: provides shared file logging, concise terminal filtering, timestamped log names, log relocation, subprocess capture, and failure reporting.
@@ -62,7 +65,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 ### Setup Entry Points
 
 - `scripts/setup/setup_windows.bat`: thin Windows launcher. Requires `uv`, sets project-local uv cache and default package index when unset, ensures Python 3.12 is available, then starts core setup.
-- `scripts/setup/setup.py`: syncs core dependencies and verifies the uv-managed Python 3.12 environment, core imports, and packaged ffmpeg.
+- `scripts/setup/bootstrap.py`: syncs core dependencies and verifies the uv-managed Python 3.12 environment, core imports, and packaged ffmpeg.
 - `scripts/setup/install_model.py`: downloads local ASR models. Supports the default faster-whisper model and optional Qwen3 ASR plus forced-aligner models.
 
 ### Setup Helpers

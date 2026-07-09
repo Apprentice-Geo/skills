@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import validate_summary
+import scripts.validate_summary as validate_summary
 
 
 def test_validate_summary_rejects_placeholders(tmp_path: Path) -> None:

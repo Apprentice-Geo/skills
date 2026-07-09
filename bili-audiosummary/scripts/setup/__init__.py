@@ -1,1 +1,1 @@
-"""Windows setup helpers."""
+"""Setup helpers."""

@@ -5,9 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import parallel_asr
-from runtime_options import TranscribeOptions
-from utils import read_json, write_json
+from scripts.asr import parallel as parallel_asr
+from scripts.asr.parallel import media, state, worker
+from scripts.runtime_options import TranscribeOptions
+from scripts.utils import read_json, write_json
 
 
 def make_source(duration: float = 900.0) -> parallel_asr.AsrSourceAudio:
@@ -79,13 +80,13 @@ def test_parallel_asr_plan_uses_macro_chunks_for_audio_longer_than_24_minutes() 
 
 def test_probe_audio_duration_uses_packaged_ffprobe(monkeypatch) -> None:
     commands: list[list[str]] = []
-    monkeypatch.setattr(parallel_asr, "resolve_ffmpeg_location", lambda: "C:/ffmpeg/bin")
+    monkeypatch.setattr(media, "resolve_ffmpeg_location", lambda: "C:/ffmpeg/bin")
 
     def fake_run(command, **_kwargs):
         commands.append(command)
         return SimpleNamespace(stdout='{"format": {"duration": "12.345"}}')
 
-    monkeypatch.setattr(parallel_asr.subprocess, "run", fake_run)
+    monkeypatch.setattr(media.subprocess, "run", fake_run)
 
     assert parallel_asr.probe_audio_duration(Path("audio.m4a")) == 12.345
     assert commands[0][0].endswith("ffprobe.exe")
@@ -98,8 +99,8 @@ def test_split_asr_chunks_uses_overlap_and_audio_format_args(
 ) -> None:
     plan = make_plan(900.0, 32)
     commands: list[list[str]] = []
-    monkeypatch.setattr(parallel_asr, "resolve_ffmpeg_location", lambda: "C:/ffmpeg/bin")
-    monkeypatch.setattr(parallel_asr, "_run_subprocess", lambda command: commands.append(command) or "")
+    monkeypatch.setattr(media, "resolve_ffmpeg_location", lambda: "C:/ffmpeg/bin")
+    monkeypatch.setattr(media, "_run_subprocess", lambda command: commands.append(command) or "")
 
     parallel_asr.split_asr_chunks(Path("audio.m4a"), plan, workspace_tmp_path)
 
@@ -154,7 +155,7 @@ def test_chunk_result_atomic_write_uses_tmp_then_json(
     monkeypatch,
 ) -> None:
     calls: list[tuple[Path, Path]] = []
-    monkeypatch.setattr(parallel_asr.os, "replace", lambda src, dst: calls.append((Path(src), Path(dst))))
+    monkeypatch.setattr(state.os, "replace", lambda src, dst: calls.append((Path(src), Path(dst))))
     target = workspace_tmp_path / "chunk_results" / "macro_000_chunk_000.json"
 
     parallel_asr.write_chunk_result_atomic(target, {"ok": True})
@@ -220,7 +221,7 @@ def test_transcribe_whisper_chunks_uses_one_model_and_writes_chunk_results(
             info = SimpleNamespace(language="zh", language_probability=1.0)
             return iter([segment]), info
 
-    monkeypatch.setattr(parallel_asr, "_resolve_model_path", lambda _model: "model-dir")
+    monkeypatch.setattr(worker, "_resolve_model_path", lambda _model: "model-dir")
     monkeypatch.setitem(
         sys.modules,
         "faster_whisper",

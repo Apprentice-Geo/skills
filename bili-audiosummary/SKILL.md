@@ -31,13 +31,13 @@ User-facing installation and cookie export instructions are in [README.md](READM
 If no local ASR model is installed yet, install the default faster-whisper model:
 
 ```powershell
-uv run --no-sync python scripts\setup\install_model.py --model faster-whisper
+uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 ```
 
 3. Run the pipeline:
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>"
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>"
 ```
 
 Use `--language en` for English content, `--skip-subtitles` to force ASR, and `--asr-provider qwen3` only after the optional Qwen3 dependencies and models are installed.
@@ -47,7 +47,7 @@ Use `--language en` for English content, `--skip-subtitles` to force ASR, and `-
 6. The main Agent validates the final summary:
 
 ```powershell
-uv run --no-sync python scripts\validate_summary.py "<summary-path>"
+uv run --no-sync python -m scripts.validate_summary "<summary-path>"
 ```
 
 7. If a command fails, follow [references/error-handling.md](references/error-handling.md).
