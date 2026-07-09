@@ -2,7 +2,14 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+import parallel_asr
 from asr_qwen3 import has_model_weights, transcribe_with_qwen3
+from asr_common import (
+    SIMPLIFIED_CHINESE_PROMPT,
+    is_chinese_language,
+    make_segment,
+    normalize_segments_for_language,
+)
 from manifest_io import (
     infer_result_dir,
     load_manifest,
@@ -33,7 +40,6 @@ from config import (
 from utils import ensure_dir, path_to_posix, write_json
 
 
-SIMPLIFIED_CHINESE_PROMPT = "以下是普通话内容，请使用简体中文转写。"
 logger = get_logger(__name__)
 
 
@@ -52,43 +58,6 @@ def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:
     if not audio_files:
         raise ValueError("Manifest does not contain audio_files. Run fetch_audio.py first.")
     return resolve_path(str(audio_files[0]))
-
-
-def make_segment(segment: Any) -> dict[str, Any]:
-    return {
-        "id": segment.id,
-        "start": round(float(segment.start), 3),
-        "end": round(float(segment.end), 3),
-        "text": segment.text.strip(),
-    }
-
-
-def is_chinese_language(language: str) -> bool:
-    return language.lower().startswith("zh")
-
-
-def make_simplified_chinese_converter() -> Any:
-    try:
-        from opencc import OpenCC
-    except ImportError as exc:
-        raise RuntimeError(
-            "Chinese transcription requires opencc-python-reimplemented to normalize output to Simplified Chinese. "
-            r"Run .\scripts\setup\setup_windows.bat again to sync dependencies."
-        ) from exc
-
-    return OpenCC("t2s")
-
-
-def normalize_segments_for_language(segments: list[dict[str, Any]], language: str) -> list[dict[str, Any]]:
-    if not is_chinese_language(language):
-        return segments
-
-    converter = make_simplified_chinese_converter()
-    for segment in segments:
-        segment["text"] = converter.convert(str(segment.get("text") or ""))
-        for word in segment.get("words") or []:
-            word["word"] = converter.convert(str(word.get("word") or ""))
-    return segments
 
 
 def metadata_duration(metadata: dict[str, Any]) -> float | None:
@@ -263,7 +232,16 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
     json_path = output_dir / f"{output_stem}.json"
     md_path = output_dir / f"{output_stem}.md"
 
-    info_data, segments, source = transcribe_audio(audio_path, options, metadata)
+    if options.asr_provider == "whisper":
+        duration = parallel_asr.probe_audio_duration(audio_path)
+        info_data, segments, source = parallel_asr.run_parallel_whisper_transcribe(
+            audio_path,
+            options,
+            output_dir,
+            duration,
+        )
+    else:
+        info_data, segments, source = transcribe_audio(audio_path, options, metadata)
     payload = {
         "bvid": video_id,
         "title": manifest.get("title"),

@@ -63,8 +63,9 @@ def test_run_transcribe_writes_outputs_with_mocked_asr(workspace_tmp_path: Path,
             "audio_files": [audio_path.as_posix()],
         },
     )
+    mocker.patch("transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
     mocker.patch(
-        "transcribe.transcribe_audio",
+        "transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
             {"language": "zh", "duration": 1.0},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试文本"}],
@@ -203,8 +204,9 @@ def test_run_transcribe_only_emits_stage(
         manifest_path,
         {"id": "BVTEST", "audio_files": [audio_path.as_posix()]},
     )
+    mocker.patch("transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
     mocker.patch(
-        "transcribe.transcribe_audio",
+        "transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
             {"language": "zh"},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试"}],
@@ -216,3 +218,62 @@ def test_run_transcribe_only_emits_stage(
         transcribe.run_transcribe(make_args(manifest_path, result_dir))
 
     assert capsys.readouterr().out == "[Stage] Transcribe audio with whisper\n"
+
+
+def test_run_transcribe_uses_parallel_asr_for_whisper(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    result_dir = workspace_tmp_path / "results" / "BVTEST"
+    resource_dir = result_dir / "resource"
+    resource_dir.mkdir(parents=True)
+    audio_path = resource_dir / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    manifest_path = resource_dir / "fetch_manifest.json"
+    write_json(manifest_path, {"id": "BVTEST", "audio_files": [audio_path.as_posix()]})
+    mocker.patch("transcribe.parallel_asr.probe_audio_duration", return_value=9.0)
+    parallel_mock = mocker.patch(
+        "transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        return_value=(
+            {"language": "zh", "duration": 9.0},
+            [{"id": 0, "start": 0.0, "end": 1.0, "text": "并行文本"}],
+            "faster-whisper",
+        ),
+    )
+
+    result = transcribe.run_transcribe(make_args(manifest_path, result_dir))
+
+    parallel_mock.assert_called_once()
+    assert result["json_path"] == result_dir / "BVTEST_transcript.json"
+    assert result["markdown_path"] == result_dir / "BVTEST_transcript.md"
+    assert result["payload"]["segments"][0]["text"] == "并行文本"
+
+
+def test_run_transcribe_keeps_qwen3_on_whole_audio_path(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    result_dir = workspace_tmp_path / "results" / "BVTEST"
+    resource_dir = result_dir / "resource"
+    resource_dir.mkdir(parents=True)
+    audio_path = resource_dir / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    manifest_path = resource_dir / "fetch_manifest.json"
+    write_json(manifest_path, {"id": "BVTEST", "audio_files": [audio_path.as_posix()]})
+    args = make_args(manifest_path, result_dir)
+    args.asr_provider = "qwen3"
+    transcribe_mock = mocker.patch(
+        "transcribe.transcribe_audio",
+        return_value=(
+            {"language": "zh"},
+            [{"id": 0, "start": 0.0, "end": 1.0, "text": "整段文本"}],
+            "qwen3-asr",
+        ),
+    )
+    parallel_mock = mocker.patch("transcribe.parallel_asr.run_parallel_whisper_transcribe")
+
+    result = transcribe.run_transcribe(args)
+
+    transcribe_mock.assert_called_once()
+    parallel_mock.assert_not_called()
+    assert result["payload"]["source"] == "qwen3-asr"
