@@ -130,8 +130,11 @@ def _valid_chunk_result(data: dict[str, Any], plan: ParallelAsrPlan) -> bool:
         "chunk_index",
         "start",
         "duration",
+        "source_start",
+        "source_duration",
         "overlap",
         "source",
+        "plan",
         "model",
         "elapsed_seconds",
         "segments",
@@ -142,7 +145,37 @@ def _valid_chunk_result(data: dict[str, Any], plan: ParallelAsrPlan) -> bool:
         return False
     if data["source"] != asdict(plan.source_audio):
         return False
-    return isinstance(data["segments"], list)
+    if data["plan"] != asdict(plan):
+        return False
+    try:
+        key = chunk_key(data)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    chunks = {chunk_key(chunk): chunk for chunk in plan.asr_chunks}
+    chunk = chunks.get(key)
+    if chunk is None:
+        return False
+    macro = plan.macro_chunks[chunk.macro_index]
+    expected_model = {
+        "path": plan.model,
+        "language": plan.language,
+        "beam_size": plan.beam_size,
+        "device": plan.device,
+        "compute_type": plan.compute_type,
+        "cpu_threads": macro.cpu_threads,
+        "model_workers": macro.model_workers,
+    }
+    return (
+        data["start"] == chunk.start
+        and data["duration"] == chunk.duration
+        and data["source_start"] == chunk.source_start
+        and data["source_duration"] == chunk.source_duration
+        and data["overlap"]
+        == {"left": chunk.left_overlap, "right": chunk.right_overlap}
+        and data["model"] == expected_model
+        and isinstance(data["segments"], list)
+    )
 
 
 def load_valid_chunk_results(workspace_dir: Path, plan: ParallelAsrPlan) -> dict[str, dict[str, Any]]:

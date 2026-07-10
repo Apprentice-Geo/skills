@@ -14,26 +14,53 @@ from scripts.asr.parallel.state import (
     initial_progress,
     load_plan,
     load_progress,
-    source_matches,
     workspace_paths,
     write_plan,
     write_progress,
 )
 from scripts.asr.parallel.worker import _resolve_model_path, transcribe_whisper_chunks
+from scripts.process_logging import get_logger, terminal_info
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import ensure_dir, write_json
+
+
+logger = get_logger(__name__)
 
 
 def _load_or_create_plan(
     plan_path: Path,
     current_plan: ParallelAsrPlan,
-) -> tuple[ParallelAsrPlan, bool]:
+) -> tuple[ParallelAsrPlan, str]:
     if plan_path.exists():
         existing_plan = load_plan(plan_path)
-        if source_matches(existing_plan, current_plan.source_audio):
-            return existing_plan, False
+        if existing_plan == current_plan:
+            return existing_plan, "reused"
+        write_plan(plan_path, current_plan)
+        return current_plan, "rebuilt"
     write_plan(plan_path, current_plan)
-    return current_plan, True
+    return current_plan, "created"
+
+
+def _log_plan(plan: ParallelAsrPlan, status: str) -> None:
+    terminal_info(
+        logger,
+        "[Transcribe] plan: status=%s, macros=%d, chunks=%d, cpu_budget=%d, overlap=%.3fs",
+        status,
+        len(plan.macro_chunks),
+        len(plan.asr_chunks),
+        plan.cpu_budget,
+        plan.overlap_seconds,
+    )
+    for macro in plan.macro_chunks:
+        terminal_info(
+            logger,
+            "[Transcribe] macro_%03d plan: chunks=%d, task_workers=%d, model_workers=%d, cpu_threads=%d",
+            macro.index,
+            len(macro.chunks),
+            macro.task_workers,
+            macro.model_workers,
+            macro.cpu_threads,
+        )
 
 
 def run_parallel_whisper_transcribe(
@@ -61,13 +88,28 @@ def run_parallel_whisper_transcribe(
     workspace_dir = output_dir / "asr_parallel"
     paths = workspace_paths(workspace_dir)
     ensure_dir(paths["root"])
-    plan, rebuilt_plan = _load_or_create_plan(paths["plan"], current_plan)
-    if rebuilt_plan or not paths["progress"].exists():
+    plan, plan_status = _load_or_create_plan(paths["plan"], current_plan)
+    if plan_status == "rebuilt":
+        terminal_info(logger, "[Transcribe] cached plan incompatible; rebuilding")
+    _log_plan(plan, plan_status)
+    if plan_status != "reused" or not paths["progress"].exists():
         write_progress(paths["progress"], initial_progress(plan))
 
+    terminal_info(
+        logger,
+        "[Transcribe] preparing %d audio chunks",
+        len(plan.asr_chunks),
+    )
     split_asr_chunks(audio_path, plan, workspace_dir)
+    terminal_info(logger, "[Transcribe] audio chunks ready")
     chunk_results = transcribe_whisper_chunks(plan, plan_options, workspace_dir)
     merged_segments = merge_chunk_results(plan, chunk_results)
+    terminal_info(
+        logger,
+        "[Transcribe] merge succeeded: chunks=%d, segments=%d",
+        len(chunk_results),
+        len(merged_segments),
+    )
     write_json(paths["merged_transcript"], {"segments": merged_segments})
     progress = load_progress(paths["progress"])
     failed_chunks = failed_chunks_blocking_merge(progress)

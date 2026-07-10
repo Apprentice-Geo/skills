@@ -12,7 +12,7 @@
 
 ## Assumptions
 
-- 当前目录是 skill 根目录：`D:\codes\skills\bili-audiosummary`。
+- 当前目录是 `bili-audiosummary` skill 根目录。
 - 本计划只整理后续开发任务，不要求一次性实现所有任务。
 - 计划中的 P0 是下一轮开发应优先处理的问题；P1 是紧随其后的体验和正确性改进；P2 是排期型质量与文档完善。
 - 当前代码已经部分解决 cookies 自动检测、Qwen3 可选 fallback、字幕优先 fallback 等问题；这些内容只在需要补强时列入任务。
@@ -26,10 +26,10 @@
   增加 `--summary-language`、改进 summary prompt 顺序、输出更透明的阶段日志、报告分 P 信息。
 
 - Modify: `scripts/runtime_options.py`  
-  为 pipeline 增加 summary language、长视频阈值等选项字段。
+  为 pipeline 增加 summary language 等选项字段。
 
 - Modify: `scripts/transcribe.py`  
-  后续支持长音频分段转写、片段缓存、断点续跑和更明确的 ASR 阶段日志。
+  已支持 faster-whisper 并行分段转写、chunk 结果缓存、断点续跑和明确的 ASR 过程日志。
 
 - Modify: `scripts/fetch_audio.py`  
   补充分 P / 多 P metadata 报告，并把非致命警告与致命错误区分得更清楚。
@@ -102,7 +102,7 @@
 
 - 为 run_pipeline 涉及的流程文件增加 log 功能，可以考虑复用当前setup下的process_logging，将其提到外面一级文件夹来作文通用log入口
 - 除了标注保留的内容，其余内容写入log但是不打印到stdout
-- 可暂不实现 ASR 百分比或分段进度
+- 可暂不实现 ASR 百分比；后续并行 ASR 任务已补充 plan、chunk、缓存和断点进度
 
 **主要改动:** 新增通用 `scripts/process_logging.py`，让 setup、pipeline、fetch、字幕转换和 ASR 共用日志；终端只输出关键阶段和最终路径，完整运行信息、traceback、yt-dlp 细节、缓存状态、fallback 和 warning 写入日志文件。进一步优化 setup 分层：`setup_windows.bat` 只确保 uv 和 Python 3.12 可用，Python setup 负责调用 uv 同步基础依赖；模型下载从基础 setup 拆出到 `scripts/setup/install_model.py`，支持 `--model faster-whisper|qwen3`，使用前至少安装一种本地 ASR 模型。
 
@@ -180,16 +180,11 @@
 
 ## P2 Tasks
 
-### Task 1: Add Long Video Mode With Segment Cache
+### Task 1: Add Parallel Whisper Chunk Cache And Resume（已完成）
 
 **Problem:** 长视频整段转写容易超时；失败后缺少断点续跑。
 
-**Success Criteria:**
-- 超过阈值的视频进入长视频路径，进行音频切分后再进行转写。
-- 默认每段不超过 10 分钟。
-- 每段转写结果单独写入转写结果文件。
-- 重跑时跳过已完成片段。
-- 合并后 transcript JSON/Markdown 保持现有结构。
+**主要改动:** faster-whisper 统一使用并行转写计划，按 CPU budget 和音频时长生成 macro/chunk；每个 chunk 原子写入独立结果，完整 plan 匹配时复用有效结果并恢复未完成任务；合并后的 transcript JSON/Markdown 保持现有结构。终端输出 plan、macro worker、缓存、续跑、成功、重试和合并信息，详细失败 traceback 写入日志。
 
 ---
 
@@ -235,8 +230,8 @@ pytest tests -q
 For live/manual validation when network and cookies are available:
 
 ```powershell
-uv run --no-sync python scripts\run_pipeline.py "<bilibili-url>"
-uv run --no-sync python scripts\validate_summary.py "<summary-path>" --transcript "<transcript-md-path>"
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>"
+uv run --no-sync python -m scripts.validate_summary "<summary-path>"
 ```
 
 Expected:
@@ -249,5 +244,4 @@ Summary validation passed.
 ## Remaining Decisions
 
 - Default `--summary-language`: choose `zh` for Chinese user workflows, or inherit transcript language for backward compatibility.
-- Long video threshold: start with 10 minutes per segment, then tune after local tests.
 - `--page` / `--all-pages`: report current P first; implement selection only if real usage confirms demand.

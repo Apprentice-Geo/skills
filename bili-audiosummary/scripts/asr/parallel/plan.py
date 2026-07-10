@@ -9,7 +9,7 @@ from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MACRO_CHUNK_SECONDS = 1440.0
 MIN_ASR_CHUNK_SECONDS = 120.0
 OVERLAP_SECONDS = 5.0

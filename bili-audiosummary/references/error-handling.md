@@ -10,6 +10,7 @@ Use this reference only when setup or processing fails.
 - [HTTP 412 and Cookies](#http-412-and-cookies)
 - [Subtitle Cache](#subtitle-cache)
 - [ASR Failures](#asr-failures)
+- [Parallel faster-whisper Cache and Resume](#parallel-faster-whisper-cache-and-resume)
 - [Qwen3 Fallback](#qwen3-fallback)
 - [Logs](#logs)
 - [Stop Conditions](#stop-conditions)
@@ -67,6 +68,15 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 - For Chinese transcription failures involving OpenCC, rerun core setup to restore `opencc-python-reimplemented`.
 - Do not claim a transcript or summary was produced when ASR terminated before writing transcript outputs.
 
+## Parallel faster-whisper Cache and Resume
+
+- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. Cached transcription applies to `chunk_results/`; the WAV files under `chunks/` are regenerated on each run.
+- A cached plan is reused only when its schema 2 plan exactly matches the current source-audio fingerprint, ASR options, CPU and worker settings, overlap, and chunk layout.
+- If the terminal prints `[Transcribe] cached plan incompatible; rebuilding`, the current plan replaces the old plan. Existing incompatible or unreadable chunk-result files remain on disk but are counted as `ignored` and are not reused.
+- `[Transcribe] cache: reused=<n>, ignored=<n>, pending=<n>, total=<n>` reports the cache decision. Reused results and resumed chunks are also reported individually.
+- A valid atomic chunk result takes precedence over stale progress and is marked succeeded. A chunk left `running` by interruption returns to pending; a retryable failed chunk resumes with its recorded retry count.
+- Each chunk is retried at most once. A chunk that has exhausted its retry remains failed and prevents transcript merging until a later run has a valid result.
+
 ## Qwen3 Fallback
 
 - `--asr-provider qwen3` means try Qwen3-ASR first; it is not a strict Qwen3-only mode.
@@ -87,8 +97,9 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 - Setup logs are written to `.cache/logs/setup-<timestamp>.log`.
 - Pipeline, fetch, subtitle, and transcription logs start in `.cache/logs/`.
 - After metadata or an output directory identifies the result location, processing logs move to `results/<BVID>/`.
+- During parallel faster-whisper transcription, the terminal reports the plan, macro worker allocation, audio preparation, per-chunk cache/resume/success state, retry summaries, and merge completion.
 - On failure, use the printed `Full log` path. It contains commands, BVID, manifest and metadata paths, cache decisions, ASR provider details, fallback reasons, yt-dlp warnings, and tracebacks.
-- The terminal is intentionally concise and is not the complete diagnostic record.
+- Chunk failures are concise in the terminal; their full tracebacks are available only in the log. The terminal is not the complete diagnostic record.
 
 ## Stop Conditions
 

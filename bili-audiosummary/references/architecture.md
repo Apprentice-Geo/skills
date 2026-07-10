@@ -12,9 +12,10 @@ Bilibili URL
   -> prefer a valid SRT subtitle
        -> convert subtitle segments to the unified transcript
      otherwise
-       -> transcribe audio with faster-whisper
-       -> optionally try Qwen3-ASR first on CUDA
-       -> fall back to faster-whisper if Qwen3 is unavailable or fails
+       -> transcribe audio
+          -> use parallel faster-whisper by default
+          -> when Qwen3 is selected, try whole-audio Qwen3-ASR first on CUDA
+             -> fall back to parallel faster-whisper if Qwen3 is unavailable or fails
   -> write transcript JSON and Markdown
   -> write a summary prompt containing task boundaries, a relative transcript link,
      embedded summary instructions and language template, and the final output path
@@ -45,7 +46,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/`: Python package containing the pipeline and setup modules. Prefer `python -m scripts.<module>` entrypoints.
 - `scripts/run_pipeline.py`: main workflow. Fetches resources, selects a usable subtitle or ASR fallback, writes transcript outputs, and builds the summary prompt.
 - `scripts/fetch_audio.py`: extracts metadata, resolves BVID and canonical URL, reuses or downloads target-language subtitles and the lowest usable audio stream, and writes resource metadata and the fetch manifest.
-- `scripts/transcribe.py`: transcribes a manifest or audio file. Uses faster-whisper by default and coordinates optional Qwen3 fallback behavior.
+- `scripts/transcribe.py`: transcribes a manifest or audio file. Uses parallel faster-whisper by default and coordinates optional whole-audio Qwen3 fallback behavior.
 - `scripts/subtitle_transcript.py`: parses SRT subtitles and converts them to the same transcript JSON and Markdown contract used by ASR.
 - `scripts/validate_summary.py`: checks that the final summary exists, is valid UTF-8, and contains no template placeholders or comments.
 
@@ -53,7 +54,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 - `scripts/asr/common.py`: shared ASR segment normalization helpers.
 - `scripts/asr/qwen3.py`: loads local Qwen3 ASR and forced-aligner models, runs CUDA transcription, and builds timestamped sentence segments.
-- `scripts/asr/parallel/`: faster-whisper parallel ASR package. It contains planning, ffmpeg media splitting, resume state, worker execution, merge logic, metrics, and runner orchestration.
+- `scripts/asr/parallel/`: faster-whisper parallel ASR package. It contains planning, ffmpeg media splitting, schema-versioned chunk-result caching, resume state, worker execution, merge logic, metrics, process logging, and runner orchestration.
 - `scripts/config.py`: owns repository paths, language priorities, model locations, ASR defaults, and summary template selection.
 - `scripts/manifest_io.py`: resolves manifest-relative paths, loads manifests and metadata, and infers result directories.
 - `scripts/process_logging.py`: provides shared file logging, concise terminal filtering, timestamped log names, log relocation, subprocess capture, and failure reporting.
@@ -88,6 +89,15 @@ results/<BVID>/
 │  ├─ metadata.raw.json
 │  └─ subtitle/
 │     └─ <BVID>.<lang>.srt
+├─ asr_parallel/
+│  ├─ asr_plan.json
+│  ├─ progress.json
+│  ├─ metrics.json
+│  ├─ merged_transcript.json
+│  ├─ chunks/
+│  │  └─ macro_<index>/chunk_<index>.wav
+│  └─ chunk_results/
+│     └─ macro_<index>_chunk_<index>.json
 ├─ <BVID>_transcript.json
 ├─ <BVID>_transcript.md
 ├─ <BVID>_summary_prompt.md
@@ -100,6 +110,7 @@ results/<BVID>/
 - `fetch_manifest.json`: canonical video identity plus paths to metadata, audio, and subtitles.
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
+- `asr_parallel/`: faster-whisper-only workspace. It stores the schema 2 plan, progress state, generated audio chunks, atomic per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
 - Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.
 - Final summary: preferably written by a fresh subagent that receives only the prompt path and summary task; when delegation is unavailable, the current Agent follows the same prompt.

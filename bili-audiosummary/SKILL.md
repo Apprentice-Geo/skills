@@ -57,3 +57,5 @@ uv run --no-sync python -m scripts.validate_summary "<summary-path>"
 Processing time depends on whether a valid subtitle or cached result is available, network and download speed, video length, and the selected ASR path.
 
 Subtitle reuse is normally the shortest path. Downloading resources adds network-dependent time. CPU faster-whisper processing generally grows with video length and local CPU performance. On supported CUDA hardware, Qwen3-ASR can be more efficient, but model setup, loading, fallback, and available GPU resources also affect total time.
+
+faster-whisper splits audio into parallel chunks. If a run is interrupted, rerunning the same complete transcription plan reuses valid chunk results and resumes unfinished work.

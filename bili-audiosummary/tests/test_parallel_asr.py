@@ -1,12 +1,13 @@
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from scripts.asr import parallel as parallel_asr
-from scripts.asr.parallel import media, state, worker
+from scripts.asr.parallel import media, runner, state, worker
+from scripts.process_logging import LoggingSession
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import read_json, write_json
 
@@ -38,9 +39,40 @@ def empty_chunk_results(plan: parallel_asr.ParallelAsrPlan) -> dict[str, dict]:
         parallel_asr.chunk_key(chunk): {
             "macro_index": chunk.macro_index,
             "chunk_index": chunk.chunk_index,
+            "elapsed_seconds": 0.0,
             "segments": [],
         }
         for chunk in plan.asr_chunks
+    }
+
+
+def make_chunk_result(
+    plan: parallel_asr.ParallelAsrPlan,
+    chunk: parallel_asr.AsrChunkPlan,
+) -> dict:
+    macro = plan.macro_chunks[chunk.macro_index]
+    return {
+        "schema_version": parallel_asr.SCHEMA_VERSION,
+        "macro_index": chunk.macro_index,
+        "chunk_index": chunk.chunk_index,
+        "start": chunk.start,
+        "duration": chunk.duration,
+        "source_start": chunk.source_start,
+        "source_duration": chunk.source_duration,
+        "overlap": {"left": chunk.left_overlap, "right": chunk.right_overlap},
+        "source": asdict(plan.source_audio),
+        "plan": asdict(plan),
+        "model": {
+            "path": plan.model,
+            "language": plan.language,
+            "beam_size": plan.beam_size,
+            "device": plan.device,
+            "compute_type": plan.compute_type,
+            "cpu_threads": macro.cpu_threads,
+            "model_workers": macro.model_workers,
+        },
+        "elapsed_seconds": 1.0,
+        "segments": [],
     }
 
 
@@ -195,24 +227,90 @@ def test_load_valid_chunk_results_rejects_changed_source(
         options=TranscribeOptions(model="model-dir", language="zh"),
     )
     chunk = old_plan.asr_chunks[0]
-    result = {
-        "schema_version": parallel_asr.SCHEMA_VERSION,
-        "macro_index": chunk.macro_index,
-        "chunk_index": chunk.chunk_index,
-        "start": chunk.start,
-        "duration": chunk.duration,
-        "overlap": {"left": chunk.left_overlap, "right": chunk.right_overlap},
-        "source": asdict(old_plan.source_audio),
-        "model": {"path": "model-dir"},
-        "elapsed_seconds": 1.0,
-        "segments": [],
-    }
+    result = make_chunk_result(old_plan, chunk)
     write_json(
         workspace_tmp_path / "chunk_results" / "macro_000_chunk_000.json",
         result,
     )
 
     assert parallel_asr.load_valid_chunk_results(workspace_tmp_path, new_plan) == {}
+
+
+@pytest.mark.parametrize(
+    "new_plan",
+    [
+        replace(make_plan(), model="other-model"),
+        replace(make_plan(), language="en"),
+        replace(make_plan(), beam_size=3),
+        replace(make_plan(), device="cuda"),
+        replace(make_plan(), compute_type="float16"),
+        replace(make_plan(), cpu_budget=25),
+        make_plan(cpu_count=8),
+    ],
+)
+def test_load_valid_chunk_results_rejects_changed_plan(
+    workspace_tmp_path: Path,
+    new_plan: parallel_asr.ParallelAsrPlan,
+) -> None:
+    old_plan = make_plan()
+    chunk = old_plan.asr_chunks[0]
+    write_json(
+        workspace_tmp_path / "chunk_results" / "macro_000_chunk_000.json",
+        make_chunk_result(old_plan, chunk),
+    )
+
+    assert parallel_asr.load_valid_chunk_results(workspace_tmp_path, new_plan) == {}
+
+
+def test_parallel_runner_logs_plan_rebuild_and_macro_details(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    output_dir = workspace_tmp_path / "output"
+    monkeypatch.setattr(runner.os, "cpu_count", lambda: 32)
+    monkeypatch.setattr(runner, "split_asr_chunks", lambda *_args: None)
+    monkeypatch.setattr(
+        runner,
+        "transcribe_whisper_chunks",
+        lambda plan, *_args: empty_chunk_results(plan),
+    )
+
+    with LoggingSession(workspace_tmp_path / "transcribe.log"):
+        runner.run_parallel_whisper_transcribe(
+            audio_path,
+            TranscribeOptions(model="model-dir", language="zh"),
+            output_dir,
+            900.0,
+        )
+        runner.run_parallel_whisper_transcribe(
+            audio_path,
+            TranscribeOptions(model="model-dir", language="zh"),
+            output_dir,
+            900.0,
+        )
+        runner.run_parallel_whisper_transcribe(
+            audio_path,
+            TranscribeOptions(model="model-dir", language="en"),
+            output_dir,
+            900.0,
+        )
+
+    terminal = capsys.readouterr().out
+    assert (
+        "[Transcribe] plan: status=created, macros=1, chunks=6, "
+        "cpu_budget=24, overlap=5.000s\n"
+    ) in terminal
+    assert (
+        "[Transcribe] macro_000 plan: chunks=6, task_workers=6, "
+        "model_workers=6, cpu_threads=4\n"
+    ) in terminal
+    assert "[Transcribe] plan: status=reused" in terminal
+    assert "[Transcribe] cached plan incompatible; rebuilding\n" in terminal
+    assert "[Transcribe] plan: status=rebuilt" in terminal
+    assert "[Transcribe] merge succeeded: chunks=6, segments=0\n" in terminal
 
 
 def test_transcribe_whisper_chunks_uses_one_model_and_writes_chunk_results(
@@ -254,6 +352,162 @@ def test_transcribe_whisper_chunks_uses_one_model_and_writes_chunk_results(
     assert instances[0]["cpu_threads"] == plan.cpu_threads
     assert len(results) == len(plan.asr_chunks)
     assert (workspace_tmp_path / "chunk_results" / "macro_000_chunk_000.json").exists()
+
+
+def test_transcribe_whisper_chunks_logs_cached_results(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    plan = make_plan(120.0, 1)
+    chunk = plan.asr_chunks[0]
+    key = parallel_asr.chunk_key(chunk)
+    write_json(
+        workspace_tmp_path / "chunk_results" / f"{key}.json",
+        make_chunk_result(plan, chunk),
+    )
+    progress = parallel_asr.initial_progress(plan)
+    progress["chunks"][key]["status"] = "running"
+    parallel_asr.write_progress(workspace_tmp_path / "progress.json", progress)
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=lambda *_args, **_kwargs: pytest.fail("model loaded")),
+    )
+
+    with LoggingSession(workspace_tmp_path / "transcribe.log"):
+        results = parallel_asr.transcribe_whisper_chunks(
+            plan,
+            TranscribeOptions(model="model-dir", language="zh"),
+            workspace_tmp_path,
+        )
+
+    assert list(results) == [key]
+    assert capsys.readouterr().out == (
+        "[Transcribe] cache: reused=1, ignored=0, pending=0, total=1\n"
+        f"[Transcribe] {key} reused cached result\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "retry_count", "resume_message"),
+    [
+        ("running", 0, "resumed after interruption"),
+        ("pending", 1, "resumed for retry (1/1)"),
+    ],
+)
+def test_transcribe_whisper_chunks_logs_resume_and_success(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+    status: str,
+    retry_count: int,
+    resume_message: str,
+) -> None:
+    plan = make_plan(120.0, 1)
+    chunk = plan.asr_chunks[0]
+    key = parallel_asr.chunk_key(chunk)
+    chunk_path = workspace_tmp_path / chunk.path
+    chunk_path.parent.mkdir(parents=True)
+    chunk_path.write_bytes(b"wav")
+    progress = parallel_asr.initial_progress(plan)
+    progress["chunks"][key].update(
+        {"status": status, "retry_count": retry_count}
+    )
+    parallel_asr.write_progress(workspace_tmp_path / "progress.json", progress)
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def transcribe(self, *_args, **_kwargs):
+            return iter([]), SimpleNamespace(language="zh")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=FakeWhisperModel),
+    )
+
+    with LoggingSession(workspace_tmp_path / "transcribe.log"):
+        parallel_asr.transcribe_whisper_chunks(
+            plan,
+            TranscribeOptions(model="model-dir", language="zh"),
+            workspace_tmp_path,
+        )
+
+    terminal = capsys.readouterr().out
+    assert f"[Transcribe] {key} {resume_message}\n" in terminal
+    assert f"[Transcribe] {key} succeeded\n" in terminal
+
+
+def test_transcribe_whisper_chunks_logs_retry_and_traceback(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    plan = make_plan(120.0, 1)
+    chunk = plan.asr_chunks[0]
+    key = parallel_asr.chunk_key(chunk)
+    chunk_path = workspace_tmp_path / chunk.path
+    chunk_path.parent.mkdir(parents=True)
+    chunk_path.write_bytes(b"wav")
+
+    class FailingWhisperModel:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def transcribe(self, *_args, **_kwargs):
+            raise RuntimeError("chunk detail")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=FailingWhisperModel),
+    )
+    log_path = workspace_tmp_path / "transcribe.log"
+
+    with LoggingSession(log_path):
+        with pytest.raises(RuntimeError, match="ASR chunk failed after retry"):
+            parallel_asr.transcribe_whisper_chunks(
+                plan,
+                TranscribeOptions(model="model-dir", language="zh"),
+                workspace_tmp_path,
+            )
+
+    terminal = capsys.readouterr().out
+    assert f"[Transcribe] {key} failed; retrying (1/1): chunk detail\n" in terminal
+    assert f"[Transcribe] {key} failed after 1 retry: chunk detail\n" in terminal
+    assert "Traceback (most recent call last)" not in terminal
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "Traceback (most recent call last)" in log_text
+    assert "RuntimeError: chunk detail" in log_text
+
+
+def test_transcribe_whisper_chunks_reports_exhausted_retry_on_resume(
+    workspace_tmp_path: Path,
+    capsys,
+) -> None:
+    plan = make_plan(120.0, 1)
+    chunk = plan.asr_chunks[0]
+    key = parallel_asr.chunk_key(chunk)
+    progress = parallel_asr.initial_progress(plan)
+    progress["chunks"][key].update(
+        {"status": "failed", "retry_count": 1, "error": "previous detail"}
+    )
+    parallel_asr.write_progress(workspace_tmp_path / "progress.json", progress)
+
+    with LoggingSession(workspace_tmp_path / "transcribe.log"):
+        with pytest.raises(RuntimeError, match="ASR chunk failed after retry"):
+            parallel_asr.transcribe_whisper_chunks(
+                plan,
+                TranscribeOptions(model="model-dir", language="zh"),
+                workspace_tmp_path,
+            )
+
+    terminal = capsys.readouterr().out
+    assert f"[Transcribe] {key} failed after 1 retry: previous detail\n" in terminal
+    assert "resumed for retry" not in terminal
 
 
 def test_merge_chunk_results_drops_overlap_segments_and_reassigns_ids() -> None:
