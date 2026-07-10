@@ -20,13 +20,28 @@ def make_source(duration: float = 900.0) -> parallel_asr.AsrSourceAudio:
     )
 
 
-def make_plan(duration: float = 900.0, cpu_count: int | None = 32) -> parallel_asr.ParallelAsrPlan:
+def make_plan(
+    duration: float = 900.0,
+    cpu_count: int | None = 32,
+    language: str = "zh",
+) -> parallel_asr.ParallelAsrPlan:
     return parallel_asr.build_parallel_asr_plan(
         duration_seconds=duration,
         cpu_count=cpu_count,
         source_audio=make_source(duration),
-        options=TranscribeOptions(model="model-dir", language="zh"),
+        options=TranscribeOptions(model="model-dir", language=language),
     )
+
+
+def empty_chunk_results(plan: parallel_asr.ParallelAsrPlan) -> dict[str, dict]:
+    return {
+        parallel_asr.chunk_key(chunk): {
+            "macro_index": chunk.macro_index,
+            "chunk_index": chunk.chunk_index,
+            "segments": [],
+        }
+        for chunk in plan.asr_chunks
+    }
 
 
 @pytest.mark.parametrize("duration", [120.0, 900.0, 1440.0, 1800.0, 3600.0])
@@ -274,6 +289,175 @@ def test_merge_chunk_results_drops_overlap_segments_and_reassigns_ids() -> None:
     assert [segment["text"] for segment in merged] == ["keep first", "keep second"]
     assert [segment["id"] for segment in merged] == [0, 1]
     assert merged[1]["start"] == 151.0
+
+
+def test_merge_chunk_results_deduplicates_cross_chunk_chinese_text() -> None:
+    plan = make_plan()
+    first, second = plan.asr_chunks[:2]
+    results = empty_chunk_results(plan)
+    results[parallel_asr.chunk_key(first)]["segments"] = [
+        {
+            "id": 0,
+            "start": 140.0,
+            "end": 149.0,
+            "text": "前文这是一个足够长的重复片段",
+        }
+    ]
+    results[parallel_asr.chunk_key(second)]["segments"] = [
+        {
+            "id": 1,
+            "start": 6.0,
+            "end": 14.0,
+            "text": "这是一个足够长的重复片段后续",
+        }
+    ]
+
+    merged = parallel_asr.merge_chunk_results(plan, results)
+
+    assert [segment["text"] for segment in merged] == [
+        "前文这是一个足够长的重复片段",
+        "后续",
+    ]
+
+
+def test_merge_chunk_results_only_deduplicates_across_chunks() -> None:
+    plan = make_plan()
+    first = plan.asr_chunks[0]
+    results = empty_chunk_results(plan)
+    results[parallel_asr.chunk_key(first)]["segments"] = [
+        {
+            "id": 0,
+            "start": 10.0,
+            "end": 20.0,
+            "text": "前文这是一个足够长的重复片段",
+        },
+        {
+            "id": 1,
+            "start": 21.0,
+            "end": 30.0,
+            "text": "这是一个足够长的重复片段后续",
+        },
+    ]
+
+    merged = parallel_asr.merge_chunk_results(plan, results)
+
+    assert [segment["text"] for segment in merged] == [
+        "前文这是一个足够长的重复片段",
+        "这是一个足够长的重复片段后续",
+    ]
+
+
+def test_merge_chunk_results_deduplicates_chinese_with_punctuation_and_spaces() -> None:
+    plan = make_plan()
+    first, second = plan.asr_chunks[:2]
+    results = empty_chunk_results(plan)
+    results[parallel_asr.chunk_key(first)]["segments"] = [
+        {
+            "id": 0,
+            "start": 140.0,
+            "end": 149.0,
+            "text": "前文我们主张资本要向善，如果你这个互联网资本",
+        }
+    ]
+    results[parallel_asr.chunk_key(second)]["segments"] = [
+        {
+            "id": 1,
+            "start": 6.0,
+            "end": 14.0,
+            "text": "我们 主张资本要向善如果你这个互联网资本，开始整天琢磨着",
+        }
+    ]
+
+    merged = parallel_asr.merge_chunk_results(plan, results)
+
+    assert [segment["text"] for segment in merged] == [
+        "前文我们主张资本要向善，如果你这个互联网资本",
+        "开始整天琢磨着",
+    ]
+
+
+def test_merge_chunk_results_deduplicates_english_on_word_boundaries() -> None:
+    plan = make_plan(language="en")
+    first, second = plan.asr_chunks[:2]
+    results = empty_chunk_results(plan)
+    results[parallel_asr.chunk_key(first)]["segments"] = [
+        {
+            "id": 0,
+            "start": 140.0,
+            "end": 149.0,
+            "text": "The system keeps the whole overlapping phrase",
+        }
+    ]
+    results[parallel_asr.chunk_key(second)]["segments"] = [
+        {
+            "id": 1,
+            "start": 6.0,
+            "end": 14.0,
+            "text": "keeps, the whole OVERLAPPING phrase intact after merge",
+        }
+    ]
+
+    merged = parallel_asr.merge_chunk_results(plan, results)
+
+    assert [segment["text"] for segment in merged] == [
+        "The system keeps the whole overlapping phrase",
+        "intact after merge",
+    ]
+
+
+def test_merge_chunk_results_keeps_english_suffix_when_match_ends_mid_word() -> None:
+    plan = make_plan(language="en")
+    first, second = plan.asr_chunks[:2]
+    results = empty_chunk_results(plan)
+    results[parallel_asr.chunk_key(first)]["segments"] = [
+        {
+            "id": 0,
+            "start": 140.0,
+            "end": 149.0,
+            "text": "The system keeps the whole overlapping phrase",
+        }
+    ]
+    results[parallel_asr.chunk_key(second)]["segments"] = [
+        {
+            "id": 1,
+            "start": 6.0,
+            "end": 14.0,
+            "text": "keeps the whole overlapping phraseology matters",
+        }
+    ]
+
+    merged = parallel_asr.merge_chunk_results(plan, results)
+
+    assert [segment["text"] for segment in merged] == [
+        "The system keeps the whole overlapping phrase",
+        "keeps the whole overlapping phraseology matters",
+    ]
+
+
+def test_merge_chunk_results_deduplicates_reported_cross_chunk_regression() -> None:
+    plan = make_plan()
+    first, second = plan.asr_chunks[:2]
+    results = empty_chunk_results(plan)
+    results[parallel_asr.chunk_key(first)]["segments"] = [
+        {
+            "id": 0,
+            "start": 140.0,
+            "end": 149.0,
+            "text": "但我们的加速作业是什么加速啊?中左翼的加速作业,是吧?我们主张资本要向善,如果你这个互联网资本,开始整天琢磨着,如何从老百姓彭彭彭,彭彭。",
+        }
+    ]
+    results[parallel_asr.chunk_key(second)]["segments"] = [
+        {
+            "id": 1,
+            "start": 6.0,
+            "end": 14.0,
+            "text": "我们主张资本要向善,如果你这个互联网资本开始整天琢磨着如何从老百姓彭彭关关的强点最后的一个钢柴,那我就要稍微敲打敲打你。",
+        }
+    ]
+
+    merged = parallel_asr.merge_chunk_results(plan, results)
+
+    assert merged[1]["text"] == "强点最后的一个钢柴,那我就要稍微敲打敲打你。"
 
 
 def test_merge_chunk_results_rejects_segment_with_end_before_start() -> None:

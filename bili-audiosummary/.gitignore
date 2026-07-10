@@ -3,6 +3,7 @@
 models/
 results/
 test_workspace/
+pytest_tmp/
 .pytest_cache/
 __pycache__/
 *.py[cod]
