@@ -5,7 +5,7 @@
 ## 功能亮点
 
 - 字幕优先：优先复用或下载目标语言字幕，减少不必要的 ASR。
-- ASR 回退：默认使用 faster-whisper；具备 CUDA 环境时可选 Qwen3-ASR。
+- ASR Provider：默认使用 faster-whisper；具备 CUDA 环境时可显式选择严格的 Qwen3-ASR 路径。
 - 统一产物：生成带时间戳的 transcript、summary prompt 和处理日志。
 - 缓存复用：重跑时复用有效字幕、音频、本地模型，以及与完整计划匹配的 faster-whisper chunk 转写结果。
 - 简洁终端输出：终端显示关键阶段、并行转写计划、chunk 进度与结果路径，完整细节写入日志。
@@ -16,7 +16,7 @@
 - 不适合主要信息来自画面、图表、动作、屏幕文字或视觉演示的视频。
 - 目前仅支持 Bilibili 视频 URL。
 - pipeline 生成 summary prompt；最终 summary 由执行该 Skill 的 Agent 根据 prompt 写入。
-- Qwen3-ASR 需要可用的 CUDA 环境和额外模型；未启用或运行失败时使用 faster-whisper。
+- Qwen3-ASR 需要可用的 CUDA 环境、可选依赖和额外模型；显式选择后若准备或转写失败，本次 ASR 直接失败，不会回退到 faster-whisper。
 
 ## 使用方式
 
@@ -60,6 +60,20 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --skip-subtitles
 ```
 
+单独运行 faster-whisper 转写时，省略 `--num-workers` 和 `--cpu-threads` 会按音频长度与 CPU 预算自动规划：
+
+```powershell
+uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-dir "<result-dir>" --asr-provider whisper
+```
+
+也可以显式覆盖 worker 数和每个 model worker 的 CPU 线程数：
+
+```powershell
+uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-dir "<result-dir>" --asr-provider whisper --num-workers 1 --cpu-threads 1
+```
+
+只传一个覆盖参数时，另一个参数会在该约束下自动计算。显式值不会被静默降低；非正数、worker 超过 8、CPU 预算超限，或配置不适用于任一 macro 时，命令会在切片和模型加载前直接失败。
+
 有可用 CUDA 时，可安装 Qwen3-ASR 的可选依赖和模型：
 
 ```powershell
@@ -67,11 +81,13 @@ uv sync --python 3.12 --no-dev --extra qwen3
 uv run --no-sync python -m scripts.setup.install_model --model qwen3
 ```
 
-安装完成后优先尝试 Qwen3-ASR：
+安装完成后严格使用 Qwen3-ASR：
 
 ```powershell
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider qwen3
 ```
+
+该选项只运行 Qwen3-ASR。依赖、模型、CUDA、模型加载、推理或对齐失败都会终止本次转写；如需使用 faster-whisper，请显式选择 `--asr-provider whisper` 或省略 provider 参数后重新运行。
 
 pipeline 会打印 `Summary Prompt` 和 `Final Summary Path`。根据 prompt 写入最终 summary 后，可执行：
 

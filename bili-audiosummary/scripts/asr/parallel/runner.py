@@ -32,7 +32,12 @@ def _load_or_create_plan(
     current_plan: ParallelAsrPlan,
 ) -> tuple[ParallelAsrPlan, str]:
     if plan_path.exists():
-        existing_plan = load_plan(plan_path)
+        try:
+            existing_plan = load_plan(plan_path)
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            logger.warning("Invalid cached ASR plan; rebuilding: %s", exc)
+            write_plan(plan_path, current_plan)
+            return current_plan, "rebuilt"
         if existing_plan == current_plan:
             return existing_plan, "reused"
         write_plan(plan_path, current_plan)

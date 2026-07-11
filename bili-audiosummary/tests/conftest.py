@@ -30,8 +30,8 @@ except ImportError:
 
 @pytest.fixture
 def workspace_tmp_path(request: pytest.FixtureRequest) -> Path:
-    root = REPO_ROOT / "test_workspace"
-    root.mkdir(exist_ok=True)
+    root = REPO_ROOT / "tmp" / "workspace"
+    root.mkdir(parents=True, exist_ok=True)
     name = re.sub(r"[^0-9A-Za-z_.-]+", "_", request.node.name)
     path = root / name
     if path.exists():

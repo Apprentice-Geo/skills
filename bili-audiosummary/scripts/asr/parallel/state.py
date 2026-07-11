@@ -14,7 +14,7 @@ from scripts.asr.parallel.plan import (
     plan_from_dict,
     plan_to_dict,
 )
-from scripts.utils import ensure_dir, read_json, write_json
+from scripts.utils import ensure_dir, read_json
 
 
 MAX_CHUNK_RETRIES = 1
@@ -34,7 +34,7 @@ def workspace_paths(workspace_dir: Path) -> dict[str, Path]:
 
 
 def write_plan(path: Path, plan: ParallelAsrPlan) -> None:
-    write_json(path, plan_to_dict(plan))
+    _write_json_atomic(path, plan_to_dict(plan))
 
 
 def load_plan(path: Path) -> ParallelAsrPlan:
@@ -71,15 +71,36 @@ def initial_progress(plan: ParallelAsrPlan) -> dict[str, Any]:
 
 
 def write_progress(path: Path, progress: dict[str, Any]) -> None:
-    write_json(path, progress)
+    _write_json_atomic(path, progress)
 
 
 def load_progress(path: Path) -> dict[str, Any]:
     progress = read_json(path)
-    for item in progress.get("chunks", {}).values():
+    if not isinstance(progress, dict):
+        raise ValueError("Invalid ASR progress: root must be an object")
+    if progress.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError(
+            "Invalid ASR progress schema_version: "
+            f"expected {SCHEMA_VERSION}, got {progress.get('schema_version')}"
+        )
+    chunks = progress.get("chunks")
+    if not isinstance(chunks, dict):
+        raise ValueError("Invalid ASR progress: chunks must be an object")
+    for key, item in chunks.items():
+        if not isinstance(item, dict):
+            raise ValueError(f"Invalid ASR progress chunk {key}: item must be an object")
         status = item.get("status")
         if status not in PROGRESS_STATES:
-            raise ValueError(f"Invalid ASR progress status: {status}")
+            raise ValueError(f"Invalid ASR progress chunk {key} status: {status}")
+        retry_count = item.get("retry_count")
+        if (
+            isinstance(retry_count, bool)
+            or not isinstance(retry_count, int)
+            or not 0 <= retry_count <= MAX_CHUNK_RETRIES
+        ):
+            raise ValueError(
+                f"Invalid ASR progress chunk {key} retry_count: {retry_count}"
+            )
     return progress
 
 
@@ -88,30 +109,11 @@ def prepare_progress_for_resume(
     progress: dict[str, Any] | None,
     valid_result_keys: set[str],
 ) -> dict[str, Any]:
-    if progress is None:
-        progress = initial_progress(plan)
-    chunks = progress.setdefault("chunks", {})
+    progress = initial_progress(plan)
     for chunk in plan.asr_chunks:
         key = chunk_key(chunk)
-        item = chunks.setdefault(
-            key,
-            {
-                "status": "pending",
-                "retry_count": 0,
-                "error": None,
-                "result_path": f"chunk_results/{key}.json",
-            },
-        )
-        status = item.get("status", "pending")
-        retry_count = int(item.get("retry_count", 0))
         if key in valid_result_keys:
-            item.update({"status": "succeeded", "error": None})
-        elif status == "succeeded":
-            item.update({"status": "pending", "error": None})
-        elif status == "running":
-            item.update({"status": "pending", "error": None})
-        elif status == "failed" and retry_count < MAX_CHUNK_RETRIES:
-            item.update({"status": "pending", "error": None})
+            progress["chunks"][key]["status"] = "succeeded"
     return progress
 
 
@@ -194,8 +196,12 @@ def load_valid_chunk_results(workspace_dir: Path, plan: ParallelAsrPlan) -> dict
     return results
 
 
-def write_chunk_result_atomic(path: Path, data: dict[str, Any]) -> None:
+def _write_json_atomic(path: Path, data: Any) -> None:
     ensure_dir(path.parent)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp_path, path)
+
+
+def write_chunk_result_atomic(path: Path, data: dict[str, Any]) -> None:
+    _write_json_atomic(path, data)

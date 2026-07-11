@@ -9,7 +9,7 @@ from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MACRO_CHUNK_SECONDS = 1440.0
 MIN_ASR_CHUNK_SECONDS = 120.0
 OVERLAP_SECONDS = 5.0
@@ -101,6 +101,64 @@ def _select_worker_count(unit_duration: float, cpu_budget: int) -> int:
     return 1
 
 
+def _resolve_macro_worker_config(
+    macro_index: int,
+    macro_duration: float,
+    cpu_budget: int,
+    requested_num_workers: int | None,
+    requested_cpu_threads: int | None,
+) -> tuple[int, int, int]:
+    if requested_num_workers is not None and not 1 <= requested_num_workers <= MAX_WORKERS:
+        raise ValueError(
+            f"Invalid num_workers={requested_num_workers} at macro_index={macro_index}: "
+            f"expected 1..{MAX_WORKERS}."
+        )
+    if requested_cpu_threads is not None and requested_cpu_threads < 1:
+        raise ValueError(
+            f"Invalid cpu_threads={requested_cpu_threads} at macro_index={macro_index}: "
+            "expected >= 1."
+        )
+
+    if requested_num_workers is None:
+        if requested_cpu_threads is None:
+            task_workers = _select_worker_count(macro_duration, cpu_budget)
+        else:
+            if requested_cpu_threads > cpu_budget:
+                raise ValueError(
+                    f"Invalid cpu_threads={requested_cpu_threads} at macro_index={macro_index}: "
+                    f"exceeds cpu_budget={cpu_budget} with minimum num_workers=1."
+                )
+            worker_budget = math.floor(cpu_budget / requested_cpu_threads)
+            task_workers = _select_worker_count(macro_duration, worker_budget)
+    else:
+        task_workers = requested_num_workers
+
+    cpu_threads = (
+        requested_cpu_threads
+        if requested_cpu_threads is not None
+        else max(1, math.floor(cpu_budget / task_workers))
+    )
+    if task_workers * cpu_threads > cpu_budget:
+        raise ValueError(
+            f"Invalid worker configuration at macro_index={macro_index}: "
+            f"num_workers={task_workers} * cpu_threads={cpu_threads} "
+            f"exceeds cpu_budget={cpu_budget}."
+        )
+
+    supported_chunk_count = max(
+        1,
+        math.floor(macro_duration / MIN_ASR_CHUNK_SECONDS),
+    )
+    if requested_num_workers is not None and task_workers > supported_chunk_count:
+        raise ValueError(
+            f"Invalid num_workers={task_workers} at macro_index={macro_index}: "
+            f"exceeds supported_chunk_count={supported_chunk_count} "
+            f"for macro duration {macro_duration:.3f}s."
+        )
+
+    return task_workers, task_workers, cpu_threads
+
+
 def _select_chunk_count(unit_duration: float, task_workers: int) -> int:
     max_chunk_count = max(1, math.floor(unit_duration / MIN_ASR_CHUNK_SECONDS))
     for chunk_count in range(max_chunk_count, 0, -1):
@@ -151,28 +209,34 @@ def build_parallel_asr_plan(
         )
     )
     cpu_budget = _cpu_budget(cpu_count)
+    requested_num_workers = _options_value(options, "num_workers", None)
+    requested_cpu_threads = _options_value(options, "cpu_threads", None)
     macro_chunks: list[MacroChunkPlan] = []
     all_asr_chunks: list[AsrChunkPlan] = []
 
     for macro_index, macro_start, macro_duration in _macro_durations(float(duration_seconds)):
-        task_workers = _select_worker_count(macro_duration, cpu_budget)
-        model_workers = task_workers
-        cpu_threads = max(1, math.floor(cpu_budget / task_workers))
-        if task_workers * cpu_threads > cpu_budget:
-            raise ValueError("Worker CPU thread budget exceeds cpu_budget.")
+        task_workers, model_workers, cpu_threads = _resolve_macro_worker_config(
+            macro_index,
+            macro_duration,
+            cpu_budget,
+            requested_num_workers,
+            requested_cpu_threads,
+        )
 
         chunk_count = _select_chunk_count(macro_duration, task_workers)
         chunk_length = macro_duration / chunk_count
         chunks: list[AsrChunkPlan] = []
-        trusted_start = 0.0
+        trusted_start = macro_start
+        macro_end = macro_start + macro_duration
         for chunk_index in range(chunk_count):
             if chunk_index == chunk_count - 1:
-                trusted_duration = macro_duration - trusted_start
+                trusted_duration = macro_end - trusted_start
             else:
                 trusted_duration = chunk_length
             trusted_end = trusted_start + trusted_duration
+            # 原音频的起始和结束时间，包含了重叠部分
             source_start = max(0.0, trusted_start - OVERLAP_SECONDS)
-            source_end = min(macro_duration, trusted_end + OVERLAP_SECONDS)
+            source_end = min(float(duration_seconds), trusted_end + OVERLAP_SECONDS)
             left_overlap = trusted_start - source_start
             right_overlap = source_end - trusted_end
             chunk = AsrChunkPlan(

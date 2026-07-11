@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
@@ -228,7 +229,12 @@ def transcribe_whisper_chunks(
     progress_existed = progress_path.exists()
     valid_results = load_valid_chunk_results(workspace_dir, plan)
     result_file_count = len(list(paths["chunk_results"].glob("macro_*_chunk_*.json")))
-    progress = load_progress(progress_path) if progress_existed else None
+    progress = None
+    if progress_existed:
+        try:
+            progress = load_progress(progress_path)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("Invalid ASR progress; rebuilding: %s", exc)
     previous_chunks = (
         {key: dict(item) for key, item in progress.get("chunks", {}).items()}
         if progress is not None
@@ -261,26 +267,14 @@ def transcribe_whisper_chunks(
         retry_count = int(previous.get("retry_count", 0))
         if status == "running":
             terminal_info(logger, "[Transcribe] %s resumed after interruption", key)
-        elif status == "failed" and retry_count >= MAX_CHUNK_RETRIES:
-            terminal_info(
-                logger,
-                "[Transcribe] %s failed after %d retry: %s",
-                key,
-                retry_count,
-                previous.get("error"),
-            )
         elif retry_count > 0 or status == "failed":
             terminal_info(
                 logger,
-                "[Transcribe] %s resumed for retry (%d/%d)",
+                "[Transcribe] %s resumed with a new retry budget (%d/%d)",
                 key,
-                min(retry_count + 1, MAX_CHUNK_RETRIES),
+                MAX_CHUNK_RETRIES,
                 MAX_CHUNK_RETRIES,
             )
-
-    blocking = failed_chunks_blocking_merge(progress)
-    if blocking:
-        raise RuntimeError(f"ASR chunk failed after retry: {', '.join(blocking)}")
 
     pending_exists = any(
         progress["chunks"][chunk_key(chunk)]["status"] == "pending"
@@ -292,16 +286,30 @@ def transcribe_whisper_chunks(
     from faster_whisper import WhisperModel
 
     model_path = _resolve_model_path(options.model)
-    model = WhisperModel(
-        model_path,
-        device=plan.device,
-        compute_type=plan.compute_type,
-        cpu_threads=plan.cpu_threads,
-        num_workers=plan.model_workers,
-    )
-
     chunk_results = dict(valid_results)
+    model = None
+    model_configuration: tuple[int, int] | None = None
     for macro in plan.macro_chunks:
+        pending = [
+            chunk
+            for chunk in macro.chunks
+            if progress["chunks"][chunk_key(chunk)]["status"] == "pending"
+        ]
+        if not pending:
+            continue
+
+        requested_configuration = (macro.model_workers, macro.cpu_threads)
+        if requested_configuration != model_configuration:
+            model = None
+            model = WhisperModel(
+                model_path,
+                device=plan.device,
+                compute_type=plan.compute_type,
+                cpu_threads=macro.cpu_threads,
+                num_workers=macro.model_workers,
+            )
+            model_configuration = requested_configuration
+
         while True:
             _submit_macro_chunks(
                 model,

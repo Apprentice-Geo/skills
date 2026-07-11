@@ -9,7 +9,7 @@ from scripts.asr.common import (
     make_segment,
     normalize_segments_for_language,
 )
-from scripts.asr.qwen3 import has_model_weights, transcribe_with_qwen3
+from scripts.asr.qwen3 import transcribe_with_qwen3
 from scripts.manifest_io import (
     infer_result_dir,
     load_manifest,
@@ -33,8 +33,6 @@ from scripts.config import (
     DEFAULT_TRANSCRIBE_DEVICE,
     DEFAULT_TRANSCRIBE_LANGUAGE,
     DEFAULT_WHISPER_MODEL_DIR,
-    QWEN3_ALIGNER_MODEL_DIR,
-    QWEN3_ASR_MODEL_DIR,
     SKILL_ROOT,
 )
 from scripts.utils import ensure_dir, path_to_posix, write_json
@@ -70,35 +68,10 @@ def metadata_duration(metadata: dict[str, Any]) -> float | None:
         return None
 
 
-def transcribe_audio(
+def transcribe_whisper_audio(
     audio_path: Path,
     options: TranscribeOptions,
-    metadata: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
-    if options.asr_provider == "qwen3":
-        if has_model_weights(QWEN3_ASR_MODEL_DIR) and has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
-            try:
-                info_data, segment_list = transcribe_with_qwen3(
-                    audio_path,
-                    options.language,
-                    metadata_duration(metadata or {}),
-                )
-                return info_data, segment_list, "qwen3-asr"
-            except Exception as exc:
-                logger.warning(
-                    "Qwen3 ASR failed; falling back to faster-whisper: %s",
-                    exc,
-                    exc_info=True,
-                )
-        else:
-            logger.warning(
-                "Qwen3 local models not found; falling back to faster-whisper."
-            )
-        logger.warning(
-            "Warning: Qwen3 unavailable; falling back to faster-whisper.",
-            extra={"terminal": True},
-        )
-
     from faster_whisper import WhisperModel
 
     model_path = options.model or default_model_path()
@@ -106,8 +79,8 @@ def transcribe_audio(
         model_path,
         device=options.device,
         compute_type=options.compute_type,
-        cpu_threads=options.cpu_threads,
-        num_workers=options.num_workers,
+        cpu_threads=options.cpu_threads if options.cpu_threads is not None else 0,
+        num_workers=options.num_workers if options.num_workers is not None else 1,
     )
 
     segments, info = model.transcribe(
@@ -152,15 +125,25 @@ def parse_args() -> argparse.Namespace:
         "--asr-provider",
         choices=("whisper", "qwen3"),
         default=DEFAULT_ASR_PROVIDER,
-        help="ASR provider. Use qwen3 only when CUDA is available and Qwen3 dependencies/models were installed explicitly.",
+        help="Strict ASR provider. qwen3 requires CUDA plus explicitly installed dependencies and models; failures do not fall back to whisper.",
     )
     parser.add_argument("--model", help="Model name or local faster-whisper model directory.")
     parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
     parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
-    parser.add_argument("--cpu-threads", type=int, default=0)
-    parser.add_argument("--num-workers", type=int, default=1)
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=None,
+        help="CPU threads per faster-whisper worker. Omit to plan automatically; explicit values are validated strictly.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Parallel faster-whisper workers. Omit to plan automatically; explicit values are validated strictly.",
+    )
     return parser.parse_args()
 
 
@@ -240,8 +223,15 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
             output_dir,
             duration,
         )
+    elif options.asr_provider == "qwen3":
+        info_data, segments = transcribe_with_qwen3(
+            audio_path,
+            options.language,
+            metadata_duration(metadata),
+        )
+        source = "qwen3-asr"
     else:
-        info_data, segments, source = transcribe_audio(audio_path, options, metadata)
+        raise ValueError(f"Unsupported ASR provider: {options.asr_provider}")
     payload = {
         "bvid": video_id,
         "title": manifest.get("title"),

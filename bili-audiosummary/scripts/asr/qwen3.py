@@ -49,6 +49,8 @@ class SegmentDraft:
 def consumes_timestamp(char: str) -> bool:
     if char.isspace():
         return False
+    # Unicode 通用类别中 所有标点符号都以 P 开头
+    # 此处判断字符是否为标点符号
     return not unicodedata.category(char).startswith("P")
 
 
@@ -126,6 +128,7 @@ def build_sentence_segments(
     alignment_items: list[AlignmentItem],
     duration: float | None = None,
 ) -> list[dict[str, Any]]:
+    # 将 Qwen3 的文本和时间戳对齐，生成句子级别的转写结果
     segments: list[SegmentDraft] = []
     item_index = 0
     current_chars: list[str] = []
@@ -151,6 +154,7 @@ def build_sentence_segments(
         current_end = None
 
     def append_remaining_segment(remaining_text: str) -> None:
+        # 将剩余的文本作为一个新的段落添加到 segments 中
         nonlocal current_start, current_end
 
         tail_text = remaining_text.strip()
@@ -190,10 +194,12 @@ def build_sentence_segments(
         current_chars.append(char)
 
         if char in STRONG_PUNCTUATION:
+            # 强标点符号表示句子结束，立即刷新当前段落
             flush_segment(strong_end=True)
             continue
 
         if char in WEAK_PUNCTUATION and current_start is not None and current_end is not None:
+            # 弱标点符号表示句子可能结束，但需要检查当前段落的长度是否大于切分阈值
             if current_end - current_start >= MIN_SEGMENT_SECONDS:
                 flush_segment(strong_end=False)
 

@@ -2,8 +2,7 @@
 .venv/
 models/
 results/
-test_workspace/
-pytest_tmp/
+tmp/
 .pytest_cache/
 __pycache__/
 *.py[cod]

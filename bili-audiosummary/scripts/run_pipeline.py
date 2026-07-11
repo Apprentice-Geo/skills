@@ -78,8 +78,8 @@ def make_transcribe_args(
         device=transcribe.DEFAULT_TRANSCRIBE_DEVICE,
         compute_type=transcribe.DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
         beam_size=transcribe.DEFAULT_TRANSCRIBE_BEAM_SIZE,
-        cpu_threads=0,
-        num_workers=1,
+        cpu_threads=None,
+        num_workers=None,
     )
 
 
@@ -252,7 +252,7 @@ def parse_args() -> argparse.Namespace:
         "--asr-provider",
         choices=("whisper", "qwen3"),
         default=DEFAULT_ASR_PROVIDER,
-        help="ASR provider. qwen3 is only for machines with available CUDA.",
+        help="Strict ASR provider. qwen3 requires available CUDA and does not fall back to whisper.",
     )
     parser.add_argument(
         "--skip-subtitles",
@@ -284,9 +284,7 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
     usable_subtitle_files = [Path(path) for path in subtitle_files if fetch_audio.is_usable_subtitle(Path(path))]
     if options.skip_subtitles:
         logger.info("Skipping subtitles; using ASR from audio.")
-        transcript_result = run_asr_transcript(options, fetch_result, audio_files)
-        terminal_info(logger, "[Stage] Build summary prompt")
-        prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
+        transcript_result = run_asr_transcript(options, fetch_result, audio_files)  
     elif usable_subtitle_files:
         subtitle_path = select_usable_subtitle(
             usable_subtitle_files,
@@ -299,19 +297,16 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
                 metadata=read_json(fetch_result["metadata_path"]),
                 output_dir=result_dir,
             )
-            terminal_info(logger, "[Stage] Build summary prompt")
-            prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
         else:
             logger.warning("Subtitle SRT is empty or invalid; falling back to STT.")
-            transcript_result = run_asr_transcript(options, fetch_result, audio_files)
-            terminal_info(logger, "[Stage] Build summary prompt")
-            prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
+            transcript_result = run_asr_transcript(options, fetch_result, audio_files)    
     else:
         if subtitle_files:
             logger.warning("No usable SRT subtitles found; falling back to STT.")
         transcript_result = run_asr_transcript(options, fetch_result, audio_files)
-        terminal_info(logger, "[Stage] Build summary prompt")
-        prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
+        
+    terminal_info(logger, "[Stage] Build summary prompt")
+    prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
     terminal_info(
         logger,
         "Pipeline completed in %s",

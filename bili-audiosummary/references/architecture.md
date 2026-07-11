@@ -14,8 +14,8 @@ Bilibili URL
      otherwise
        -> transcribe audio
           -> use parallel faster-whisper by default
-          -> when Qwen3 is selected, try whole-audio Qwen3-ASR first on CUDA
-             -> fall back to parallel faster-whisper if Qwen3 is unavailable or fails
+          -> when Qwen3 is selected, use only whole-audio Qwen3-ASR on CUDA
+             -> stop transcription if Qwen3 preparation or execution fails
   -> write transcript JSON and Markdown
   -> write a summary prompt containing task boundaries, a relative transcript link,
      embedded summary instructions and language template, and the final output path
@@ -46,7 +46,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/`: Python package containing the pipeline and setup modules. Prefer `python -m scripts.<module>` entrypoints.
 - `scripts/run_pipeline.py`: main workflow. Fetches resources, selects a usable subtitle or ASR fallback, writes transcript outputs, and builds the summary prompt.
 - `scripts/fetch_audio.py`: extracts metadata, resolves BVID and canonical URL, reuses or downloads target-language subtitles and the lowest usable audio stream, and writes resource metadata and the fetch manifest.
-- `scripts/transcribe.py`: transcribes a manifest or audio file. Uses parallel faster-whisper by default and coordinates optional whole-audio Qwen3 fallback behavior.
+- `scripts/transcribe.py`: transcribes a manifest or audio file and strictly dispatches the selected provider: parallel faster-whisper or whole-audio Qwen3-ASR.
 - `scripts/subtitle_transcript.py`: parses SRT subtitles and converts them to the same transcript JSON and Markdown contract used by ASR.
 - `scripts/validate_summary.py`: checks that the final summary exists, is valid UTF-8, and contains no template placeholders or comments.
 
@@ -62,6 +62,14 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/subtitle_utils.py`: infers subtitle language codes from filenames.
 - `scripts/transcript_output.py`: writes the common timestamped transcript Markdown format.
 - `scripts/utils.py`: provides directory, JSON, URL, filename, media-file, and packaged-ffmpeg helpers.
+
+### Parallel faster-whisper Invariants
+
+- The planner resolves the final `task_workers`, `model_workers`, and `cpu_threads` for every macro. Omitted CLI values are automatic; explicit values are retained exactly and rejected if any macro violates worker, minimum-chunk, or CPU-budget constraints.
+- A worker model is loaded lazily only for a macro with pending chunks. Consecutive macros reuse the current model only when `(model_workers, cpu_threads)` is unchanged; a configuration change replaces it with a matching model instance.
+- Schema 3 stores every `AsrChunkPlan.start` and `source_start` in full-audio global coordinates. `duration` is the trusted-window length, while `source_duration` includes overlap and is clipped only at the full audio boundaries.
+- Macros group chunks and define serial scheduling order; they do not limit source audio. Each internal trusted-window boundary extends five seconds in both directions, producing ten seconds of shared source audio even across macro boundaries.
+- Merge keeps segments whose midpoints belong to each trusted window. Text deduplication only examines the previous adjacent chunk's last segment and the current chunk's first segment, and only after both shared source audio and direct segment-time overlap are proven.
 
 ### Setup Entry Points
 
@@ -110,7 +118,7 @@ results/<BVID>/
 - `fetch_manifest.json`: canonical video identity plus paths to metadata, audio, and subtitles.
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
-- `asr_parallel/`: faster-whisper-only workspace. It stores the schema 2 plan, progress state, generated audio chunks, atomic per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery.
+- `asr_parallel/`: faster-whisper-only workspace. It stores the schema 3 plan, progress state, generated audio chunks, per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery. Plan, progress, and chunk-result JSON writes are atomic.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
 - Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.
 - Final summary: preferably written by a fresh subagent that receives only the prompt path and summary task; when delegation is unavailable, the current Agent follows the same prompt.

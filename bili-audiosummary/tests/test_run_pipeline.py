@@ -73,6 +73,23 @@ def make_transcribe_result(result_dir: Path) -> dict:
     return {"json_path": json_path, "markdown_path": markdown_path, "segments": []}
 
 
+def test_make_transcribe_args_uses_automatic_parallel_configuration(
+    workspace_tmp_path: Path,
+) -> None:
+    options = run_pipeline.PipelineOptions(
+        url="https://www.bilibili.com/video/BVTEST/"
+    )
+
+    transcribe_options = run_pipeline.make_transcribe_args(
+        options,
+        workspace_tmp_path / "fetch_manifest.json",
+        workspace_tmp_path,
+    )
+
+    assert transcribe_options.num_workers is None
+    assert transcribe_options.cpu_threads is None
+
+
 @pytest.mark.parametrize(
     ("seconds", "expected"),
     [
@@ -417,3 +434,35 @@ def test_transcribe_failure_does_not_report_completed(
     assert "[Stage] Fetch completed in 2.50s" in terminal
     assert "[Stage] Transcribe completed" not in terminal
     assert "Pipeline completed" not in terminal
+
+
+def test_qwen3_failure_stops_pipeline_before_summary_prompt(
+    workspace_tmp_path: Path,
+    manifest_payload: dict,
+    metadata_payload: dict,
+    mocker,
+) -> None:
+    audio_path = workspace_tmp_path / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        [],
+        [audio_path],
+        manifest_payload,
+        metadata_payload,
+    )
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    transcribe_mock = mocker.patch(
+        "scripts.run_pipeline.transcribe.run_transcribe",
+        side_effect=RuntimeError("qwen3 failed"),
+    )
+    prompt_mock = mocker.patch("scripts.run_pipeline.write_prompt_for_transcript")
+    args = make_args(skip_subtitles=True)
+    args.asr_provider = "qwen3"
+
+    with pytest.raises(RuntimeError, match="qwen3 failed"):
+        run_pipeline.run_pipeline(args)
+
+    transcribe_options = transcribe_mock.call_args.args[0]
+    assert transcribe_options.asr_provider == "qwen3"
+    prompt_mock.assert_not_called()

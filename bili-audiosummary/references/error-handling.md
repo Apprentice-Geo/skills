@@ -11,7 +11,7 @@ Use this reference only when setup or processing fails.
 - [Subtitle Cache](#subtitle-cache)
 - [ASR Failures](#asr-failures)
 - [Parallel faster-whisper Cache and Resume](#parallel-faster-whisper-cache-and-resume)
-- [Qwen3 Fallback](#qwen3-fallback)
+- [Strict Qwen3 Provider](#strict-qwen3-provider)
 - [Logs](#logs)
 - [Stop Conditions](#stop-conditions)
 
@@ -66,20 +66,22 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 - If faster-whisper fails, verify that the audio path in `fetch_manifest.json` exists and that packaged ffmpeg and `models/faster-whisper-small/` are available.
 - Check the transcript command log for model-loading, audio-decoding, memory, or language-normalization errors.
 - For Chinese transcription failures involving OpenCC, rerun core setup to restore `opencc-python-reimplemented`.
+- Standalone `--num-workers` and `--cpu-threads` overrides are strict. Invalid values, CPU-budget overflow, or a value that cannot support any macro are reported with the resolved values and macro index before audio slicing or model loading; the command does not lower the value or switch back to automatic planning.
 - Do not claim a transcript or summary was produced when ASR terminated before writing transcript outputs.
 
 ## Parallel faster-whisper Cache and Resume
 
 - faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. Cached transcription applies to `chunk_results/`; the WAV files under `chunks/` are regenerated on each run.
-- A cached plan is reused only when its schema 2 plan exactly matches the current source-audio fingerprint, ASR options, CPU and worker settings, overlap, and chunk layout.
-- If the terminal prints `[Transcribe] cached plan incompatible; rebuilding`, the current plan replaces the old plan. Existing incompatible or unreadable chunk-result files remain on disk but are counted as `ignored` and are not reused.
+- A cached plan is reused only when its schema 3 plan exactly matches the current source-audio fingerprint, ASR options, CPU and per-macro worker settings, global chunk coordinates, overlap, and chunk layout. Schema 2 caches are incompatible.
+- If the cached plan is unreadable, structurally invalid, or incompatible, the current plan atomically replaces it and the progress state is rebuilt. Existing incompatible or unreadable chunk-result files remain on disk but are counted as `ignored` and are not reused.
 - `[Transcribe] cache: reused=<n>, ignored=<n>, pending=<n>, total=<n>` reports the cache decision. Reused results and resumed chunks are also reported individually.
-- A valid atomic chunk result takes precedence over stale progress and is marked succeeded. A chunk left `running` by interruption returns to pending; a retryable failed chunk resumes with its recorded retry count.
-- Each chunk is retried at most once. A chunk that has exhausted its retry remains failed and prevents transcript merging until a later run has a valid result.
+- Plan, progress, and chunk-result JSON files are written through a same-directory temporary file followed by `os.replace()`, so the target is always the previous or new complete JSON document.
+- A valid chunk result is the source of truth and takes precedence over missing, stale, unreadable, or structurally invalid progress. Invalid progress is rebuilt from the current plan, then valid results are marked succeeded without loading a model for fully cached work.
+- Every program invocation gives chunks without a valid result a fresh state: `pending`, `retry_count=0`, and no prior error. Within that invocation, the first failure is retried once and the second failure stops merging. Rerunning gives that failed chunk a new one-retry budget while preserving other valid chunk results.
 
-## Qwen3 Fallback
+## Strict Qwen3 Provider
 
-- `--asr-provider qwen3` means try Qwen3-ASR first; it is not a strict Qwen3-only mode.
+- `--asr-provider qwen3` is strict Qwen3-only mode. It never imports, initializes, or invokes whole-audio or parallel faster-whisper after a Qwen3 failure.
 - Qwen3 requires an available CUDA GPU, optional dependencies, `models/qwen3-asr-0.6b/`, and `models/qwen3-forcedaligner-0.6b/`.
 - Install or repair the optional environment with:
 
@@ -88,9 +90,8 @@ uv sync --python 3.12 --no-dev --extra qwen3
 uv run --no-sync python -m scripts.setup.install_model --model qwen3
 ```
 
-- If Qwen3 is unavailable or fails, the terminal prints a short fallback warning and the full reason is recorded in the log. The pipeline then attempts faster-whisper.
-- Check the transcript JSON `source` field: `qwen3-asr` confirms Qwen3 completed; `faster-whisper` confirms fallback.
-- Treat the run as failed only if the fallback also fails or no transcript is written.
+- Missing dependencies, models, or CUDA, and model loading, inference, or alignment errors propagate as the transcription failure. No fallback transcript is written and summary-prompt generation does not continue.
+- A successful explicit Qwen3 transcript has `source: qwen3-asr`. To use faster-whisper after a Qwen3 failure, start a separate run with `--asr-provider whisper` or omit the provider option.
 
 ## Logs
 
@@ -98,7 +99,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 - Pipeline, fetch, subtitle, and transcription logs start in `.cache/logs/`.
 - After metadata or an output directory identifies the result location, processing logs move to `results/<BVID>/`.
 - During parallel faster-whisper transcription, the terminal reports the plan, macro worker allocation, audio preparation, per-chunk cache/resume/success state, retry summaries, and merge completion.
-- On failure, use the printed `Full log` path. It contains commands, BVID, manifest and metadata paths, cache decisions, ASR provider details, fallback reasons, yt-dlp warnings, and tracebacks.
+- On failure, use the printed `Full log` path. It contains commands, BVID, manifest and metadata paths, cache decisions, ASR provider details, yt-dlp warnings, and tracebacks.
 - Chunk failures are concise in the terminal; their full tracebacks are available only in the log. The terminal is not the complete diagnostic record.
 
 ## Stop Conditions

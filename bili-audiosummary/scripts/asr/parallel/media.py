@@ -56,7 +56,6 @@ def split_asr_chunks(audio_path: Path, plan: ParallelAsrPlan, workspace_dir: Pat
         for chunk in macro.chunks:
             chunk_path = workspace_dir / chunk.path
             ensure_dir(chunk_path.parent)
-            source_start = macro.start + chunk.source_start
             command = [
                 ffmpeg,
                 "-hide_banner",
@@ -64,7 +63,7 @@ def split_asr_chunks(audio_path: Path, plan: ParallelAsrPlan, workspace_dir: Pat
                 "error",
                 "-y",
                 "-ss",
-                f"{source_start:.3f}",
+                f"{chunk.source_start:.3f}",
                 "-t",
                 f"{chunk.source_duration:.3f}",
                 "-i",
