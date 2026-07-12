@@ -1,4 +1,5 @@
 import argparse
+import sys
 from pathlib import Path
 
 import pytest
@@ -183,6 +184,40 @@ def test_summary_prompt_links_untrusted_transcript_without_embedding_it(
     assert prompt_text.index(summary_path) < prompt_text.index(summary_path_end)
 
 
+def test_summary_prompt_uses_explicit_summary_language(
+    workspace_tmp_path: Path,
+) -> None:
+    result_dir = workspace_tmp_path / "results" / "BVTEST"
+    result_dir.mkdir(parents=True)
+    transcript_json_path = result_dir / "BVTEST_transcript.json"
+    transcript_markdown_path = result_dir / "BVTEST_transcript.md"
+    write_json(transcript_json_path, {"language": "zh"})
+    transcript_markdown_path.write_text("# 转写\n", encoding="utf-8")
+
+    result = run_pipeline.write_summary_prompt(
+        result_dir=result_dir,
+        video_id="BVTEST",
+        transcript_markdown_path=transcript_markdown_path,
+        transcript_json_path=transcript_json_path,
+        summary_language="en",
+    )
+
+    assert result["template_path"] == run_pipeline.SUMMARY_TEMPLATE_BY_LANGUAGE["en"]
+    assert result["summary_path"].name == "BVTEST_summary_en.md"
+
+
+def test_parse_args_accepts_summary_language(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_pipeline.py", "https://www.bilibili.com/video/BVTEST/", "--summary-language", "en"],
+    )
+
+    options = run_pipeline.PipelineOptions.from_args(run_pipeline.parse_args())
+
+    assert options.summary_language == "en"
+
+
 def test_pipeline_prefers_usable_subtitle_without_calling_asr(
     workspace_tmp_path: Path,
     sample_srt_path: Path,
@@ -207,6 +242,32 @@ def test_pipeline_prefers_usable_subtitle_without_calling_asr(
     transcribe_mock.assert_not_called()
     assert result["transcript"]["payload"]["source"] == "subtitle"
     assert result["prompt"]["prompt_path"].exists()
+
+
+def test_pipeline_uses_explicit_summary_language(
+    workspace_tmp_path: Path,
+    sample_srt_path: Path,
+    manifest_payload: dict,
+    metadata_payload: dict,
+    mocker,
+) -> None:
+    audio_path = workspace_tmp_path / "BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        [sample_srt_path],
+        [audio_path],
+        manifest_payload,
+        metadata_payload,
+    )
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    args = make_args()
+    args.summary_language = "en"
+
+    result = run_pipeline.run_pipeline(args)
+
+    assert result["prompt"]["summary_path"].name == "BVTEST_summary_en.md"
+    assert result["prompt"]["template_path"] == run_pipeline.SUMMARY_TEMPLATE_BY_LANGUAGE["en"]
 
 
 def test_skip_subtitles_forces_asr_even_when_subtitle_exists(

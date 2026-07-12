@@ -40,7 +40,7 @@ uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>"
 ```
 
-Use `--language en` for English content, `--skip-subtitles` to force ASR, and `--asr-provider qwen3` only after the optional Qwen3 dependencies and models are installed. Explicit Qwen3 selection is strict and must not be treated as a fallback request.
+Use `--language en` for English subtitle/ASR processing. Independently choose `--summary-language zh` or `--summary-language en` from the user's requested final-summary language; for example, use `--language en --summary-language zh` to summarize an English transcript in Chinese. If omitted, `--summary-language` follows the transcript language. Use `--skip-subtitles` to force ASR, and `--asr-provider qwen3` only after the optional Qwen3 dependencies and models are installed. Explicit Qwen3 selection is strict and must not be treated as a fallback request.
 
 4. Prefer dispatching a fresh subagent with no inherited parent conversation. Give it only the `Summary Prompt` path and the task of following that prompt, reading its linked transcript data, and writing the final summary. Do not pass the transcript content or parent conversation to the subagent.
 5. If subagent delegation is unavailable, read the `Summary Prompt` in the current Agent and complete the same summary-writing task. Do not read other files unless the prompt links them or debugging is required.

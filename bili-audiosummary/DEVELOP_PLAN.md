@@ -71,18 +71,13 @@
 
 ---
 
-### Task 3: Separate Transcript Language From Summary Language
+### Task 3: Separate Transcript Language From Summary Language（已完成）
 
 **Problem:** 当前 summary 文件名跟随 transcript language，英文转写但中文总结时可能生成 `summary_en.md`，误导用户。
 
-> 需要进一步阅读代码调查目前的行为，该任务暂缓
+> 查阅指令发现是LLM遵循问题，在中文对话中倾向于使用中文书写模板，建议在校验增加主要语言校验
 
-**Success Criteria:**
-
-- pipeline 支持 `--summary-language zh|en`。
-- transcript language 继续控制字幕 / ASR 语言。
-- summary template 和输出文件名由 summary language 控制。
-- 默认行为在文档中明确。
+**主要改动:** pipeline 增加 `--summary-language {zh,en}`，由调用方按用户希望的最终总结语言显式选择模板和 `_summary_<language>.md` 输出路径；未传时保持按 transcript 语言选择模板的兼容行为。summary validator 根据输出文件名提供语言不符警告，忽略 Markdown 标记、URL 和代码后统计汉字与英文字母；其他文件名保持原有兼容行为。
 
 ### Task 4: 规范化脚本输出，避免上下文污染
 
@@ -243,5 +238,5 @@ Summary validation passed.
 
 ## Remaining Decisions
 
-- Default `--summary-language`: choose `zh` for Chinese user workflows, or inherit transcript language for backward compatibility.
+- `--summary-language` 默认继承 transcript 语言；调用方需要跨语言总结时显式传入 `zh` 或 `en`。（已确认）
 - `--page` / `--all-pages`: report current P first; implement selection only if real usage confirms demand.

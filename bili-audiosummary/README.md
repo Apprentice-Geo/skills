@@ -54,6 +54,14 @@ uv run --no-sync python -m scripts.run_pipeline "https://www.bilibili.com/video/
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en
 ```
 
+选择最终总结语言时，使用独立的 `--summary-language`。例如，对英文转写生成中文总结：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en --summary-language zh
+```
+
+未传 `--summary-language` 时，pipeline 保持原有行为，按 transcript 的语言选择总结模板。
+
 跳过字幕并强制使用 ASR：
 
 ```powershell

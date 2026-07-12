@@ -101,6 +101,7 @@ class PipelineOptions:
     url: str
     cookies: Path | None = None
     language: str = DEFAULT_TRANSCRIBE_LANGUAGE
+    summary_language: str | None = None
     asr_provider: str = DEFAULT_ASR_PROVIDER
     skip_subtitles: bool = False
 
@@ -114,6 +115,7 @@ class PipelineOptions:
             url=args.url,
             cookies=getattr(args, "cookies", None),
             language=getattr(args, "language", DEFAULT_TRANSCRIBE_LANGUAGE),
+            summary_language=getattr(args, "summary_language", None),
             asr_provider=getattr(args, "asr_provider", DEFAULT_ASR_PROVIDER),
             skip_subtitles=getattr(args, "skip_subtitles", False),
         )

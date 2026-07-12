@@ -16,6 +16,20 @@ def test_normalize_bilibili_watchlater_url_returns_canonical_video_url() -> None
     )
 
 
+def test_normalize_bilibili_video_url_preserves_page_and_removes_tracking() -> None:
+    url = (
+        "https://www.bilibili.com/video/BV1W1JxzjEty/"
+        "?spm_id_from=333.788&p=2&vd_source=test"
+    )
+
+    assert utils.normalize_bilibili_video_url(url) == (
+        "https://www.bilibili.com/video/BV1W1JxzjEty/?p=2"
+    )
+    assert utils.normalize_bilibili_video_url(
+        "https://www.bilibili.com/video/BV1W1JxzjEty/?p=1"
+    ) == "https://www.bilibili.com/video/BV1W1JxzjEty/?p=1"
+
+
 def make_ffmpeg_module(ffmpeg_path: Path) -> types.ModuleType:
     module = types.ModuleType("ffmpeg_binaries")
     module.FFMPEG_PATH = str(ffmpeg_path)

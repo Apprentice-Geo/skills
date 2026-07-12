@@ -37,6 +37,15 @@ def test_build_canonical_url_preserves_non_first_page() -> None:
     assert fetch_audio.build_canonical_url(info, "BVTEST_p2") == "https://www.bilibili.com/video/BVTEST/?p=2"
 
 
+def test_build_canonical_url_preserves_first_page() -> None:
+    info = {
+        "id": "BVTEST_p1",
+        "webpage_url": "https://www.bilibili.com/video/BVTEST/?p=1",
+    }
+
+    assert fetch_audio.build_canonical_url(info, "BVTEST_p1") == "https://www.bilibili.com/video/BVTEST/?p=1"
+
+
 def test_select_valid_srt_files_filters_invalid_subtitles(
     sample_srt_path: Path,
     invalid_srt_path: Path,
@@ -111,6 +120,37 @@ def test_run_fetch_uses_canonical_url_for_watchlater_video(
     assert download_subtitles.call_args.args[0] == canonical_url
     assert download_audio.call_args.args[0] == canonical_url
     assert manifest["url"] == canonical_url
+
+
+def test_run_fetch_downloads_only_selected_page(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    selected_page_url = "https://www.bilibili.com/video/BVTEST/?p=2"
+    info = {
+        "id": "BVTEST_p2",
+        "title": "测试视频 p02 第二集",
+        "webpage_url": selected_page_url,
+    }
+    args = make_args(workspace_tmp_path)
+    args.url = f"{selected_page_url}&spm_id_from=333.788"
+
+    extract_metadata = mocker.patch(
+        "scripts.fetch_audio.extract_metadata", return_value=info
+    )
+    mocker.patch("scripts.fetch_audio.download_subtitles", return_value=[])
+    download_audio = mocker.patch(
+        "scripts.fetch_audio.download_audio", return_value=[]
+    )
+
+    result = fetch_audio.run_fetch(args)
+    manifest = read_json(result["manifest_path"])
+
+    assert extract_metadata.call_args.args[0] == selected_page_url
+    assert download_audio.call_args.args[0] == selected_page_url
+    assert result["video_id"] == "BVTEST_p2"
+    assert result["paths"]["result"] == workspace_tmp_path / "BVTEST_p2"
+    assert manifest["url"] == selected_page_url
 
 
 def test_run_fetch_only_emits_stage_extraction_and_title(

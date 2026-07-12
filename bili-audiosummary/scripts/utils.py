@@ -51,7 +51,18 @@ def normalize_bilibili_video_url(value: str) -> str:
         return value
 
     normalized_path = f"/video/{match.group(1)}/"
-    return urlunsplit((parts.scheme or "https", parts.netloc or "www.bilibili.com", normalized_path, "", ""))
+    page_values = parse_qs(parts.query).get("p", [])
+    page = page_values[-1] if page_values else ""
+    normalized_query = f"p={page}" if re.fullmatch(r"[1-9]\d*", page) else ""
+    return urlunsplit(
+        (
+            parts.scheme or "https",
+            parts.netloc or "www.bilibili.com",
+            normalized_path,
+            normalized_query,
+            "",
+        )
+    )
 
 
 def write_json(path: Path, data: Any) -> None:

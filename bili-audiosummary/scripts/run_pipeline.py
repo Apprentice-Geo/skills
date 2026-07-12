@@ -129,13 +129,15 @@ def write_summary_prompt(
     video_id: str,
     transcript_markdown_path: Path,
     transcript_json_path: Path,
+    summary_language: str | None = None,
 ) -> dict[str, Path]:
     result_dir = result_dir.resolve()
     transcript_markdown_path = transcript_markdown_path.resolve()
     transcript_json_path = transcript_json_path.resolve()
-    transcript_payload = read_json(transcript_json_path)
-    language = transcript_payload.get("language")
-    template_language, template_path = select_summary_template(language)
+    if summary_language is None:
+        transcript_payload = read_json(transcript_json_path)
+        summary_language = transcript_payload.get("language")
+    template_language, template_path = select_summary_template(summary_language)
 
     prompt_path = result_dir / f"{video_id}_summary_prompt.md"
     summary_path = result_dir / f"{video_id}_summary_{template_language}.md"
@@ -190,12 +192,14 @@ def write_summary_prompt(
 def write_prompt_for_transcript(
     fetch_result: dict[str, Any],
     transcript_result: dict[str, Any],
+    summary_language: str | None = None,
 ) -> dict[str, Path]:
     return write_summary_prompt(
         result_dir=fetch_result["paths"]["result"],
         video_id=fetch_result["video_id"],
         transcript_markdown_path=transcript_result["markdown_path"],
         transcript_json_path=transcript_result["json_path"],
+        summary_language=summary_language,
     )
 
 
@@ -248,6 +252,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("url", help="Bilibili video URL.")
     parser.add_argument("--cookies", type=Path, help="Path to a Netscape-format cookies.txt file.")
     parser.add_argument("--language", choices=("zh", "en"), default=DEFAULT_TRANSCRIBE_LANGUAGE)
+    parser.add_argument(
+        "--summary-language",
+        choices=("zh", "en"),
+        help="Language for the final summary template. Defaults to the transcript language.",
+    )
     parser.add_argument(
         "--asr-provider",
         choices=("whisper", "qwen3"),
@@ -306,7 +315,11 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
         transcript_result = run_asr_transcript(options, fetch_result, audio_files)
         
     terminal_info(logger, "[Stage] Build summary prompt")
-    prompt_result = write_prompt_for_transcript(fetch_result, transcript_result)
+    prompt_result = write_prompt_for_transcript(
+        fetch_result,
+        transcript_result,
+        options.summary_language,
+    )
     terminal_info(
         logger,
         "Pipeline completed in %s",

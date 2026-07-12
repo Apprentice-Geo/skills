@@ -209,7 +209,7 @@ def build_canonical_url(info: dict[str, Any], video_id: str) -> str:
     page_match = re.search(r"_p([0-9]+)$", str(info.get("id") or video_id))
     query_page = parse_qs(urlsplit(source_url).query).get("p", [])
     page = page_match.group(1) if page_match else (query_page[0] if query_page else "")
-    page_suffix = f"?p={page}" if page and page != "1" else ""
+    page_suffix = f"?p={page}" if page else ""
     return f"https://www.bilibili.com/video/{bvid}/{page_suffix}"
 
 
