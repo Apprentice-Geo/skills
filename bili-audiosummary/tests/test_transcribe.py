@@ -209,10 +209,14 @@ def test_transcribe_cli_distinguishes_automatic_and_explicit_worker_values(
 
 
 def test_default_model_path_requires_local_faster_whisper_model(
-    tmp_path: Path,
+    workspace_tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(transcribe, "DEFAULT_WHISPER_MODEL_DIR", tmp_path / "missing")
+    monkeypatch.setattr(
+        transcribe,
+        "DEFAULT_WHISPER_MODEL_DIR",
+        workspace_tmp_path / "missing",
+    )
 
     with pytest.raises(RuntimeError, match=r"scripts\.setup\.install_model --model faster-whisper"):
         transcribe.default_model_path()
