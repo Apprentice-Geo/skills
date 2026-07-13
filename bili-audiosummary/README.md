@@ -7,7 +7,7 @@
 - 字幕优先：优先复用或下载目标语言字幕，减少不必要的 ASR。
 - ASR Provider：默认使用 faster-whisper；具备 CUDA 环境时可显式选择严格的 Qwen3-ASR 路径。
 - 统一产物：生成带时间戳的 transcript、summary prompt 和处理日志。
-- 缓存复用：重跑时复用有效字幕、音频、本地模型，以及与完整计划匹配的 faster-whisper chunk 转写结果。
+- 缓存复用：重跑时复用有效字幕、音频、本地模型，以及与音频指纹、ASR/VAD 参数、worker 配置和切片布局完整匹配的 faster-whisper 计划与 chunk 转写结果。
 - 简洁终端输出：终端显示关键阶段、并行转写计划、chunk 进度与结果路径，完整细节写入日志。
 
 ## 能力边界
@@ -68,19 +68,43 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en -
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --skip-subtitles
 ```
 
-单独运行 faster-whisper 转写时，省略 `--num-workers` 和 `--cpu-threads` 会按音频长度与 CPU 预算自动规划：
+单独运行 faster-whisper 转写时，省略 `--num-workers` 和 `--cpu-threads` 会按音频长度、VAD 切点与 CPU 预算联合规划：
 
 ```powershell
 uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-dir "<result-dir>" --asr-provider whisper
 ```
 
-也可以显式覆盖 worker 数和每个 model worker 的 CPU 线程数：
+也可以显式覆盖 worker 数和每个 worker 的 CPU 线程数：
 
 ```powershell
 uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-dir "<result-dir>" --asr-provider whisper --num-workers 1 --cpu-threads 1
 ```
 
-只传一个覆盖参数时，另一个参数会在该约束下自动计算。显式值不会被静默降低；非正数、worker 超过 8、CPU 预算超限，或配置不适用于任一 macro 时，命令会在切片和模型加载前直接失败。
+CPU 线程预算为 `B = max(1, floor(cpu_count * 0.75))`。自动模式只考虑能整除 `B` 且存在合法切片方案的 worker 数，并选择最大的可行值。只指定 `--num-workers` 时，每个 worker 使用 `floor(B / W)` 个线程；只指定 `--cpu-threads` 时，在预算内选择最大的可行 worker 数；同时指定时保留两个显式值，但要求乘积不超过 `B`。显式值不会被静默降低，非正数、预算超限或无法生成合法切片计划都会在写入切片和加载模型前直接失败。
+
+faster-whisper 并行路径复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不需要额外安装 `silero-vad`、PyTorch 或 torchaudio。音频先解码为 16kHz 单声道，VAD 使用 `threshold=0.5`、最短语音 `250ms`、最短静音 `500ms` 和 `speech_pad_ms=0`。相邻语音区间之间的静音中点作为自然切点；无语音或连续语音过长时，规划器补充必要的硬切点。
+
+正常切片连续覆盖完整音频、互不重叠，时长为 `60s-300s`；完整音频不足 60 秒时允许单切片例外。切片数 `N` 必须是 worker 数 `W` 的整数倍。相同 worker 数下，规划器依次减少语音中的硬切、批次数 `N / W` 和切片相对目标时长的平方偏差，且结果不受候选切点输入顺序影响。例如 CPU 预算为 24、音频为 900 秒时，自动计划使用 12 个 worker、每个 worker 2 个线程，以及 12 个约 75 秒的切片。
+
+### faster-whisper 并行产物与缓存
+
+Schema 4 使用平铺的 chunk 布局，不再生成分组目录：
+
+```text
+asr_parallel/
+├─ asr_plan.json
+├─ progress.json
+├─ metrics.json
+├─ merged_transcript.json
+├─ chunks/
+│  └─ chunk_<index>.wav
+└─ chunk_results/
+   └─ chunk_<index>.json
+```
+
+只有音频指纹、ASR 参数、VAD 参数、worker 配置和最终切片布局全部匹配时，Schema 4 计划与有效 chunk result 才会复用。配置变化时会重建 plan 和 progress，但不会预先删除不兼容的旧结果；同名 chunk 成功后，新结果会通过原子替换覆盖旧文件，其他旧文件继续保留在磁盘上但不会被复用。Schema 4 以前的计划和 chunk result 不复用。
+
+合并时，chunk 内时间戳直接加上该 chunk 的全局开始时间。segment 按 chunk index 和时间排序；只有时间范围真正相交时才合并，端点仅相接时保持分离。中文文本直接拼接，其他语言以一个空格连接，不执行字符级去重。`metrics.json` 记录 worker 数、每 worker 线程数、切片数、批次数、各切片耗时和最终 segment 数。
 
 有可用 CUDA 时，可安装 Qwen3-ASR 的可选依赖和模型：
 
@@ -151,6 +175,6 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 
 - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp)：解析 Bilibili 元信息并下载字幕和音频。
 - [`ffmpeg-binaries-compat`](https://pypi.org/project/ffmpeg-binaries-compat/)：提供项目使用的 `ffmpeg` 和 `ffprobe`；不依赖系统 PATH 中的 ffmpeg。
-- [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper)：默认 ASR 引擎，可在 CPU 环境运行。
+- [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper)：默认 ASR 引擎，可在 CPU 环境运行；其固定版本内置并行切分使用的 ONNX Silero VAD。
 - [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)：可选 CUDA ASR 引擎，配合 `Qwen/Qwen3-ASR-0.6B` 和 `Qwen/Qwen3-ForcedAligner-0.6B` 本地模型使用。
 - [`uv`](https://docs.astral.sh/uv/)：唯一支持的 Python 3.12 环境与依赖同步入口。

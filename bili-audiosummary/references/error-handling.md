@@ -66,14 +66,17 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 - If faster-whisper fails, verify that the audio path in `fetch_manifest.json` exists and that packaged ffmpeg and `models/faster-whisper-small/` are available.
 - Check the transcript command log for model-loading, audio-decoding, memory, or language-normalization errors.
 - For Chinese transcription failures involving OpenCC, rerun core setup to restore `opencc-python-reimplemented`.
-- Standalone `--num-workers` and `--cpu-threads` overrides are strict. Invalid values, CPU-budget overflow, or a value that cannot support any macro are reported with the resolved values and macro index before audio slicing or model loading; the command does not lower the value or switch back to automatic planning.
+- Standalone `--num-workers` and `--cpu-threads` overrides are strict. Values must be positive, their product must not exceed `B = max(1, floor(cpu_count * 0.75))`, and the resolved worker count must admit a `60s-300s` chunk count divisible by that worker count. The command does not lower explicit values or switch back to automatic planning; an impossible configuration fails before chunk files are written or the model is loaded.
+- Silero VAD runs on 16kHz mono audio with `threshold=0.5`, `min_speech_duration_ms=250`, `min_silence_duration_ms=500`, and `speech_pad_ms=0`. No detected speech and continuous speech longer than 300 seconds are planning cases handled with hard boundaries, not VAD failures. Audio decode or VAD execution errors stop before chunk transcription.
+- VAD decodes the complete audio and uses temporary sample arrays; allow roughly 0.5 GB of working memory per audio hour during planning. For multi-hour inputs, close memory-heavy programs or process the source on a machine with sufficient RAM.
+- Merge rejects a segment whose end precedes its start. Genuine time-range intersections are combined, while endpoint contact remains separate; text similarity is never used to delete characters or words.
 - Do not claim a transcript or summary was produced when ASR terminated before writing transcript outputs.
 
 ## Parallel faster-whisper Cache and Resume
 
-- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. Cached transcription applies to `chunk_results/`; the WAV files under `chunks/` are regenerated on each run.
-- A cached plan is reused only when its schema 3 plan exactly matches the current source-audio fingerprint, ASR options, CPU and per-macro worker settings, global chunk coordinates, overlap, and chunk layout. Schema 2 caches are incompatible.
-- If the cached plan is unreadable, structurally invalid, or incompatible, the current plan atomically replaces it and the progress state is rebuilt. Existing incompatible or unreadable chunk-result files remain on disk but are counted as `ignored` and are not reused.
+- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. Chunk audio uses `chunks/chunk_<index>.wav`; cached transcription results use `chunk_results/chunk_<index>.json`.
+- A cached Schema 4 plan is reused only when the source-audio fingerprint, ASR parameters, VAD parameters, CPU budget, worker configuration, and final flat chunk layout all match. Plans and chunk results from earlier schemas are incompatible.
+- If the cached plan is unreadable, structurally invalid, or incompatible, the current plan atomically replaces it and the progress state is rebuilt. Incompatible or unreadable chunk-result files are not deleted up front: a successful same-index chunk atomically replaces its stale file, while other stale files remain on disk, are counted as `ignored`, and are not reused.
 - `[Transcribe] cache: reused=<n>, ignored=<n>, pending=<n>, total=<n>` reports the cache decision. Reused results and resumed chunks are also reported individually.
 - Plan, progress, and chunk-result JSON files are written through a same-directory temporary file followed by `os.replace()`, so the target is always the previous or new complete JSON document.
 - A valid chunk result is the source of truth and takes precedence over missing, stale, unreadable, or structurally invalid progress. Invalid progress is rebuilt from the current plan, then valid results are marked succeeded without loading a model for fully cached work.
@@ -98,7 +101,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 - Setup logs are written to `.cache/logs/setup-<timestamp>.log`.
 - Pipeline, fetch, subtitle, and transcription logs start in `.cache/logs/`.
 - After metadata or an output directory identifies the result location, processing logs move to `results/<BVID>/`.
-- During parallel faster-whisper transcription, the terminal reports the plan, macro worker allocation, audio preparation, per-chunk cache/resume/success state, retry summaries, and merge completion.
+- During parallel faster-whisper transcription, the terminal reports VAD and chunk planning, the resolved worker allocation, audio preparation, per-chunk cache/resume/success state, retry summaries, and merge completion.
 - On failure, use the printed `Full log` path. It contains commands, BVID, manifest and metadata paths, cache decisions, ASR provider details, yt-dlp warnings, and tracebacks.
 - Chunk failures are concise in the terminal; their full tracebacks are available only in the log. The terminal is not the complete diagnostic record.
 

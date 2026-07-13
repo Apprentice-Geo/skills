@@ -46,9 +46,8 @@ def source_matches(plan: ParallelAsrPlan, source_audio: AsrSourceAudio) -> bool:
 
 
 def chunk_key(chunk: AsrChunkPlan | dict[str, Any]) -> str:
-    macro_index = chunk.macro_index if isinstance(chunk, AsrChunkPlan) else int(chunk["macro_index"])
-    chunk_index = chunk.chunk_index if isinstance(chunk, AsrChunkPlan) else int(chunk["chunk_index"])
-    return f"macro_{macro_index:03d}_chunk_{chunk_index:03d}"
+    index = chunk.index if isinstance(chunk, AsrChunkPlan) else int(chunk["chunk_index"])
+    return f"chunk_{index:03d}"
 
 
 def chunk_result_path(workspace_dir: Path, chunk: AsrChunkPlan) -> Path:
@@ -65,7 +64,7 @@ def initial_progress(plan: ParallelAsrPlan) -> dict[str, Any]:
                 "error": None,
                 "result_path": f"chunk_results/{chunk_key(chunk)}.json",
             }
-            for chunk in plan.asr_chunks
+            for chunk in plan.chunks
         },
     }
 
@@ -109,90 +108,93 @@ def prepare_progress_for_resume(
     progress: dict[str, Any] | None,
     valid_result_keys: set[str],
 ) -> dict[str, Any]:
-    progress = initial_progress(plan)
-    for chunk in plan.asr_chunks:
+    del progress
+    resumed = initial_progress(plan)
+    for chunk in plan.chunks:
         key = chunk_key(chunk)
         if key in valid_result_keys:
-            progress["chunks"][key]["status"] = "succeeded"
-    return progress
+            resumed["chunks"][key]["status"] = "succeeded"
+    return resumed
 
 
 def failed_chunks_blocking_merge(progress: dict[str, Any]) -> list[str]:
     failed: list[str] = []
     for key, item in progress.get("chunks", {}).items():
-        if item.get("status") == "failed" and int(item.get("retry_count", 0)) >= MAX_CHUNK_RETRIES:
+        if (
+            item.get("status") == "failed"
+            and int(item.get("retry_count", 0)) >= MAX_CHUNK_RETRIES
+        ):
             failed.append(key)
     return failed
 
 
-def _valid_chunk_result(data: dict[str, Any], plan: ParallelAsrPlan) -> bool:
+def _valid_chunk_result(data: Any, plan: ParallelAsrPlan) -> bool:
+    if not isinstance(data, dict):
+        return False
     required = {
         "schema_version",
-        "macro_index",
         "chunk_index",
         "start",
         "duration",
-        "source_start",
-        "source_duration",
-        "overlap",
+        "end_boundary",
         "source",
         "plan",
         "model",
         "elapsed_seconds",
         "segments",
     }
-    if not required.issubset(data):
-        return False
-    if data["schema_version"] != SCHEMA_VERSION:
+    if not required.issubset(data) or data["schema_version"] != SCHEMA_VERSION:
         return False
     if data["source"] != asdict(plan.source_audio):
         return False
-    if data["plan"] != asdict(plan):
+    if data["plan"] != plan_to_dict(plan):
         return False
     try:
         key = chunk_key(data)
     except (KeyError, TypeError, ValueError):
         return False
 
-    chunks = {chunk_key(chunk): chunk for chunk in plan.asr_chunks}
+    chunks = {chunk_key(chunk): chunk for chunk in plan.chunks}
     chunk = chunks.get(key)
     if chunk is None:
         return False
-    macro = plan.macro_chunks[chunk.macro_index]
     expected_model = {
         "path": plan.model,
         "language": plan.language,
         "beam_size": plan.beam_size,
         "device": plan.device,
         "compute_type": plan.compute_type,
-        "cpu_threads": macro.cpu_threads,
-        "model_workers": macro.model_workers,
+        "cpu_threads": plan.cpu_threads,
+        "num_workers": plan.num_workers,
     }
     return (
         data["start"] == chunk.start
         and data["duration"] == chunk.duration
-        and data["source_start"] == chunk.source_start
-        and data["source_duration"] == chunk.source_duration
-        and data["overlap"]
-        == {"left": chunk.left_overlap, "right": chunk.right_overlap}
+        and data["end_boundary"] == chunk.end_boundary
         and data["model"] == expected_model
+        and isinstance(data["elapsed_seconds"], (int, float))
+        and not isinstance(data["elapsed_seconds"], bool)
         and isinstance(data["segments"], list)
     )
 
 
-def load_valid_chunk_results(workspace_dir: Path, plan: ParallelAsrPlan) -> dict[str, dict[str, Any]]:
+def load_valid_chunk_results(
+    workspace_dir: Path,
+    plan: ParallelAsrPlan,
+) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     results_dir = workspace_dir / "chunk_results"
     if not results_dir.exists():
         return results
-    for result_path in results_dir.glob("macro_*_chunk_*.json"):
+    for result_path in results_dir.glob("chunk_*.json"):
         try:
             data = read_json(result_path)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeError, json.JSONDecodeError):
             continue
         if _valid_chunk_result(data, plan):
             key = chunk_key(data)
-            results[key] = data
+            if result_path.stem == key:
+                results[key] = data
     return results
 
 

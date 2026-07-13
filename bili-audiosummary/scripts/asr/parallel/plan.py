@@ -1,20 +1,28 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_left, bisect_right
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
 
 
-SCHEMA_VERSION = 3
-MACRO_CHUNK_SECONDS = 1440.0
-MIN_ASR_CHUNK_SECONDS = 120.0
-OVERLAP_SECONDS = 5.0
-MAX_WORKERS = 8
-LEGAL_WORKER_COUNTS = (8, 6, 4, 2, 1)
+SCHEMA_VERSION = 4
+MIN_ASR_CHUNK_SECONDS = 60.0
+MAX_ASR_CHUNK_SECONDS = 300.0
+VAD_THRESHOLD = 0.5
+VAD_MIN_SPEECH_DURATION_MS = 250
+VAD_MIN_SILENCE_DURATION_MS = 500
+VAD_SPEECH_PAD_MS = 0
+VAD_SAMPLING_RATE = 16_000
+BOUNDARY_SILENCE = "silence"
+BOUNDARY_HARD = "hard"
+BOUNDARY_AUDIO_END = "audio_end"
+BOUNDARY_TYPES = {BOUNDARY_SILENCE, BOUNDARY_HARD, BOUNDARY_AUDIO_END}
+_EPSILON = 1e-9
 
 
 @dataclass(frozen=True)
@@ -26,27 +34,31 @@ class AsrSourceAudio:
 
 
 @dataclass(frozen=True)
-class AsrChunkPlan:
-    macro_index: int
-    chunk_index: int
-    start: float
-    duration: float
-    source_start: float
-    source_duration: float
-    left_overlap: float
-    right_overlap: float
-    path: str
+class VadParameters:
+    threshold: float = VAD_THRESHOLD
+    min_speech_duration_ms: int = VAD_MIN_SPEECH_DURATION_MS
+    min_silence_duration_ms: int = VAD_MIN_SILENCE_DURATION_MS
+    speech_pad_ms: int = VAD_SPEECH_PAD_MS
+    sampling_rate: int = VAD_SAMPLING_RATE
+
+
+DEFAULT_VAD_PARAMETERS = VadParameters()
 
 
 @dataclass(frozen=True)
-class MacroChunkPlan:
+class WorkerConfig:
+    cpu_budget: int
+    num_workers: int
+    cpu_threads: int
+
+
+@dataclass(frozen=True)
+class AsrChunkPlan:
     index: int
     start: float
     duration: float
-    task_workers: int
-    model_workers: int
-    cpu_threads: int
-    chunks: list[AsrChunkPlan]
+    path: str
+    end_boundary: str
 
 
 @dataclass(frozen=True)
@@ -59,13 +71,19 @@ class ParallelAsrPlan:
     beam_size: int
     device: str
     compute_type: str
+    vad_parameters: VadParameters
     cpu_budget: int
-    task_workers: int
-    model_workers: int
+    num_workers: int
     cpu_threads: int
-    macro_chunks: list[MacroChunkPlan]
-    asr_chunks: list[AsrChunkPlan]
-    overlap_seconds: float
+    chunks: list[AsrChunkPlan]
+
+
+@dataclass(frozen=True)
+class _BoundaryPlan:
+    hard_cut_count: int
+    squared_error: float
+    boundaries: tuple[float, ...]
+    end_boundaries: tuple[str, ...]
 
 
 def source_audio_fingerprint(audio_path: Path, duration_seconds: float) -> AsrSourceAudio:
@@ -74,7 +92,7 @@ def source_audio_fingerprint(audio_path: Path, duration_seconds: float) -> AsrSo
         path=path_to_posix(audio_path),
         size=stat.st_size,
         mtime=stat.st_mtime,
-        duration=round(float(duration_seconds), 3),
+        duration=_round_seconds(duration_seconds),
     )
 
 
@@ -87,108 +105,336 @@ def _round_seconds(value: float) -> float:
 
 
 def _cpu_budget(cpu_count: int | None) -> int:
-    if cpu_count is None:
-        cpu_count = 1
-    return max(1, math.floor(cpu_count * 0.75))
+    return max(1, math.floor((cpu_count or 1) * 0.75))
 
 
-def _select_worker_count(unit_duration: float, cpu_budget: int) -> int:
-    max_workers_by_duration = max(1, math.floor(unit_duration / MIN_ASR_CHUNK_SECONDS))
-    max_allowed = min(max_workers_by_duration, cpu_budget, MAX_WORKERS)
-    for worker_count in LEGAL_WORKER_COUNTS:
-        if worker_count <= max_allowed:
-            return worker_count
-    return 1
-
-
-def _resolve_macro_worker_config(
-    macro_index: int,
-    macro_duration: float,
-    cpu_budget: int,
-    requested_num_workers: int | None,
-    requested_cpu_threads: int | None,
-) -> tuple[int, int, int]:
-    if requested_num_workers is not None and not 1 <= requested_num_workers <= MAX_WORKERS:
+def _chunk_count_range(duration_seconds: float) -> tuple[int, int]:
+    if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+        raise ValueError(f"Invalid audio duration: {duration_seconds!r}.")
+    if duration_seconds < MIN_ASR_CHUNK_SECONDS:
+        return 1, 1
+    minimum = math.ceil(duration_seconds / MAX_ASR_CHUNK_SECONDS - _EPSILON)
+    maximum = math.floor(duration_seconds / MIN_ASR_CHUNK_SECONDS + _EPSILON)
+    if minimum > maximum:
         raise ValueError(
-            f"Invalid num_workers={requested_num_workers} at macro_index={macro_index}: "
-            f"expected 1..{MAX_WORKERS}."
+            f"Unable to split {duration_seconds:.3f}s audio into "
+            f"{MIN_ASR_CHUNK_SECONDS:.0f}s-{MAX_ASR_CHUNK_SECONDS:.0f}s chunks."
         )
-    if requested_cpu_threads is not None and requested_cpu_threads < 1:
-        raise ValueError(
-            f"Invalid cpu_threads={requested_cpu_threads} at macro_index={macro_index}: "
-            "expected >= 1."
-        )
+    return minimum, maximum
 
-    if requested_num_workers is None:
-        if requested_cpu_threads is None:
-            task_workers = _select_worker_count(macro_duration, cpu_budget)
-        else:
-            if requested_cpu_threads > cpu_budget:
-                raise ValueError(
-                    f"Invalid cpu_threads={requested_cpu_threads} at macro_index={macro_index}: "
-                    f"exceeds cpu_budget={cpu_budget} with minimum num_workers=1."
-                )
-            worker_budget = math.floor(cpu_budget / requested_cpu_threads)
-            task_workers = _select_worker_count(macro_duration, worker_budget)
+
+def _candidate_chunk_counts(duration_seconds: float, num_workers: int) -> list[int]:
+    minimum, maximum = _chunk_count_range(duration_seconds)
+    return [
+        count
+        for count in range(minimum, maximum + 1)
+        if count % num_workers == 0
+    ]
+
+
+def _positive_int(value: Any, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"Invalid {name}={value!r}: expected a positive integer.")
+    return value
+
+
+def resolve_worker_config(
+    duration_seconds: float,
+    cpu_count: int | None,
+    options: TranscribeOptions | Any,
+) -> WorkerConfig:
+    duration = _round_seconds(duration_seconds)
+    cpu_budget = _cpu_budget(cpu_count)
+    requested_workers = _options_value(options, "num_workers", None)
+    requested_threads = _options_value(options, "cpu_threads", None)
+
+    if requested_workers is not None:
+        requested_workers = _positive_int(requested_workers, "num_workers")
+    if requested_threads is not None:
+        requested_threads = _positive_int(requested_threads, "cpu_threads")
+
+    if requested_workers is not None:
+        num_workers = requested_workers
+        cpu_threads = (
+            requested_threads
+            if requested_threads is not None
+            else cpu_budget // num_workers
+        )
+        if cpu_threads < 1 or num_workers * cpu_threads > cpu_budget:
+            raise ValueError(
+                "Invalid worker configuration: "
+                f"num_workers={num_workers} * cpu_threads={cpu_threads} "
+                f"exceeds cpu_budget={cpu_budget}."
+            )
+        if not _candidate_chunk_counts(duration, num_workers):
+            raise ValueError(
+                f"No legal chunk count for num_workers={num_workers} and "
+                f"duration={duration:.3f}s."
+            )
+        return WorkerConfig(cpu_budget, num_workers, cpu_threads)
+
+    if requested_threads is not None:
+        if requested_threads > cpu_budget:
+            raise ValueError(
+                f"Invalid cpu_threads={requested_threads}: exceeds cpu_budget={cpu_budget}."
+            )
+        worker_limit = cpu_budget // requested_threads
+        worker_candidates = range(worker_limit, 0, -1)
     else:
-        task_workers = requested_num_workers
-
-    cpu_threads = (
-        requested_cpu_threads
-        if requested_cpu_threads is not None
-        else max(1, math.floor(cpu_budget / task_workers))
-    )
-    if task_workers * cpu_threads > cpu_budget:
-        raise ValueError(
-            f"Invalid worker configuration at macro_index={macro_index}: "
-            f"num_workers={task_workers} * cpu_threads={cpu_threads} "
-            f"exceeds cpu_budget={cpu_budget}."
+        worker_candidates = (
+            workers
+            for workers in range(cpu_budget, 0, -1)
+            if cpu_budget % workers == 0
         )
 
-    supported_chunk_count = max(
-        1,
-        math.floor(macro_duration / MIN_ASR_CHUNK_SECONDS),
+    for num_workers in worker_candidates:
+        if _candidate_chunk_counts(duration, num_workers):
+            cpu_threads = (
+                requested_threads
+                if requested_threads is not None
+                else cpu_budget // num_workers
+            )
+            return WorkerConfig(cpu_budget, num_workers, cpu_threads)
+    raise ValueError(
+        f"No worker configuration can produce legal chunks for duration={duration:.3f}s."
     )
-    if requested_num_workers is not None and task_workers > supported_chunk_count:
-        raise ValueError(
-            f"Invalid num_workers={task_workers} at macro_index={macro_index}: "
-            f"exceeds supported_chunk_count={supported_chunk_count} "
-            f"for macro duration {macro_duration:.3f}s."
+
+
+def _interval_values(interval: Any) -> tuple[float, float]:
+    if isinstance(interval, dict):
+        return float(interval["start"]), float(interval["end"])
+    start, end = interval
+    return float(start), float(end)
+
+
+def natural_cut_points(
+    speech_intervals: Iterable[Any],
+    duration_seconds: float,
+) -> list[float]:
+    duration = _round_seconds(duration_seconds)
+    normalized: list[tuple[float, float]] = []
+    for interval in speech_intervals:
+        start, end = _interval_values(interval)
+        if not math.isfinite(start) or not math.isfinite(end) or end < start:
+            raise ValueError(f"Invalid speech interval: {(start, end)!r}.")
+        start = max(0.0, min(duration, start))
+        end = max(0.0, min(duration, end))
+        if end > start:
+            normalized.append((start, end))
+    normalized.sort()
+
+    merged: list[list[float]] = []
+    for start, end in normalized:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+
+    cut_points = {
+        _round_seconds((left[1] + right[0]) / 2)
+        for left, right in zip(merged, merged[1:])
+        if right[0] > left[1]
+    }
+    return sorted(point for point in cut_points if 0.0 < point < duration)
+
+
+def _transition_ranges(
+    anchors: list[float],
+    chunk_count: int,
+) -> list[list[tuple[int, int]]]:
+    ranges: list[list[tuple[int, int]]] = [[] for _ in range(chunk_count + 1)]
+    for chunks_on_edge in range(1, chunk_count + 1):
+        minimum = chunks_on_edge * MIN_ASR_CHUNK_SECONDS - _EPSILON
+        maximum = chunks_on_edge * MAX_ASR_CHUNK_SECONDS + _EPSILON
+        ranges[chunks_on_edge] = [
+            (
+                bisect_left(anchors, start + minimum, index + 1),
+                bisect_right(anchors, start + maximum, index + 1),
+            )
+            for index, start in enumerate(anchors)
+        ]
+    return ranges
+
+
+def _plan_with_hard_cut_count(
+    duration: float,
+    chunk_count: int,
+    anchors: list[float],
+    target: float,
+    hard_cut_count: int,
+    transition_ranges: list[list[tuple[int, int]]],
+) -> _BoundaryPlan | None:
+    edge_count = chunk_count - hard_cut_count
+    anchor_count = len(anchors)
+    final_index = anchor_count - 1
+    costs = [[math.inf] * anchor_count for _ in range(hard_cut_count + 1)]
+    costs[0][0] = 0.0
+    predecessor_layers: list[
+        list[list[tuple[int, int, int] | None]]
+    ] = []
+
+    for edge_index in range(edge_count):
+        remaining_edges = edge_count - edge_index - 1
+        next_costs = [
+            [math.inf] * anchor_count for _ in range(hard_cut_count + 1)
+        ]
+        predecessors = [
+            [None] * anchor_count for _ in range(hard_cut_count + 1)
+        ]
+        found = False
+        for hard_used, costs_by_anchor in enumerate(costs):
+            for previous_index, previous_cost in enumerate(costs_by_anchor):
+                if not math.isfinite(previous_cost):
+                    continue
+                for edge_hard_cuts in range(hard_cut_count - hard_used + 1):
+                    next_hard_used = hard_used + edge_hard_cuts
+                    chunks_on_edge = edge_hard_cuts + 1
+                    first_destination, last_destination = transition_ranges[
+                        chunks_on_edge
+                    ][previous_index]
+                    remaining_chunks = (
+                        remaining_edges + hard_cut_count - next_hard_used
+                    )
+                    if remaining_edges == 0:
+                        if next_hard_used != hard_cut_count:
+                            continue
+                        first_destination = max(first_destination, final_index)
+                        last_destination = min(last_destination, final_index + 1)
+                    else:
+                        earliest = (
+                            duration
+                            - remaining_chunks * MAX_ASR_CHUNK_SECONDS
+                            - _EPSILON
+                        )
+                        latest = (
+                            duration
+                            - remaining_chunks * MIN_ASR_CHUNK_SECONDS
+                            + _EPSILON
+                        )
+                        first_destination = max(
+                            first_destination,
+                            bisect_left(anchors, earliest),
+                        )
+                        last_destination = min(
+                            last_destination,
+                            bisect_right(anchors, latest),
+                            final_index - remaining_edges + 1,
+                        )
+                    start = anchors[previous_index]
+                    for next_index in range(first_destination, last_destination):
+                        distance = anchors[next_index] - start
+                        edge_error = chunks_on_edge * (
+                            distance / chunks_on_edge - target
+                        ) ** 2
+                        candidate_cost = previous_cost + edge_error
+                        if round(candidate_cost, 12) >= round(
+                            next_costs[next_hard_used][next_index],
+                            12,
+                        ):
+                            continue
+                        next_costs[next_hard_used][next_index] = candidate_cost
+                        predecessors[next_hard_used][next_index] = (
+                            previous_index,
+                            hard_used,
+                            edge_hard_cuts,
+                        )
+                        found = True
+        if not found:
+            return None
+        costs = next_costs
+        predecessor_layers.append(predecessors)
+
+    squared_error = costs[hard_cut_count][final_index]
+    if not math.isfinite(squared_error):
+        return None
+
+    edges: list[tuple[int, int, int]] = []
+    next_index = final_index
+    hard_used = hard_cut_count
+    for edge_index in range(edge_count - 1, -1, -1):
+        predecessor = predecessor_layers[edge_index][hard_used][next_index]
+        if predecessor is None:
+            raise RuntimeError("ASR boundary plan predecessor is missing.")
+        previous_index, previous_hard_used, edge_hard_cuts = predecessor
+        edges.append((previous_index, next_index, edge_hard_cuts))
+        next_index = previous_index
+        hard_used = previous_hard_used
+    edges.reverse()
+
+    boundaries = [0.0]
+    end_boundaries: list[str] = []
+    for edge_number, (start_index, end_index, edge_hard_cuts) in enumerate(edges):
+        start = anchors[start_index]
+        end = anchors[end_index]
+        chunks_on_edge = edge_hard_cuts + 1
+        boundaries.extend(
+            _round_seconds(start + (end - start) * offset / chunks_on_edge)
+            for offset in range(1, chunks_on_edge)
         )
-
-    return task_workers, task_workers, cpu_threads
-
-
-def _select_chunk_count(unit_duration: float, task_workers: int) -> int:
-    max_chunk_count = max(1, math.floor(unit_duration / MIN_ASR_CHUNK_SECONDS))
-    for chunk_count in range(max_chunk_count, 0, -1):
-        if chunk_count % task_workers == 0:
-            if chunk_count < task_workers:
-                raise ValueError("ASR chunk count cannot be smaller than task worker count.")
-            return chunk_count
-    raise ValueError("Unable to build a valid ASR chunk plan.")
-
-
-def _macro_durations(duration_seconds: float) -> list[tuple[int, float, float]]:
-    if duration_seconds <= MACRO_CHUNK_SECONDS:
-        return [(0, 0.0, duration_seconds)]
-
-    chunks: list[tuple[int, float, float]] = []
-    start = 0.0
-    index = 0
-    while start < duration_seconds:
-        macro_duration = min(MACRO_CHUNK_SECONDS, duration_seconds - start)
-        chunks.append((index, start, macro_duration))
-        index += 1
-        start += macro_duration
-    return chunks
+        end_boundaries.extend([BOUNDARY_HARD] * edge_hard_cuts)
+        boundaries.append(_round_seconds(end))
+        end_boundaries.append(
+            BOUNDARY_AUDIO_END
+            if edge_number == len(edges) - 1
+            else BOUNDARY_SILENCE
+        )
+    return _BoundaryPlan(
+        hard_cut_count=hard_cut_count,
+        squared_error=squared_error,
+        boundaries=tuple(boundaries),
+        end_boundaries=tuple(end_boundaries),
+    )
 
 
-def _chunk_path(macro_index: int, chunk_index: int) -> str:
-    return path_to_posix(
-        Path("chunks")
-        / f"macro_{macro_index:03d}"
-        / f"chunk_{chunk_index:03d}.wav"
+def _fixed_chunk_count_plan(
+    duration_seconds: float,
+    chunk_count: int,
+    natural_boundaries: list[float],
+) -> _BoundaryPlan:
+    duration = _round_seconds(duration_seconds)
+    if duration < MIN_ASR_CHUNK_SECONDS and chunk_count == 1:
+        return _BoundaryPlan(
+            hard_cut_count=0,
+            squared_error=0.0,
+            boundaries=(0.0, duration),
+            end_boundaries=(BOUNDARY_AUDIO_END,),
+        )
+    target = duration / chunk_count
+    anchors = [0.0, *natural_boundaries, duration]
+    transition_ranges = _transition_ranges(anchors, chunk_count)
+    for hard_cut_count in range(chunk_count):
+        plan = _plan_with_hard_cut_count(
+            duration,
+            chunk_count,
+            anchors,
+            target,
+            hard_cut_count,
+            transition_ranges,
+        )
+        if plan is not None:
+            return plan
+    raise ValueError(
+        f"Unable to build a {chunk_count}-chunk plan for {duration:.3f}s audio."
+    )
+
+
+def _chunk_path(index: int) -> str:
+    return path_to_posix(Path("chunks") / f"chunk_{index:03d}.wav")
+
+
+def _source_from_value(source_audio: AsrSourceAudio | dict[str, Any]) -> AsrSourceAudio:
+    if isinstance(source_audio, AsrSourceAudio):
+        return AsrSourceAudio(
+            path=source_audio.path,
+            size=source_audio.size,
+            mtime=source_audio.mtime,
+            duration=_round_seconds(source_audio.duration),
+        )
+    return AsrSourceAudio(
+        path=str(source_audio["path"]),
+        size=int(source_audio["size"]),
+        mtime=float(source_audio["mtime"]),
+        duration=_round_seconds(source_audio["duration"]),
     )
 
 
@@ -197,93 +443,133 @@ def build_parallel_asr_plan(
     cpu_count: int | None,
     source_audio: AsrSourceAudio | dict[str, Any],
     options: TranscribeOptions | Any,
+    speech_intervals: Iterable[Any] | None = None,
+    vad_parameters: VadParameters = DEFAULT_VAD_PARAMETERS,
+    worker_config: WorkerConfig | None = None,
 ) -> ParallelAsrPlan:
-    source = (
-        source_audio
-        if isinstance(source_audio, AsrSourceAudio)
-        else AsrSourceAudio(
-            path=str(source_audio["path"]),
-            size=int(source_audio["size"]),
-            mtime=float(source_audio["mtime"]),
-            duration=round(float(source_audio["duration"]), 3),
+    duration = _round_seconds(duration_seconds)
+    source = _source_from_value(source_audio)
+    if source.duration != duration:
+        raise ValueError(
+            f"Source duration {source.duration:.3f}s does not match plan duration {duration:.3f}s."
         )
-    )
-    cpu_budget = _cpu_budget(cpu_count)
-    requested_num_workers = _options_value(options, "num_workers", None)
-    requested_cpu_threads = _options_value(options, "cpu_threads", None)
-    macro_chunks: list[MacroChunkPlan] = []
-    all_asr_chunks: list[AsrChunkPlan] = []
-
-    for macro_index, macro_start, macro_duration in _macro_durations(float(duration_seconds)):
-        task_workers, model_workers, cpu_threads = _resolve_macro_worker_config(
-            macro_index,
-            macro_duration,
-            cpu_budget,
-            requested_num_workers,
-            requested_cpu_threads,
+    config = worker_config or resolve_worker_config(duration, cpu_count, options)
+    natural_boundaries = natural_cut_points(speech_intervals or [], duration)
+    candidates: list[tuple[tuple[Any, ...], _BoundaryPlan]] = []
+    for chunk_count in _candidate_chunk_counts(duration, config.num_workers):
+        boundary_plan = _fixed_chunk_count_plan(
+            duration,
+            chunk_count,
+            natural_boundaries,
         )
-
-        chunk_count = _select_chunk_count(macro_duration, task_workers)
-        chunk_length = macro_duration / chunk_count
-        chunks: list[AsrChunkPlan] = []
-        trusted_start = macro_start
-        macro_end = macro_start + macro_duration
-        for chunk_index in range(chunk_count):
-            if chunk_index == chunk_count - 1:
-                trusted_duration = macro_end - trusted_start
-            else:
-                trusted_duration = chunk_length
-            trusted_end = trusted_start + trusted_duration
-            # 原音频的起始和结束时间，包含了重叠部分
-            source_start = max(0.0, trusted_start - OVERLAP_SECONDS)
-            source_end = min(float(duration_seconds), trusted_end + OVERLAP_SECONDS)
-            left_overlap = trusted_start - source_start
-            right_overlap = source_end - trusted_end
-            chunk = AsrChunkPlan(
-                macro_index=macro_index,
-                chunk_index=chunk_index,
-                start=_round_seconds(trusted_start),
-                duration=_round_seconds(trusted_duration),
-                source_start=_round_seconds(source_start),
-                source_duration=_round_seconds(source_end - source_start),
-                left_overlap=_round_seconds(left_overlap),
-                right_overlap=_round_seconds(right_overlap),
-                path=_chunk_path(macro_index, chunk_index),
-            )
-            chunks.append(chunk)
-            all_asr_chunks.append(chunk)
-            trusted_start = trusted_end
-
-        macro_chunks.append(
-            MacroChunkPlan(
-                index=macro_index,
-                start=_round_seconds(macro_start),
-                duration=_round_seconds(macro_duration),
-                task_workers=task_workers,
-                model_workers=model_workers,
-                cpu_threads=cpu_threads,
-                chunks=chunks,
+        candidates.append(
+            (
+                (
+                    boundary_plan.hard_cut_count,
+                    chunk_count // config.num_workers,
+                    round(boundary_plan.squared_error, 12),
+                    boundary_plan.boundaries,
+                ),
+                boundary_plan,
             )
         )
+        if boundary_plan.hard_cut_count == 0:
+            break
+    if not candidates:
+        raise ValueError("Unable to build a valid ASR chunk plan.")
+    _, selected = min(candidates, key=lambda item: item[0])
 
-    first_macro = macro_chunks[0]
-    return ParallelAsrPlan(
+    chunks = [
+        AsrChunkPlan(
+            index=index,
+            start=selected.boundaries[index],
+            duration=_round_seconds(
+                selected.boundaries[index + 1] - selected.boundaries[index]
+            ),
+            path=_chunk_path(index),
+            end_boundary=selected.end_boundaries[index],
+        )
+        for index in range(len(selected.end_boundaries))
+    ]
+    plan = ParallelAsrPlan(
         schema_version=SCHEMA_VERSION,
         source_audio=source,
-        provider=_options_value(options, "asr_provider", "whisper"),
+        provider=str(_options_value(options, "asr_provider", "whisper")),
         model=_options_value(options, "model", None),
-        language=_options_value(options, "language", "zh"),
+        language=str(_options_value(options, "language", "zh")),
         beam_size=int(_options_value(options, "beam_size", 5)),
-        device=_options_value(options, "device", "cpu"),
-        compute_type=_options_value(options, "compute_type", "float32"),
-        cpu_budget=cpu_budget,
-        task_workers=first_macro.task_workers,
-        model_workers=first_macro.model_workers,
-        cpu_threads=first_macro.cpu_threads,
-        macro_chunks=macro_chunks,
-        asr_chunks=all_asr_chunks,
-        overlap_seconds=OVERLAP_SECONDS,
+        device=str(_options_value(options, "device", "cpu")),
+        compute_type=str(_options_value(options, "compute_type", "float32")),
+        vad_parameters=vad_parameters,
+        cpu_budget=config.cpu_budget,
+        num_workers=config.num_workers,
+        cpu_threads=config.cpu_threads,
+        chunks=chunks,
     )
+    _validate_plan(plan)
+    return plan
+
+
+def plan_matches_request(
+    plan: ParallelAsrPlan,
+    source_audio: AsrSourceAudio,
+    options: TranscribeOptions | Any,
+    worker_config: WorkerConfig,
+    vad_parameters: VadParameters = DEFAULT_VAD_PARAMETERS,
+) -> bool:
+    return (
+        plan.schema_version == SCHEMA_VERSION
+        and plan.source_audio == source_audio
+        and plan.provider == str(_options_value(options, "asr_provider", "whisper"))
+        and plan.model == _options_value(options, "model", None)
+        and plan.language == str(_options_value(options, "language", "zh"))
+        and plan.beam_size == int(_options_value(options, "beam_size", 5))
+        and plan.device == str(_options_value(options, "device", "cpu"))
+        and plan.compute_type == str(_options_value(options, "compute_type", "float32"))
+        and plan.vad_parameters == vad_parameters
+        and plan.cpu_budget == worker_config.cpu_budget
+        and plan.num_workers == worker_config.num_workers
+        and plan.cpu_threads == worker_config.cpu_threads
+    )
+
+
+def _validate_plan(plan: ParallelAsrPlan) -> None:
+    if plan.schema_version != SCHEMA_VERSION:
+        raise ValueError(
+            f"Invalid ASR plan schema_version: expected {SCHEMA_VERSION}, "
+            f"got {plan.schema_version}."
+        )
+    if plan.cpu_budget < 1 or plan.num_workers < 1 or plan.cpu_threads < 1:
+        raise ValueError("Invalid ASR plan worker configuration.")
+    if plan.num_workers * plan.cpu_threads > plan.cpu_budget:
+        raise ValueError("ASR plan worker configuration exceeds its CPU budget.")
+    if not plan.chunks or len(plan.chunks) % plan.num_workers != 0:
+        raise ValueError("ASR plan chunk count must be a positive worker multiple.")
+
+    duration = plan.source_audio.duration
+    previous_end = 0.0
+    short_audio = duration < MIN_ASR_CHUNK_SECONDS
+    if short_audio and len(plan.chunks) != 1:
+        raise ValueError("Audio shorter than 60 seconds must use one chunk.")
+    for index, chunk in enumerate(plan.chunks):
+        if chunk.index != index or chunk.path != _chunk_path(index):
+            raise ValueError(f"Invalid ASR chunk identity at index {index}.")
+        if chunk.start != _round_seconds(previous_end):
+            raise ValueError("ASR chunks must continuously cover the source audio.")
+        if chunk.duration <= 0 or chunk.duration > MAX_ASR_CHUNK_SECONDS:
+            raise ValueError(f"Invalid ASR chunk duration: {chunk.duration}.")
+        if not short_audio and chunk.duration < MIN_ASR_CHUNK_SECONDS:
+            raise ValueError(f"Invalid ASR chunk duration: {chunk.duration}.")
+        if chunk.end_boundary not in BOUNDARY_TYPES:
+            raise ValueError(f"Invalid ASR chunk end boundary: {chunk.end_boundary}.")
+        if index == len(plan.chunks) - 1:
+            if chunk.end_boundary != BOUNDARY_AUDIO_END:
+                raise ValueError("The final ASR chunk must end at the audio boundary.")
+        elif chunk.end_boundary == BOUNDARY_AUDIO_END:
+            raise ValueError("Only the final ASR chunk may use audio_end.")
+        previous_end = chunk.start + chunk.duration
+    if _round_seconds(previous_end) != _round_seconds(duration):
+        raise ValueError("ASR chunks do not cover the complete source audio.")
 
 
 def plan_to_dict(plan: ParallelAsrPlan) -> dict[str, Any]:
@@ -291,37 +577,30 @@ def plan_to_dict(plan: ParallelAsrPlan) -> dict[str, Any]:
 
 
 def plan_from_dict(data: dict[str, Any]) -> ParallelAsrPlan:
-    source = AsrSourceAudio(**data["source_audio"])
-    macro_chunks: list[MacroChunkPlan] = []
-    all_chunks: list[AsrChunkPlan] = []
-    for macro_data in data["macro_chunks"]:
-        chunks = [AsrChunkPlan(**chunk_data) for chunk_data in macro_data["chunks"]]
-        all_chunks.extend(chunks)
-        macro_chunks.append(
-            MacroChunkPlan(
-                index=macro_data["index"],
-                start=macro_data["start"],
-                duration=macro_data["duration"],
-                task_workers=macro_data["task_workers"],
-                model_workers=macro_data["model_workers"],
-                cpu_threads=macro_data["cpu_threads"],
-                chunks=chunks,
-            )
+    if not isinstance(data, dict):
+        raise ValueError("Invalid ASR plan: root must be an object.")
+    if data.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError(
+            f"Invalid ASR plan schema_version: expected {SCHEMA_VERSION}, "
+            f"got {data.get('schema_version')}."
         )
-    return ParallelAsrPlan(
-        schema_version=data["schema_version"],
-        source_audio=source,
-        provider=data["provider"],
-        model=data.get("model"),
-        language=data["language"],
-        beam_size=data["beam_size"],
-        device=data["device"],
-        compute_type=data["compute_type"],
-        cpu_budget=data["cpu_budget"],
-        task_workers=data["task_workers"],
-        model_workers=data["model_workers"],
-        cpu_threads=data["cpu_threads"],
-        macro_chunks=macro_chunks,
-        asr_chunks=all_chunks,
-        overlap_seconds=data["overlap_seconds"],
-    )
+    try:
+        plan = ParallelAsrPlan(
+            schema_version=int(data["schema_version"]),
+            source_audio=AsrSourceAudio(**data["source_audio"]),
+            provider=str(data["provider"]),
+            model=data.get("model"),
+            language=str(data["language"]),
+            beam_size=int(data["beam_size"]),
+            device=str(data["device"]),
+            compute_type=str(data["compute_type"]),
+            vad_parameters=VadParameters(**data["vad_parameters"]),
+            cpu_budget=int(data["cpu_budget"]),
+            num_workers=int(data["num_workers"]),
+            cpu_threads=int(data["cpu_threads"]),
+            chunks=[AsrChunkPlan(**chunk) for chunk in data["chunks"]],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid ASR plan: {exc}") from exc
+    _validate_plan(plan)
+    return plan

@@ -4,8 +4,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Iterable
 
-from scripts.asr.parallel.plan import ParallelAsrPlan
+from scripts.asr.parallel.plan import (
+    DEFAULT_VAD_PARAMETERS,
+    AsrChunkPlan,
+    ParallelAsrPlan,
+    VadParameters,
+)
 from scripts.utils import ensure_dir, path_to_posix, resolve_ffmpeg_location
 
 
@@ -48,33 +54,67 @@ def probe_audio_duration(audio_path: Path) -> float:
     return float(json.loads(output)["format"]["duration"])
 
 
-def split_asr_chunks(audio_path: Path, plan: ParallelAsrPlan, workspace_dir: Path) -> None:
+def detect_speech_intervals(
+    audio_path: Path,
+    vad_parameters: VadParameters = DEFAULT_VAD_PARAMETERS,
+) -> list[tuple[float, float]]:
+    from faster_whisper import decode_audio
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    audio = decode_audio(
+        path_to_posix(audio_path),
+        sampling_rate=vad_parameters.sampling_rate,
+    )
+    options = VadOptions(
+        threshold=vad_parameters.threshold,
+        min_speech_duration_ms=vad_parameters.min_speech_duration_ms,
+        min_silence_duration_ms=vad_parameters.min_silence_duration_ms,
+        speech_pad_ms=vad_parameters.speech_pad_ms,
+    )
+    timestamps = get_speech_timestamps(
+        audio,
+        options,
+        sampling_rate=vad_parameters.sampling_rate,
+    )
+    return [
+        (
+            float(timestamp["start"]) / vad_parameters.sampling_rate,
+            float(timestamp["end"]) / vad_parameters.sampling_rate,
+        )
+        for timestamp in timestamps
+    ]
+
+
+def split_asr_chunks(
+    audio_path: Path,
+    plan: ParallelAsrPlan,
+    workspace_dir: Path,
+    chunks: Iterable[AsrChunkPlan] | None = None,
+) -> None:
     ffmpeg = _ffmpeg_tool("ffmpeg")
-    for macro in plan.macro_chunks:
-        macro_dir = workspace_dir / "chunks" / f"macro_{macro.index:03d}"
-        ensure_dir(macro_dir)
-        for chunk in macro.chunks:
-            chunk_path = workspace_dir / chunk.path
-            ensure_dir(chunk_path.parent)
-            command = [
-                ffmpeg,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-ss",
-                f"{chunk.source_start:.3f}",
-                "-t",
-                f"{chunk.source_duration:.3f}",
-                "-i",
-                path_to_posix(audio_path),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-c:a",
-                "pcm_s16le",
-                path_to_posix(chunk_path),
-            ]
-            _run_subprocess(command)
+    selected_chunks = plan.chunks if chunks is None else list(chunks)
+    for chunk in selected_chunks:
+        chunk_path = workspace_dir / chunk.path
+        ensure_dir(chunk_path.parent)
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-ss",
+            f"{chunk.start:.3f}",
+            "-t",
+            f"{chunk.duration:.3f}",
+            "-i",
+            path_to_posix(audio_path),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            path_to_posix(chunk_path),
+        ]
+        _run_subprocess(command)
