@@ -97,6 +97,35 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider 
 
 该选项只运行 Qwen3-ASR。依赖、模型、CUDA、模型加载、推理或对齐失败都会终止本次转写；如需使用 faster-whisper，请显式选择 `--asr-provider whisper` 或省略 provider 参数后重新运行。
 
+## ASR Benchmark
+
+benchmark 会对 8 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwen3-ASR，记录每次转写的总耗时、转写实时系数、转写进程树的采样峰值 RSS，以及 Qwen3 的 CUDA 峰值已分配/保留显存。计时包含模型加载、切片、推理、对齐和转写文件写入；音频下载、依赖安装和模型下载不计入结果。
+
+| 视频 | 标注时长 |
+| --- | --- |
+| https://www.bilibili.com/video/BV1MN4y177PB/ | 00:11:27 |
+| https://www.bilibili.com/video/BV1W694BEE7F/ | 00:01:03 |
+| https://www.bilibili.com/video/BV1yt4y1Q7SS/ | 00:02:26 |
+| https://www.bilibili.com/video/BV1Ls41127sG/ | 00:05:57 |
+| https://www.bilibili.com/video/BV1Rq4y1n7CR/ | 00:25:46 |
+| https://www.bilibili.com/video/BV1rb4y1D7Gf/ | 00:39:51 |
+| https://www.bilibili.com/video/BV1jJ411r7EL/ | 01:02:23 |
+| https://www.bilibili.com/video/BV1mL411z7Kf/ | 02:59:43 |
+
+请先完成默认依赖、两种模型和 Qwen3 可选依赖的安装，再显式执行：
+
+```powershell
+uv run --no-sync python -m scripts.benchmark
+```
+
+默认会运行全部 8 个视频与两种模型，耗时很长。需要局部重测时可重复传入 `--video` 或 `--provider`：
+
+```powershell
+uv run --no-sync python -m scripts.benchmark --video BV1W694BEE7F --provider whisper
+```
+
+benchmark 会先下载或复用 `.cache/benchmark/audio/` 中的音频，再开始性能计时；结果写入 `results/benchmark/<timestamp>/benchmark.json` 和 `benchmark.md`。运行时仍自动识别项目根目录的 cookie 文件，不会把 cookie 路径或内容写入 benchmark 结果。
+
 pipeline 会打印 `Summary Prompt` 和 `Final Summary Path`。根据 prompt 写入最终 summary 后，可执行：
 
 ```powershell
