@@ -30,14 +30,17 @@ def test_whisper_parallel_benchmark_cli_defaults_to_three_repetitions(monkeypatc
 
 def test_default_benchmark_matrix_covers_requested_videos_and_models() -> None:
     assert [(video.bvid, video.duration_label) for video in benchmark.BENCHMARK_VIDEOS] == [
-        ("BV1MN4y177PB", "00:11:27"),
-        ("BV1W694BEE7F", "00:01:03"),
-        ("BV1yt4y1Q7SS", "00:02:26"),
-        ("BV1Ls41127sG", "00:05:57"),
-        ("BV1Rq4y1n7CR", "00:25:46"),
-        ("BV1rb4y1D7Gf", "00:39:51"),
-        ("BV1jJ411r7EL", "01:02:23"),
-        ("BV1mL411z7Kf", "02:59:43"),
+         ("BV1W694BEE7F", "00:01:03"), 
+     ("BV1qt411j7fV", "00:03:41"), 
+     ("BV1Ls41127sG", "00:05:57"),
+     ("BV1Nt4y1D7pW", "00:07:56"), 
+     ("BV1MN4y177PB", "00:11:27"),
+     ("BV1XW411F7L6", "00:17:52"),  
+     ("BV1Rq4y1n7CR", "00:25:46"),  
+     ("BV1rb4y1D7Gf", "00:39:51"),  
+     ("BV1jJ411r7EL", "01:02:23"), 
+     ("BV1e24y1D7qt", "01:47:01"), 
+     ("BV1mL411z7Kf", "02:59:43"),
     ]
     assert benchmark.DEFAULT_PROVIDERS == ("whisper", "qwen3")
 

@@ -1,14 +1,6 @@
 # Bilibili Audio Summary Development Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
-**Goal:** 修复本地测试暴露的稳定性、长视频、摘要输出和验证体验问题，让该 skill 在受限 Windows 环境、长视频和多语言总结场景下更可靠。
-
-**Architecture:** 先处理低风险高收益的缓存路径、摘要校验和语言命名问题，再增强日志与 prompt 结构，最后单独推进长视频分段与断点续跑。改动保持外科式：优先扩展现有 `scripts/` 入口、`tests/` 单测和 `SKILL.md` 文档，不重构无关代码。
-
 **Tech Stack:** Python 3.12, Windows BAT, yt-dlp, faster-whisper, optional Qwen3-ASR, pytest.
-
----
 
 ## Assumptions
 
@@ -57,131 +49,102 @@
 
 ### Task 1: Localize Hugging Face Cache（已完成）
 
-**Problem:** faster-whisper / huggingface_hub 在受限环境下可能尝试写入 `C:\Users\ApprenTice\.cache\huggingface`，导致权限错误。
-
-**主要改动:** setup 默认使用项目内 `.cache/huggingface`，保留用户显式配置，并在模型下载失败时提示本地 cache 路径和重跑命令。
-
----
-
 ### Task 2: Add Summary Validator（已完成）
-
-**Problem:** 最终 summary 校验依赖人工检查，容易漏掉占位符、模板注释或全文复制。
-
-**主要改动:** 新增 `scripts/validate_summary.py`，集中检查 summary 文件、占位符、模板注释和全文复制风险；`SKILL.md` 将该脚本作为最终验证步骤。
-
----
 
 ### Task 3: Separate Transcript Language From Summary Language（已完成）
 
-**Problem:** 当前 summary 文件名跟随 transcript language，英文转写但中文总结时可能生成 `summary_en.md`，误导用户。
-
-> 查阅指令发现是LLM遵循问题，在中文对话中倾向于使用中文书写模板，建议在校验增加主要语言校验
-
-**主要改动:** pipeline 增加 `--summary-language {zh,en}`，由调用方按用户希望的最终总结语言显式选择模板和 `_summary_<language>.md` 输出路径；未传时保持按 transcript 语言选择模板的兼容行为。summary validator 根据输出文件名提供语言不符警告，忽略 Markdown 标记、URL 和代码后统计汉字与英文字母；其他文件名保持原有兼容行为。
-
-### Task 4: 规范化脚本输出，避免上下文污染
-
-**Problem** 目前的脚本运行时会输出大量信息污染上下文并且浪费 token，应该只输出简洁的状态提示，详细信息以及报错写入log文件
+### Task 4: 规范化脚本输出，避免上下文污染（已完成）
 
 #### Task4.1 拆分依赖安装脚本（已完成）
 
-**Problem** 目前的依赖安装由一个ps1脚本实现，当调用依赖安装工具时会产生大量输出污染上下文
-
-**主要改动:** 将 Windows setup 公共入口改为 `.\scripts\setup\setup_windows.bat`，依赖同步交给 uv，Python setup 逻辑拆分到 `scripts/setup/`，终端只输出关键步骤，完整日志写入 `.cache/logs/`。
-
 #### Task4.2 规范化处理脚本输出（已完成）
-
-**Problem** 目前的处理脚本 run_pipeline 会产生以下阶段性输出，并且没有log功能
-
-修改目标：
-
-- 为 run_pipeline 涉及的流程文件增加 log 功能，可以考虑复用当前setup下的process_logging，将其提到外面一级文件夹来作文通用log入口
-- 除了标注保留的内容，其余内容写入log但是不打印到stdout
-- 可暂不实现 ASR 百分比；后续并行 ASR 任务已补充 plan、chunk、缓存和断点进度
-
-**主要改动:** 新增通用 `scripts/process_logging.py`，让 setup、pipeline、fetch、字幕转换和 ASR 共用日志；终端只输出关键阶段和最终路径，完整运行信息、traceback、yt-dlp 细节、缓存状态、fallback 和 warning 写入日志文件。进一步优化 setup 分层：`setup_windows.bat` 只确保 uv 和 Python 3.12 可用，Python setup 负责调用 uv 同步基础依赖；模型下载从基础 setup 拆出到 `scripts/setup/install_model.py`，支持 `--model faster-whisper|qwen3`，使用前至少安装一种本地 ASR 模型。
 
 #### Task4.3 补充对 uv 路径的规范化输出和默认源设置（已完成）
 
-**Problem** 全量切换到 uv 以后，没有做默认依赖源优化和 uv 安装输出规范化
-
-**修改目标:** 为 uv 路径设置默认国内依赖源，并在 setup 入口打印规范化的 uv sync 命令头，保留 uv 原生安装、完成和重复安装输出。
-
-**主要改动:** `pyproject.toml` 将清华 PyPI 配置为 uv 默认源并保留 PyTorch CUDA 显式源；`setup_windows.bat` 在用户未显式设置时提供 `UV_DEFAULT_INDEX`，继续使用项目内 `UV_CACHE_DIR`，并在执行前打印 Python 3.12 准备命令；同步 README、错误处理和架构文档，补充 launcher 与 uv index 配置测试。
-
 ### Task 5: 避免提示词注入风险，不再将转写结果作为指令的一部分，明确它们是数据（已完成）
-
-**Problem** 目前的转写结果会写入prompt文件中，有提示词注入的风险
-
-修改目标：
-
-- 不再拼接ASR结果到prompt中
-- prompt改为使用"[]()"文件引用格式，在prompt中明确ASR结果文件的相对路径
-- prompt只包含结果保存路径，指令，模板，ASR结果文件的相对路径，四者的编排顺序需要做考虑
-
-**主要改动:** summary prompt 不再嵌入 transcript 正文，改为引用同目录 transcript；prompt 明确不可信数据边界，并固定任务、数据链接、instructions、template 和输出路径的顺序。
 
 ### Task 6: 尝试使用subagent做总结和文件写入，隔离不同的上下文（已完成）
 
-**Problem** 目前的脚本调用和总结在同一个对话中由同一个agent完成，上下文连通可能会影响总结效果
-
-修改目标：
-
-- 在SKILL.md的步骤中做修改
-- 总结方式改为优先使用subagent总结并写入文件
-- 如果无法使用subagent，允许在同一个对话中完成总结并写入文件
-
-**主要改动:** `SKILL.md` 要求优先使用不继承父对话的 subagent 完成总结和写入；无 subagent 能力时允许当前 Agent 按相同 prompt 执行，最终 validator 仍由主 Agent 运行。
-
 ### Task 7: 拆分和修改目前的文档（已完成）
 
-**Problem** 目前的文档出现了杂糅现象，例如README中有过多架构相关信息，SKILL.md的操作步骤被解释分隔，并包含了过多正常使用不需要的信息
+### Task 8: 修改并行切分策略，使用 Silero VAD 预先切分音频（已完成）
 
-修改目标：
+**目标：** 使用静音切点替代固定重叠窗口，移除不可靠的字符重叠检查和 macro-chunk 组织，同时保留并行转写、计划落盘、chunk 结果缓存及断点续跑。
 
-- README只包含skill介绍（包括功能亮点）、能力边界、使用方式、第三方依赖（yt-dlp，Qwen3，whisper，两种测试过的cookies导出方法等应该列出的）。
-- 能力边界指明总结只根据ASR结果，目前只支持bili视频
-- 使用方式写两种，作为skill安装，以及clone代码在代码目录直接运行
-- SKILL.md只包含yaml头，使用场景，主要步骤，处理时间估算（待补充）
-- 使用场景中需要增加一句对于两种模型的简略说明，并指出使用Qwen3可以获得更好的转写效果与转写效率
-- 在reference中增加一个项目架构说明，说明各脚本的行为和项目文件目录的作用，因此README和SKILL中不需要再介绍，但是需要保留相对路径引用链接
-- 将skill.md中的错误处理指导全部移到error-handing中去，考虑到错误情况可能较多，在错误指导文档开头需要增加一个简要目录供快速查阅
+#### Task 8.1 开发分支与实验改动隔离
 
-**主要改动:** 精简 `README.md` 和 `SKILL.md`，将架构说明集中到 `references/architecture.md`，将错误处理集中到 `references/error-handling.md` 并补充快速目录。
+- 开发前先保存当前 `benchmark/whisper-parallel-speedup` 的未提交改动，从 `feat/bili-audiosummary` 创建 `feat/silero-vad-chunking`。
+- 新分支带入本计划文档，但不带入当前 `merge.py` 的实验改动。
+- `worker.py` 移除 `initial_prompt` 属于独立 bug 修复；不走 merge 流程，在 Task 8 开发中重新实现并移除对应失效 import。
+- 当前实验改动需要保留，确保之后仍可回到实验分支恢复。
+
+#### Task 8.2 Silero VAD 与自然切点
+
+- 复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不新增 `silero-vad`、PyTorch 或 torchaudio 基础依赖。
+- 将音频解码为 16kHz 单声道后获取 start-end 语音区间；使用 `threshold=0.5`、最短语音 `250ms`、最短静音 `500ms`、无 speech padding。
+- 相邻语音区间之间的静音中点是自然切点；VAD 未检测到语音或连续语音过长时，由全局规划器生成必要的硬切点。
+- 最终切片连续覆盖完整音频、互不重叠，正常时长限制为 `60s-300s`；完整音频不足 60 秒时允许单切片例外。
+
+#### Task 8.3 联合规划切片数与 worker 数
+
+- CPU 线程预算保持 `B = max(1, floor(cpu_count * 0.75))`。
+- 自动模式移除 worker 最大值 8 和固定 worker 档位，worker 上限改为 `B`；只考虑满足 `B % W == 0` 的 worker 数，并优先选择最大的可行 `W`，每个 worker 使用 `B / W` 个线程。
+- 对音频时长 `D`，正常切片数范围为 `ceil(D / 300)` 到 `floor(D / 60)`，并强制 `N % W == 0`，使每个 worker 获得相同数量的切片。
+- 对每个候选切片数 `N`，使用固定段数的有向无环图动态规划选择全局边界：
+  1. 切片必须满足 `60s-300s`，完整覆盖音频且没有交叠。
+  2. 优先最小化语音中的硬切次数。
+  3. 再最小化批次数 `N / W`。
+  4. 最后最小化各切片相对目标时长 `D / N` 的平方偏差，使切片和 worker 负载尽可能均衡。
+- worker 数是最高层规划优先级；静音切点、批次数和时长均衡只在相同 worker 数下比较。算法使用全部候选切点一次性求解，结果不依赖正序或逆序贪心。
+- 显式 CLI 参数优先于自动规划：
+  - 同时指定 `--num-workers` 和 `--cpu-threads` 时保留用户值，但要求乘积不超过线程预算。
+  - 只指定 worker 数时，每个 worker 使用 `floor(B / W)` 个线程，允许余数线程闲置。
+  - 只指定每 worker 线程数时，在预算内选择存在合法切片方案的最大 worker 数。
+  - 显式 worker 仍要求 `N % W == 0`；若不存在满足时长限制的切片数，在音频切分和模型加载前报错。
+
+#### Task 8.4 简化 plan、执行和断点续跑
+
+- ASR plan schema 升级，删除 `MacroChunkPlan`、macro index、trusted window、source overlap、左右 overlap 等字段；旧 schema 的 plan 和 chunk result 不复用。
+- 每个 chunk 只记录全局 index、start、duration、输出路径和结束边界类型（静音、硬切或音频结尾）。plan 同时记录 VAD 参数、CPU 预算、worker 配置和最终切片布局。
+- workspace 简化为 `chunks/chunk_<index>.wav` 和 `chunk_results/chunk_<index>.json`。
+- plan 的音频指纹、ASR 参数、VAD 参数及 worker 配置完全匹配时，重跑直接复用切分计划和有效 chunk result；不匹配时重建 plan/progress，旧结果保留但忽略。
+- 保留 JSON 原子替换、有效结果优先、单次运行内失败重试一次，以及再次运行时为未完成 chunk 提供新重试预算的行为。
+- 移除按 macro 串行执行的逻辑，只加载一个统一配置的 WhisperModel，使用规划出的 worker 数处理全部 pending chunks。
+- chunk 转写继续使用 `vad_filter=True` 跳过内部静音，但不再传递 `initial_prompt`。
+
+#### Task 8.5 简化结果合并与指标
+
+- chunk 内 segment 时间戳直接加 `chunk.start` 转为全局时间，不再按 trusted window 裁剪，也不再执行字符级重叠检测。
+- 按 chunk index 和 segment 时间排序；若相邻 segment 的时间范围真正重叠，则合并为一个 segment，start 取较早值、end 取较晚值，中文文本直接拼接，其他语言使用单个空格连接。
+- 时间端点仅相接时不合并；合并完成后重新连续编号，并继续校验结束时间不得早于开始时间。
+- metrics 删除 macro 指标，记录 worker 数、每 worker 线程数、切片数、批次数、各切片耗时和最终 segment 数。
+
+#### Task 8.6 测试与文档验收
+
+- VAD 测试覆盖 500ms 静音配置、静音中点、无语音输入和连续长语音硬切。
+- 规划测试覆盖完整音频无缝覆盖、`60s-300s`、`N % W == 0`、最大 worker 优先、硬切最少、负载均衡，以及正序/逆序输入得到相同计划。
+- worker 测试覆盖不同 CPU 预算、显式参数和闲置线程；例如预算 24、音频 900 秒时应规划为 12 worker、12 个约 75 秒切片。
+- 缓存测试覆盖旧 schema 不复用、新 schema 完整匹配时复用 plan/result，以及音频、VAD 或 worker 配置变化时重建。
+- merge 测试覆盖全局时间偏移、真实重叠合并、端点相接不合并、无字符去重和非法时间戳。
+- 增加回归测试，确保实际 chunk 转写调用不包含 `initial_prompt`。
+- 同步 `README.md`、`references/architecture.md` 和 `references/error-handling.md` 中的 worker 约束、目录结构、schema、缓存及 merge 说明。
+- 完成后运行 `pytest tests -q`，再使用已有本地音频验证切片计划、并行转写、缓存复用和最终时间线。
+
+### Task 9: 增加 Qwen3-ASR 的中间结果落盘
+
+目前的 Qwen3-ASR 路径会直接落盘最终结果，但是中间的text和词级别时间戳不会落盘，需要类似 whisper 路径的中间结果落盘，便于排查。 
 
 ---
 
 ## P1 Tasks
 
-### Task 1: Make Page And Multi-Part Handling Explicit
-
-**Problem:** 分 P / 多语言场景下，管线可能只处理当前 P，但用户不一定知道。
-
-> 该改动涉及范围较大，建议先完成其它任务
-
-**Success Criteria:**
-- metadata 输出当前处理页。
-- 检测到多 P 时输出总页数和当前页。
-- 文档明确当前默认只处理当前 URL 指向的 P。
-- 后续 `--page` / `--all-pages` 可单独开发，不在本任务实现。
+### Task 1: Make Page And Multi-Part Handling Explicit（已完成）
 
 ### Task 2: 细化 whisper 转写切分精度（已完成）
-
-**Problem:** 目前Qwen3的ASR链路和字幕复用的切分效果较好，但是whisper的输出切分粒度太粗
-
-**主要改动:** faster-whisper 默认改为非批处理转写，直接使用模型生成的较细 segments；transcript JSON/Markdown 仍只输出段级时间戳，并补充中文简体规范化依赖。
-
----
 
 ## P2 Tasks
 
 ### Task 1: Add Parallel Whisper Chunk Cache And Resume（已完成）
-
-**Problem:** 长视频整段转写容易超时；失败后缺少断点续跑。
-
-**主要改动:** faster-whisper 统一使用并行转写计划，按 CPU budget 和音频时长生成 macro/chunk；每个 chunk 原子写入独立结果，完整 plan 匹配时复用有效结果并恢复未完成任务；合并后的 transcript JSON/Markdown 保持现有结构。终端输出 plan、macro worker、缓存、续跑、成功、重试和合并信息，详细失败 traceback 写入日志。
-
----
 
 ### Task 2: Simplify Qwen3 Documentation And Runtime Messaging
 
@@ -240,3 +203,5 @@ Summary validation passed.
 
 - `--summary-language` 默认继承 transcript 语言；调用方需要跨语言总结时显式传入 `zh` 或 `en`。（已确认）
 - `--page` / `--all-pages`: report current P first; implement selection only if real usage confirms demand.
+
+uv run --no-sync python -m scripts.benchmark_whisper_parallel --video BV1W694BEE7F --video BV1yt4y1Q7SS --video BV1Ls41127sG --video BV1MN4y177PB  --repetitions 3 --output-dir results/benchmark/whisper-parallel-clean

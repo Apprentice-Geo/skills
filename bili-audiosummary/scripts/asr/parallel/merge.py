@@ -11,6 +11,7 @@ def _time_ranges_overlap(
     left: dict[str, Any],
     right: dict[str, Any],
 ) -> bool:
+    # 判断两段的时间是否重叠
     return max(float(left["start"]), float(right["start"])) < min(
         float(left["end"]),
         float(right["end"]),
@@ -53,6 +54,7 @@ def merge_chunk_results(
     separator = "" if is_chinese_language(plan.language) else " "
     for segment in segments:
         if merged and _time_ranges_overlap(merged[-1], segment):
+            # 合并时间存在重叠的两段
             previous = merged[-1]
             previous["start"] = min(float(previous["start"]), float(segment["start"]))
             previous["end"] = max(float(previous["end"]), float(segment["end"]))

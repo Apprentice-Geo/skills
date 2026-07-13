@@ -44,14 +44,19 @@ class BenchmarkVideo:
 
 # Benchmark videos and their supplied durations in HH:MM:SS format.
 BENCHMARK_VIDEOS = (
-    BenchmarkVideo("BV1MN4y177PB", "00:11:27"),  # 00:11:27
-    BenchmarkVideo("BV1W694BEE7F", "00:01:03"),  # 00:01:03
-    BenchmarkVideo("BV1yt4y1Q7SS", "00:02:26"),  # 00:02:26
-    BenchmarkVideo("BV1Ls41127sG", "00:05:57"),  # 00:05:57
-    BenchmarkVideo("BV1Rq4y1n7CR", "00:25:46"),  # 00:25:46
-    BenchmarkVideo("BV1rb4y1D7Gf", "00:39:51"),  # 00:39:51
-    BenchmarkVideo("BV1jJ411r7EL", "01:02:23"),  # 01:02:23
-    BenchmarkVideo("BV1mL411z7Kf", "02:59:43"),  # 02:59:43
+      
+    BenchmarkVideo("BV1W694BEE7F", "00:01:03"), 
+    BenchmarkVideo("BV1qt411j7fV", "00:03:41"), 
+    BenchmarkVideo("BV1Ls41127sG", "00:05:57"),
+    BenchmarkVideo("BV1Nt4y1D7pW", "00:07:56"), 
+    BenchmarkVideo("BV1MN4y177PB", "00:11:27"),
+    BenchmarkVideo("BV1XW411F7L6", "00:17:52"),  
+    BenchmarkVideo("BV1Rq4y1n7CR", "00:25:46"),  
+    BenchmarkVideo("BV1rb4y1D7Gf", "00:39:51"),  
+    BenchmarkVideo("BV1jJ411r7EL", "01:02:23"), 
+    BenchmarkVideo("BV1e24y1D7qt", "01:47:01"), 
+    BenchmarkVideo("BV1mL411z7Kf", "02:59:43"),
+ 
 )
 
 
