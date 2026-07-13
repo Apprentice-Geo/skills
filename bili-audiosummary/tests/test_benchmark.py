@@ -6,8 +6,26 @@ import pytest
 
 import scripts.fetch_audio as fetch_audio
 import scripts.benchmark as benchmark
+import scripts.benchmark_whisper_parallel as whisper_parallel_benchmark
 from scripts.runtime_options import FetchOptions
 from scripts.utils import read_json, write_json
+
+
+def test_whisper_parallel_benchmark_cli_defaults_to_three_repetitions(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "benchmark_whisper_parallel.py",
+            "--video",
+            "BV1MN4y177PB",
+        ],
+    )
+
+    args = whisper_parallel_benchmark.parse_args()
+
+    assert args.video == ["BV1MN4y177PB"]
+    assert args.repetitions == 3
 
 
 def test_default_benchmark_matrix_covers_requested_videos_and_models() -> None:

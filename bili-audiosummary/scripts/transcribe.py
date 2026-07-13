@@ -4,7 +4,6 @@ from typing import Any
 
 from scripts.asr import parallel as parallel_asr
 from scripts.asr.common import (
-    SIMPLIFIED_CHINESE_PROMPT,
     is_chinese_language,
     make_segment,
     normalize_segments_for_language,
@@ -88,7 +87,6 @@ def transcribe_whisper_audio(
         language=options.language,
         beam_size=options.beam_size,
         vad_filter=True,
-        initial_prompt=SIMPLIFIED_CHINESE_PROMPT if is_chinese_language(options.language) else None,
     )
 
     segment_list = normalize_segments_for_language(

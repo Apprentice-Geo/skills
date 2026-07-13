@@ -91,12 +91,14 @@ def test_transcribe_whisper_audio_returns_model_segments_with_simplified_chinese
         SimpleNamespace(id=1, start=0.0, end=4.0, text="第一段繁體。"),
         SimpleNamespace(id=2, start=4.0, end=9.0, text="第二段內容。"),
     ]
+    transcribe_calls = []
 
     class FakeWhisperModel:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
-        def transcribe(self, *_args, **_kwargs):
+        def transcribe(self, *_args, **kwargs):
+            transcribe_calls.append(kwargs)
             return iter(model_segments), SimpleNamespace(
                 language="zh",
                 language_probability=1.0,
@@ -118,6 +120,7 @@ def test_transcribe_whisper_audio_returns_model_segments_with_simplified_chinese
         {"id": 1, "start": 0.0, "end": 4.0, "text": "第一段繁体。"},
         {"id": 2, "start": 4.0, "end": 9.0, "text": "第二段内容。"},
     ]
+    assert "initial_prompt" not in transcribe_calls[0]
 
 
 @pytest.mark.parametrize(
