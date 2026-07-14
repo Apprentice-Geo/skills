@@ -47,6 +47,7 @@ def _transcribe_chunk(
     chunk_path: Path,
     plan: ParallelAsrPlan,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    # 转写一个音频块，返回转写信息和分段列表
     segments, info = model.transcribe(
         path_to_posix(chunk_path),
         language=plan.language,
