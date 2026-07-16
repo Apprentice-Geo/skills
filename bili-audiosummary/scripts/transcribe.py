@@ -17,7 +17,7 @@ from scripts.manifest_io import (
     resolve_path,
 )
 from scripts.runtime_options import TranscribeOptions
-from scripts.transcript_output import write_markdown
+from scripts.transcript_output import write_markdown_from_json
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -243,7 +243,7 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
     }
 
     write_json(json_path, payload)
-    write_markdown(md_path, payload)
+    write_markdown_from_json(json_path, md_path, normalize_segments=True)
 
     logger.info("Audio: %s", path_to_posix(audio_path))
     logger.info("JSON: %s", path_to_posix(json_path))

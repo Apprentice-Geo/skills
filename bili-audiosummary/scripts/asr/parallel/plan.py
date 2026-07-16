@@ -124,6 +124,9 @@ def _chunk_count_range(duration_seconds: float) -> tuple[int, int]:
 
 
 def _candidate_chunk_counts(duration_seconds: float, num_workers: int) -> list[int]:
+    '''
+    升序返回候选音频切片数
+    '''
     minimum, maximum = _chunk_count_range(duration_seconds)
     return [
         count
@@ -143,6 +146,9 @@ def resolve_worker_config(
     cpu_count: int | None,
     options: TranscribeOptions | Any,
 ) -> WorkerConfig:
+    '''
+    确认 worker 和 thread 的配置
+    '''
     duration = _round_seconds(duration_seconds)
     cpu_budget = _cpu_budget(cpu_count)
     requested_workers = _options_value(options, "num_workers", None)
@@ -155,6 +161,7 @@ def resolve_worker_config(
 
     if requested_workers is not None:
         num_workers = requested_workers
+        # 每个 worker 的线程数相同
         cpu_threads = (
             requested_threads
             if requested_threads is not None
@@ -181,6 +188,7 @@ def resolve_worker_config(
         worker_limit = cpu_budget // requested_threads
         worker_candidates = range(worker_limit, 0, -1)
     else:
+        # 取可整除预算的 worker 数候选
         worker_candidates = (
             workers
             for workers in range(cpu_budget, 0, -1)
@@ -188,6 +196,7 @@ def resolve_worker_config(
         )
 
     for num_workers in worker_candidates:
+        # 优先取最多且可保证 chunk 负载均衡的 worker 数量
         if _candidate_chunk_counts(duration, num_workers):
             cpu_threads = (
                 requested_threads
@@ -201,6 +210,7 @@ def resolve_worker_config(
 
 
 def _interval_values(interval: Any) -> tuple[float, float]:
+    # 兼容字典和元组结构
     if isinstance(interval, dict):
         return float(interval["start"]), float(interval["end"])
     start, end = interval
@@ -211,6 +221,9 @@ def natural_cut_points(
     speech_intervals: Iterable[Any],
     duration_seconds: float,
 ) -> list[float]:
+    '''
+    根据 VAD 的语音区间结果 计算静音切分点
+    '''
     duration = _round_seconds(duration_seconds)
     normalized: list[tuple[float, float]] = []
     for interval in speech_intervals:
@@ -224,12 +237,13 @@ def natural_cut_points(
     normalized.sort()
 
     merged: list[list[float]] = []
+    # 合并重叠的语音区间
     for start, end in normalized:
         if merged and start <= merged[-1][1]:
             merged[-1][1] = max(merged[-1][1], end)
         else:
             merged.append([start, end])
-
+    # 取前后两个相邻语音区间的中点作为切分点
     cut_points = {
         _round_seconds((left[1] + right[0]) / 2)
         for left, right in zip(merged, merged[1:])
@@ -264,15 +278,22 @@ def _plan_with_hard_cut_count(
     hard_cut_count: int,
     transition_ranges: list[list[tuple[int, int]]],
 ) -> _BoundaryPlan | None:
+    '''
+    计算给定硬切点数的音频切片计划
+    '''
+    # 边是两个静音切点之间的
     edge_count = chunk_count - hard_cut_count
     anchor_count = len(anchors)
     final_index = anchor_count - 1
     costs = [[math.inf] * anchor_count for _ in range(hard_cut_count + 1)]
+    # costs[hard_used][anchor_index]
+    # 用 hard_used 个硬切点，到达 anchors[anchor_index] 时的最小累计误差
     costs[0][0] = 0.0
     predecessor_layers: list[
         list[list[tuple[int, int, int] | None]]
     ] = []
 
+    # 接下来依次枚举每条边的切点选择
     for edge_index in range(edge_count):
         remaining_edges = edge_count - edge_index - 1
         next_costs = [
@@ -286,21 +307,25 @@ def _plan_with_hard_cut_count(
             for previous_index, previous_cost in enumerate(costs_by_anchor):
                 if not math.isfinite(previous_cost):
                     continue
+                # 枚举当前边使用的硬切点数
                 for edge_hard_cuts in range(hard_cut_count - hard_used + 1):
                     next_hard_used = hard_used + edge_hard_cuts
                     chunks_on_edge = edge_hard_cuts + 1
+                    # 下一个 anchor 的合法范围 左闭右开
                     first_destination, last_destination = transition_ranges[
                         chunks_on_edge
                     ][previous_index]
                     remaining_chunks = (
                         remaining_edges + hard_cut_count - next_hard_used
                     )
+                    # 处理最后一条边
                     if remaining_edges == 0:
                         if next_hard_used != hard_cut_count:
                             continue
                         first_destination = max(first_destination, final_index)
                         last_destination = min(last_destination, final_index + 1)
                     else:
+                        # chunk 长度约束
                         earliest = (
                             duration
                             - remaining_chunks * MAX_ASR_CHUNK_SECONDS
@@ -311,6 +336,7 @@ def _plan_with_hard_cut_count(
                             - remaining_chunks * MIN_ASR_CHUNK_SECONDS
                             + _EPSILON
                         )
+                        # chunk 数量约束
                         first_destination = max(
                             first_destination,
                             bisect_left(anchors, earliest),
@@ -323,6 +349,7 @@ def _plan_with_hard_cut_count(
                     start = anchors[previous_index]
                     for next_index in range(first_destination, last_destination):
                         distance = anchors[next_index] - start
+                        # 计算当前边的误差 可能包含多个 chunk
                         edge_error = chunks_on_edge * (
                             distance / chunks_on_edge - target
                         ) ** 2
@@ -333,6 +360,7 @@ def _plan_with_hard_cut_count(
                         ):
                             continue
                         next_costs[next_hard_used][next_index] = candidate_cost
+                        # 记录切点选择 用于回溯出方案
                         predecessors[next_hard_used][next_index] = (
                             previous_index,
                             hard_used,
@@ -341,6 +369,7 @@ def _plan_with_hard_cut_count(
                         found = True
         if not found:
             return None
+        # costs 用了滚动数组
         costs = next_costs
         predecessor_layers.append(predecessors)
 

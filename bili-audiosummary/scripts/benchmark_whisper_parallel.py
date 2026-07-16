@@ -12,7 +12,7 @@ from scripts.asr.parallel import probe_audio_duration, run_parallel_whisper_tran
 from scripts.benchmark import BENCHMARK_AUDIO_CACHE_DIR, BENCHMARK_VIDEOS, prefetch_audio, select_videos
 from scripts.config import RESULTS_DIR
 from scripts.runtime_options import TranscribeOptions
-from scripts.transcript_output import write_markdown
+from scripts.transcript_output import write_markdown_from_json
 from scripts.utils import ensure_dir, read_json, write_json
 
 
@@ -30,8 +30,13 @@ def run_case(case_path: Path) -> int:
         )
     ensure_dir(output_dir)
     payload = {"bvid": audio_path.stem, "source": source, **info, "segments": segments}
-    write_json(output_dir / f"{audio_path.stem}_transcript.json", payload)
-    write_markdown(output_dir / f"{audio_path.stem}_transcript.md", payload)
+    transcript_json_path = output_dir / f"{audio_path.stem}_transcript.json"
+    write_json(transcript_json_path, payload)
+    write_markdown_from_json(
+        transcript_json_path,
+        output_dir / f"{audio_path.stem}_transcript.md",
+        normalize_segments=True,
+    )
     write_json(
         Path(case["result_path"]),
         {"mode": case["mode"], "elapsed_seconds": round(time.perf_counter() - started_at, 3), "segments": len(segments)},

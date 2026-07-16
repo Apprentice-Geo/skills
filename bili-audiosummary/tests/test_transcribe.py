@@ -9,7 +9,7 @@ import pytest
 import scripts.transcribe as transcribe
 from scripts.process_logging import LoggingSession
 from scripts.runtime_options import TranscribeOptions
-from scripts.utils import write_json
+from scripts.utils import read_json, write_json
 
 
 def make_args(manifest_path: Path, output_dir: Path) -> argparse.Namespace:
@@ -304,7 +304,10 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
         "scripts.transcribe.transcribe_with_qwen3",
         return_value=(
             {"language": "zh"},
-            [{"id": 0, "start": 0.0, "end": 1.0, "text": "整段文本"}],
+            [
+                {"id": 0, "start": 0.0, "end": 5.0, "text": "第一段文本"},
+                {"id": 1, "start": 5.0, "end": 10.0, "text": "第二段文本"},
+            ],
         ),
     )
     parallel_mock = mocker.patch("scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe")
@@ -316,3 +319,7 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
     parallel_mock.assert_not_called()
     probe_mock.assert_not_called()
     assert result["payload"]["source"] == "qwen3-asr"
+    assert len(read_json(result["json_path"])["segments"]) == 2
+    assert "[00:00:00 - 00:00:10] 第一段文本第二段文本" in result[
+        "markdown_path"
+    ].read_text(encoding="utf-8")

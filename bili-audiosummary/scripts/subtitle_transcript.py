@@ -11,7 +11,7 @@ from scripts.manifest_io import (
     resolve_path,
 )
 from scripts.subtitle_utils import infer_subtitle_language
-from scripts.transcript_output import write_markdown
+from scripts.transcript_output import write_markdown_from_json
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -119,7 +119,7 @@ def subtitle_to_transcript(
     }
 
     write_json(json_path, payload)
-    write_markdown(md_path, payload)
+    write_markdown_from_json(json_path, md_path, normalize_segments=False)
 
     logger.info("Subtitle: %s", path_to_posix(subtitle_path))
     logger.info("JSON: %s", path_to_posix(json_path))
