@@ -1,69 +1,68 @@
-# AGENT.md
+# bili-audiosummary 开发说明
 
-## 1. Think Before Coding
+## 项目定位
 
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
+`bili-audiosummary` 是面向 Bilibili 视频的音频总结 Agent Skill。项目运行在 Windows 和 Python 3.12 环境中，统一使用 `uv` 管理解释器与依赖。
 
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+主要入口与文档职责如下：
 
-## 2. Simplicity First
+- `SKILL.md`：Agent 使用流程与能力边界。
+- `README.md`：面向使用者的安装、运行和配置说明。
+- `scripts/run_pipeline.py`：完整处理流程入口。
+- `scripts/fetch_audio.py`：视频信息、字幕与音频资源获取。
+- `scripts/transcribe.py`、`scripts/asr/`：转写入口与 ASR 相关实现。
+- `scripts/validate_summary.py`：最终总结校验入口。
+- `assets/`：总结模板与提示词资源。
+- `references/architecture.md`：模块职责和数据流说明。
+- `references/error-handling.md`：故障定位与处理说明。
+- `tests/`：与各脚本和公开行为对应的测试。
 
-**Minimum code that solves the problem. Nothing speculative.**
+## 开发边界
 
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
+- 先读取当前实现、测试和相关文档，再判断现有契约；不要仅凭旧说明推断行为。
+- 仓库当前的两条转写处理路径仍在开发。不要在本文件中把它们的选择、回退、并行、缓存或失败处理写成固定策略；涉及转写的改动应以当次需求、当前代码和对应测试为准。
+- 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 和 `references/` 中与该行为直接相关的内容。
+- 根目录的计划文件后续将删除。不要向其中写入规则、进度或长期设计决策，也不要把它们作为长期维护文档引用。
+- `.cache/`、`.venv/`、`models/`、`results/`、`tmp/`、cookie 文件、音频和本地模型均为本地或生成内容，不应纳入提交。
+- 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `python -m scripts.<module>` 形式运行。
 
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+## 环境与常用命令
 
-## 3. Surgical Changes
+面向使用者的核心环境安装：
 
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
+```powershell
+.\scripts\setup\setup_windows.bat
 ```
 
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+开发环境同步：
 
-## 5. Test quality
+```powershell
+uv sync --python 3.12
+```
 
-**Tests must protect behavior, not implementation.**
+运行完整测试：
 
-Prefer testing public APIs, user-visible outcomes, business rules, error paths, and regressions. Avoid tests for mutable text, documentation wording, styling, snapshots, internal calls, mock interactions, default preferences, temporary files, logs, caches, and incidental filesystem side effects.
+```powershell
+uv run pytest
+```
 
-A test is acceptable only if breaking it usually indicates a real product or contract regression.
+优先针对改动范围运行聚焦测试，例如：
 
-## 6. Commit Message Rule
+```powershell
+uv run pytest tests/test_run_pipeline.py
+uv run pytest tests/test_transcribe.py
+```
 
-**Allow the [Conventional Commits Rules](https://www.conventionalcommits.org/en/v1.0.0/) when writing commit messages.**
+`tests/test_live_pipeline.py` 会访问真实 Bilibili 资源并依赖本地运行条件。除非任务明确需要端到端验证，否则使用常规单元测试和模拟边界完成验证。
+
+## 测试与验证
+
+- 修改 pipeline、资源获取、转写、总结校验或 setup 时，运行对应的 `tests/test_*.py`。
+- 变更跨越多个模块或公共契约时，在聚焦测试通过后运行完整 `uv run pytest`。
+- 测试临时文件使用 `tests/conftest.py` 提供的 `workspace_tmp_path`；不要重新引入固定的系统临时目录或仓库外测试目录。
+- 文档改动至少检查命令、路径和模块名是否与当前仓库一致。
+- 交付前运行 `git diff --check`，并确认没有夹带生成文件、凭据、模型、音频或无关改动。
+
+## 提交信息
+
+编写提交信息时，遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) 规范。
