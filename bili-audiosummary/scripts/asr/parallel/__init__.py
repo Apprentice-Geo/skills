@@ -37,6 +37,7 @@ from scripts.asr.parallel.state import (
     initial_progress,
     load_plan,
     load_progress,
+    load_valid_vad_result,
     load_valid_chunk_results,
     prepare_progress_for_resume,
     source_matches,
@@ -44,6 +45,7 @@ from scripts.asr.parallel.state import (
     write_chunk_result_atomic,
     write_plan,
     write_progress,
+    write_vad_result,
 )
 from scripts.asr.parallel.worker import transcribe_whisper_chunks
 
@@ -71,6 +73,7 @@ __all__ = [
     "initial_progress",
     "load_plan",
     "load_progress",
+    "load_valid_vad_result",
     "load_valid_chunk_results",
     "media",
     "merge_chunk_results",
@@ -93,4 +96,5 @@ __all__ = [
     "write_metrics",
     "write_plan",
     "write_progress",
+    "write_vad_result",
 ]

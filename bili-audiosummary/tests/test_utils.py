@@ -69,3 +69,27 @@ def test_resolve_ffmpeg_binaries_location_handles_missing_package(monkeypatch) -
     monkeypatch.setitem(sys.modules, "ffmpeg_binaries", None)
 
     assert utils.resolve_ffmpeg_binaries_location() is None
+
+
+def test_write_json_atomic_replaces_from_same_directory(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target = workspace_tmp_path / "cache" / "result.json"
+    replacements: list[tuple[Path, Path]] = []
+    real_replace = utils.os.replace
+
+    def replace_spy(source, destination) -> None:
+        replacements.append((Path(source), Path(destination)))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(utils.os, "replace", replace_spy)
+
+    utils.write_json_atomic(target, {"status": "complete"})
+
+    assert utils.read_json(target) == {"status": "complete"}
+    assert len(replacements) == 1
+    temporary, destination = replacements[0]
+    assert temporary.parent == target.parent
+    assert temporary.suffix == ".tmp"
+    assert destination == target

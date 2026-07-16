@@ -71,6 +71,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - Worker count has the highest planning priority. For a fixed `W`, candidate plans minimize hard speech cuts, then batches `N / W`, then the sum of squared deviations from target duration `D / N`. Planning consumes all candidate boundaries at once, so reversing candidate input order produces the same layout.
 - Explicit CLI values constrain the same planner. Two explicit values must satisfy `num_workers * cpu_threads <= B`; worker-only mode uses `floor(B / W)` threads per worker; thread-only mode chooses the largest feasible worker count. An impossible explicit configuration fails before chunk files are written or the ASR model is loaded.
 - Schema 4 stores a flat `chunks` list. Each `AsrChunkPlan` contains only its global `index`, `start`, `duration`, output `path`, and `end_boundary` (`silence`, `hard`, or `audio_end`). The plan also records the source fingerprint, ASR parameters, VAD parameters, CPU budget, worker count, threads per worker, and final layout.
+- `vad_result.json` has its own Schema 1 identity based only on the source fingerprint and VAD parameters. A valid result, including an empty interval list, can rebuild a plan without decoding the audio or running VAD again. A matching complete plan skips VAD without loading the separate file.
 - One `WhisperModel` uses the resolved worker configuration for all pending chunks. Chunk transcription keeps `vad_filter=True` to skip internal silence and does not pass `initial_prompt`.
 - Merge adds `chunk.start` to every local segment timestamp and orders segments by chunk index and time. Adjacent segments whose time ranges truly intersect are combined; endpoint contact is kept separate. Chinese text is concatenated directly, other languages use one separating space, and no character-level deduplication is performed.
 - Metrics record worker count, threads per worker, chunk count, batch count, elapsed time per chunk, and the final merged segment count.
@@ -105,11 +106,14 @@ results/<BVID>/
 │  ├─ asr_plan.json
 │  ├─ progress.json
 │  ├─ metrics.json
+│  ├─ vad_result.json
 │  ├─ merged_transcript.json
 │  ├─ chunks/
 │  │  └─ chunk_<index>.wav
 │  └─ chunk_results/
 │     └─ chunk_<index>.json
+├─ asr_qwen3/
+│  └─ result.json
 ├─ <BVID>_transcript.json
 ├─ <BVID>_transcript.md
 ├─ <BVID>_summary_prompt.md
@@ -122,7 +126,8 @@ results/<BVID>/
 - `fetch_manifest.json`: canonical video identity plus paths to metadata, audio, and subtitles.
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
-- `asr_parallel/`: faster-whisper-only workspace. It stores the Schema 4 plan, progress state, generated audio chunks, per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery. A plan and valid results are reused only when the source fingerprint, ASR parameters, VAD parameters, worker configuration, and final chunk layout all match. Earlier schemas are incompatible. Plan, progress, and chunk-result JSON writes are atomic.
+- `asr_parallel/`: faster-whisper-only workspace. It stores the Schema 4 plan, progress state, Schema 1 VAD result, generated audio chunks, per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery. Plan, progress, VAD, and chunk-result JSON writes are atomic.
+- `asr_qwen3/result.json`: atomic Schema 1 Qwen3 cache containing source/request identity, raw text, and word-level timestamps. Reuse requires exact identity plus non-empty valid text and timestamps, and occurs before dependency, CUDA, or model checks. Fields that the model does not return are omitted and incomplete results are not reusable.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
 - Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.
 - Final summary: preferably written by a fresh subagent that receives only the prompt path and summary task; when delegation is unavailable, the current Agent follows the same prompt.

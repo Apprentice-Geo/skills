@@ -226,6 +226,7 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
             audio_path,
             options.language,
             metadata_duration(metadata),
+            output_dir / "asr_qwen3" / "result.json",
         )
         source = "qwen3-asr"
     else:

@@ -26,15 +26,17 @@ from scripts.asr.parallel.state import (
     initial_progress,
     load_plan,
     load_progress,
+    load_valid_vad_result,
     load_valid_chunk_results,
     workspace_paths,
     write_plan,
     write_progress,
+    write_vad_result,
 )
 from scripts.asr.parallel.worker import _resolve_model_path, transcribe_whisper_chunks
 from scripts.process_logging import get_logger, terminal_info
 from scripts.runtime_options import TranscribeOptions
-from scripts.utils import ensure_dir, write_json
+from scripts.utils import write_json
 
 
 logger = get_logger(__name__)
@@ -111,10 +113,38 @@ def run_parallel_whisper_transcribe(
         worker_config,
     )
     if plan is None:
-        speech_intervals = detect_speech_intervals(
-            audio_path,
-            DEFAULT_VAD_PARAMETERS,
+        vad_result_existed = paths["vad_result"].exists()
+        speech_intervals = (
+            load_valid_vad_result(
+                paths["vad_result"],
+                source_audio,
+                DEFAULT_VAD_PARAMETERS,
+            )
+            if vad_result_existed
+            else None
         )
+        if speech_intervals is None:
+            terminal_info(
+                logger,
+                "[Transcribe] VAD cache: %s; %s vad_result.json",
+                "invalid" if vad_result_existed else "missing",
+                "regenerating" if vad_result_existed else "generating",
+            )
+            speech_intervals = detect_speech_intervals(
+                audio_path,
+                DEFAULT_VAD_PARAMETERS,
+            )
+            write_vad_result(
+                paths["vad_result"],
+                source_audio,
+                DEFAULT_VAD_PARAMETERS,
+                speech_intervals,
+            )
+        else:
+            terminal_info(
+                logger,
+                "[Transcribe] VAD cache: reused vad_result.json",
+            )
         plan = build_parallel_asr_plan(
             duration_seconds=duration,
             cpu_count=cpu_count,
@@ -124,11 +154,14 @@ def run_parallel_whisper_transcribe(
             vad_parameters=DEFAULT_VAD_PARAMETERS,
             worker_config=worker_config,
         )
-        ensure_dir(paths["root"])
         write_plan(paths["plan"], plan)
         plan_status = "rebuilt" if plan_existed else "created"
     else:
         plan_status = "reused"
+        terminal_info(
+            logger,
+            "[Transcribe] VAD: skipped; reused matching ASR plan",
+        )
 
     if plan_status == "rebuilt":
         terminal_info(logger, "[Transcribe] cached plan incompatible; rebuilding")

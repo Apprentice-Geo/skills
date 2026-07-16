@@ -74,11 +74,12 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 
 ## Parallel faster-whisper Cache and Resume
 
-- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. Chunk audio uses `chunks/chunk_<index>.wav`; cached transcription results use `chunk_results/chunk_<index>.json`.
+- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. The normalized VAD output uses `vad_result.json`, chunk audio uses `chunks/chunk_<index>.wav`, and cached transcription results use `chunk_results/chunk_<index>.json`.
+- `vad_result.json` uses Schema 1 and is reusable when its source fingerprint and VAD parameters match. An empty interval list is valid. If the complete plan matches, VAD is skipped with a terminal message; if the plan must be rebuilt, a valid VAD result is reused independently. Missing, malformed, incompatible, overlapping, or out-of-range VAD intervals trigger regeneration.
 - A cached Schema 4 plan is reused only when the source-audio fingerprint, ASR parameters, VAD parameters, CPU budget, worker configuration, and final flat chunk layout all match. Plans and chunk results from earlier schemas are incompatible.
 - If the cached plan is unreadable, structurally invalid, or incompatible, the current plan atomically replaces it and the progress state is rebuilt. Incompatible or unreadable chunk-result files are not deleted up front: a successful same-index chunk atomically replaces its stale file, while other stale files remain on disk, are counted as `ignored`, and are not reused.
 - `[Transcribe] cache: reused=<n>, ignored=<n>, pending=<n>, total=<n>` reports the cache decision. Reused results and resumed chunks are also reported individually.
-- Plan, progress, and chunk-result JSON files are written through a same-directory temporary file followed by `os.replace()`, so the target is always the previous or new complete JSON document.
+- Plan, progress, VAD, and chunk-result JSON files are written through a same-directory temporary file followed by `os.replace()`, so the target is always the previous or new complete JSON document.
 - A valid chunk result is the source of truth and takes precedence over missing, stale, unreadable, or structurally invalid progress. Invalid progress is rebuilt from the current plan, then valid results are marked succeeded without loading a model for fully cached work.
 - Every program invocation gives chunks without a valid result a fresh state: `pending`, `retry_count=0`, and no prior error. Within that invocation, the first failure is retried once and the second failure stops merging. Rerunning gives that failed chunk a new one-retry budget while preserving other valid chunk results.
 
@@ -95,6 +96,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 
 - Missing dependencies, models, or CUDA, and model loading, inference, or alignment errors propagate as the transcription failure. No fallback transcript is written and summary-prompt generation does not continue.
 - A successful explicit Qwen3 transcript has `source: qwen3-asr`. To use faster-whisper after a Qwen3 failure, start a separate run with `--asr-provider whisper` or omit the provider option.
+- `results/<BVID>/asr_qwen3/result.json` is reused only when its Schema 1 source/request identity matches and it contains both non-empty text and structurally valid word timestamps. Cache validation runs before Qwen3 dependency, CUDA, model, and inference checks. Missing or invalid files are reported in the terminal and regenerated; incomplete model output may be written without invented fields but is not reusable.
 
 ## Logs
 

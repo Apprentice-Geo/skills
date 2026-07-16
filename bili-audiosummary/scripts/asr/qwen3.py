@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 import unicodedata
 from dataclasses import dataclass
@@ -17,13 +19,14 @@ from scripts.config import (
     QWEN3_MAX_INFERENCE_BATCH_SIZE,
     QWEN3_MAX_NEW_TOKENS,
 )
-from scripts.process_logging import LoggingSession, get_logger
-from scripts.utils import path_to_posix
+from scripts.process_logging import LoggingSession, get_logger, terminal_info
+from scripts.utils import path_to_posix, read_json, write_json_atomic
 
 
 STRONG_PUNCTUATION = set("。.!！？?")
 WEAK_PUNCTUATION = set("，,；;")
 MIN_SEGMENT_SECONDS = 3.0
+QWEN3_CACHE_SCHEMA_VERSION = 1
 logger = get_logger(__name__)
 
 
@@ -79,6 +82,156 @@ def normalize_alignment_items(items: list[Any]) -> list[AlignmentItem]:
             continue
         normalized.append(AlignmentItem(text=text, start=_to_float(start), end=_to_float(end)))
     return normalized
+
+
+def build_intermediate_payload(
+    text: str,
+    alignment_items: list[AlignmentItem],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    normalized_text = text.strip()
+    if normalized_text:
+        payload["text"] = normalized_text
+    if alignment_items:
+        payload["word_timestamps"] = [
+            {
+                "text": item.text,
+                "start": item.start,
+                "end": item.end,
+            }
+            for item in alignment_items
+        ]
+    return payload
+
+
+def build_cache_identity(
+    audio_path: Path,
+    language: str,
+    duration: float | None,
+) -> dict[str, Any]:
+    stat = audio_path.stat()
+    return {
+        "source": {
+            "path": path_to_posix(audio_path),
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+            "duration": float(duration) if duration is not None else None,
+        },
+        "request": {
+            "language": language,
+            "model": path_to_posix(QWEN3_ASR_MODEL_DIR),
+            "forced_aligner": path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
+            "device": QWEN3_DEVICE_MAP,
+            "compute_type": QWEN3_DTYPE,
+            "batch_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
+            "max_new_tokens": QWEN3_MAX_NEW_TOKENS,
+        },
+    }
+
+
+def _load_alignment_items(data: Any) -> list[AlignmentItem] | None:
+    if not isinstance(data, list) or not data:
+        return None
+
+    alignment_items: list[AlignmentItem] = []
+    previous_start = 0.0
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            return None
+        text = item.get("text")
+        start = item.get("start")
+        end = item.get("end")
+        if not isinstance(text, str) or not text.strip():
+            return None
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, (int, float))
+            or isinstance(end, bool)
+            or not isinstance(end, (int, float))
+        ):
+            return None
+        start_value = float(start)
+        end_value = float(end)
+        if (
+            not math.isfinite(start_value)
+            or not math.isfinite(end_value)
+            or start_value < 0
+            or end_value < start_value
+            or (index > 0 and start_value < previous_start)
+        ):
+            return None
+        alignment_items.append(
+            AlignmentItem(
+                text=text,
+                start=_to_float(start_value),
+                end=_to_float(end_value),
+            )
+        )
+        previous_start = start_value
+    return alignment_items
+
+
+def load_cached_intermediate_result(
+    path: Path,
+    audio_path: Path,
+    language: str,
+    duration: float | None,
+) -> tuple[str, list[AlignmentItem]] | None:
+    try:
+        data = read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != QWEN3_CACHE_SCHEMA_VERSION:
+        return None
+    identity = build_cache_identity(audio_path, language, duration)
+    if data.get("source") != identity["source"]:
+        return None
+    if data.get("request") != identity["request"]:
+        return None
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    alignment_items = _load_alignment_items(data.get("word_timestamps"))
+    if alignment_items is None:
+        return None
+    return text.strip(), alignment_items
+
+
+def write_intermediate_result(
+    path: Path,
+    audio_path: Path,
+    language: str,
+    duration: float | None,
+    text: str,
+    alignment_items: list[AlignmentItem],
+) -> None:
+    payload = build_intermediate_payload(text, alignment_items)
+    if not payload:
+        path.unlink(missing_ok=True)
+        return
+    write_json_atomic(
+        path,
+        {
+            "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+            **build_cache_identity(audio_path, language, duration),
+            **payload,
+        },
+    )
+
+
+def _qwen_info(language: str, word_timestamps: bool) -> dict[str, Any]:
+    return {
+        "language": language,
+        "model": path_to_posix(QWEN3_ASR_MODEL_DIR),
+        "forced_aligner": path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
+        "device": QWEN3_DEVICE_MAP,
+        "compute_type": QWEN3_DTYPE,
+        "batch_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
+        "max_new_tokens": QWEN3_MAX_NEW_TOKENS,
+        "word_timestamps": word_timestamps,
+    }
 
 
 def _merge_segments(segments: list[SegmentDraft]) -> list[SegmentDraft]:
@@ -218,7 +371,41 @@ def build_sentence_segments(
     ]
 
 
-def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def transcribe_with_qwen3(
+    audio_path: Path,
+    language: str,
+    duration: float | None = None,
+    intermediate_path: Path | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if intermediate_path is not None:
+        cache_exists = intermediate_path.exists()
+        cached_result = (
+            load_cached_intermediate_result(
+                intermediate_path,
+                audio_path,
+                language,
+                duration,
+            )
+            if cache_exists
+            else None
+        )
+        if cached_result is not None:
+            text, alignment_items = cached_result
+            terminal_info(
+                logger,
+                "[Transcribe] Qwen3 cache: reused asr_qwen3/result.json",
+            )
+            return (
+                _qwen_info(language, word_timestamps=True),
+                build_sentence_segments(text, alignment_items, duration),
+            )
+        terminal_info(
+            logger,
+            "[Transcribe] Qwen3 cache: %s; %s result.json",
+            "invalid" if cache_exists else "missing",
+            "regenerating" if cache_exists else "generating",
+        )
+
     try:
         import torch
         from transformers import GenerationConfig
@@ -271,21 +458,24 @@ def transcribe_with_qwen3(audio_path: Path, language: str, duration: float | Non
         generation_config=generation_config,
     )
     result = asr.transcribe(path_to_posix(audio_path), return_time_stamps=True)[0]
-    alignment_items = normalize_alignment_items(list(getattr(result.time_stamps, "items", [])))
-    segments = build_sentence_segments(str(result.text or "").strip(), alignment_items, duration)
+    timestamp_data = getattr(result, "time_stamps", None)
+    alignment_items = normalize_alignment_items(
+        list(getattr(timestamp_data, "items", []) or [])
+    )
+    text = str(getattr(result, "text", "") or "").strip()
+    if intermediate_path is not None:
+        write_intermediate_result(
+            intermediate_path,
+            audio_path,
+            language,
+            duration,
+            text,
+            alignment_items,
+        )
+    segments = build_sentence_segments(text, alignment_items, duration)
     logger.info(
         "Qwen3 transcription completed: alignment_items=%d segments=%d",
         len(alignment_items),
         len(segments),
     )
-    info = {
-        "language": language,
-        "model": asr_model,
-        "forced_aligner": aligner_model,
-        "device": QWEN3_DEVICE_MAP,
-        "compute_type": QWEN3_DTYPE,
-        "batch_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
-        "max_new_tokens": QWEN3_MAX_NEW_TOKENS,
-        "word_timestamps": False,
-    }
-    return info, segments
+    return _qwen_info(language, word_timestamps=bool(alignment_items)), segments

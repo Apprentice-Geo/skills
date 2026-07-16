@@ -315,7 +315,12 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
 
     result = transcribe.run_transcribe(args)
 
-    qwen3_mock.assert_called_once_with(audio_path, "zh", None)
+    qwen3_mock.assert_called_once_with(
+        audio_path,
+        "zh",
+        None,
+        result_dir / "asr_qwen3" / "result.json",
+    )
     parallel_mock.assert_not_called()
     probe_mock.assert_not_called()
     assert result["payload"]["source"] == "qwen3-asr"

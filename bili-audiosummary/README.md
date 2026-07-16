@@ -95,6 +95,7 @@ asr_parallel/
 ├─ asr_plan.json
 ├─ progress.json
 ├─ metrics.json
+├─ vad_result.json
 ├─ merged_transcript.json
 ├─ chunks/
 │  └─ chunk_<index>.wav
@@ -103,6 +104,8 @@ asr_parallel/
 ```
 
 只有音频指纹、ASR 参数、VAD 参数、worker 配置和最终切片布局全部匹配时，Schema 4 计划与有效 chunk result 才会复用。配置变化时会重建 plan 和 progress，但不会预先删除不兼容的旧结果；同名 chunk 成功后，新结果会通过原子替换覆盖旧文件，其他旧文件继续保留在磁盘上但不会被复用。Schema 4 以前的计划和 chunk result 不复用。
+
+`vad_result.json` 使用独立的 Schema 1，只按音频指纹与 VAD 参数校验，空语音区间也是合法结果。完整 plan 命中时会直接跳过 VAD；plan 因 worker 或 ASR 参数变化而重建时，仍可复用合法的 VAD 结果。终端会明确报告 VAD 是随 plan 跳过、从文件复用，还是因缺失或无效而重新生成。
 
 合并时，chunk 内时间戳直接加上该 chunk 的全局开始时间。segment 按 chunk index 和时间排序；只有时间范围真正相交时才合并，端点仅相接时保持分离。中文文本直接拼接，其他语言以一个空格连接，不执行字符级去重。`metrics.json` 记录 worker 数、每 worker 线程数、切片数、批次数、各切片耗时和最终 segment 数。
 
@@ -119,7 +122,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider qwen3
 ```
 
-该选项只运行 Qwen3-ASR。依赖、模型、CUDA、模型加载、推理或对齐失败都会终止本次转写；如需使用 faster-whisper，请显式选择 `--asr-provider whisper` 或省略 provider 参数后重新运行。
+该选项只运行 Qwen3-ASR。依赖、模型、CUDA、模型加载、推理或对齐失败都会终止本次转写；如需使用 faster-whisper，请显式选择 `--asr-provider whisper` 或省略 provider 参数后重新运行。Qwen3 返回的原始文本和词级时间戳会写入 `results/<BVID>/asr_qwen3/result.json`。该 Schema 1 缓存同时校验音频指纹、时长、语言和完整模型请求参数；只有非空文本与合法词级时间戳都存在时才复用。命中后不再检查 CUDA、依赖或模型，终端会明确提示复用；旧格式、损坏或不匹配的文件会重新生成。模型未返回的字段仍不会写入文件，因此这类不完整结果不会被后续运行复用。
 
 ## ASR Benchmark
 

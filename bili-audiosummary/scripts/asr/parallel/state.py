@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -11,14 +12,16 @@ from scripts.asr.parallel.plan import (
     AsrChunkPlan,
     AsrSourceAudio,
     ParallelAsrPlan,
+    VadParameters,
     plan_from_dict,
     plan_to_dict,
 )
-from scripts.utils import ensure_dir, read_json
+from scripts.utils import ensure_dir, read_json, write_json_atomic
 
 
 MAX_CHUNK_RETRIES = 1
 PROGRESS_STATES = {"pending", "running", "succeeded", "failed"}
+VAD_RESULT_SCHEMA_VERSION = 1
 
 
 def workspace_paths(workspace_dir: Path) -> dict[str, Path]:
@@ -29,8 +32,79 @@ def workspace_paths(workspace_dir: Path) -> dict[str, Path]:
         "metrics": workspace_dir / "metrics.json",
         "chunks": workspace_dir / "chunks",
         "chunk_results": workspace_dir / "chunk_results",
+        "vad_result": workspace_dir / "vad_result.json",
         "merged_transcript": workspace_dir / "merged_transcript.json",
     }
+
+
+def write_vad_result(
+    path: Path,
+    source_audio: AsrSourceAudio,
+    vad_parameters: VadParameters,
+    speech_intervals: list[tuple[float, float]],
+) -> None:
+    write_json_atomic(
+        path,
+        {
+            "schema_version": VAD_RESULT_SCHEMA_VERSION,
+            "source": asdict(source_audio),
+            "parameters": asdict(vad_parameters),
+            "speech_intervals": [
+                {"start": round(start, 3), "end": round(end, 3)}
+                for start, end in speech_intervals
+            ],
+        },
+    )
+
+
+def load_valid_vad_result(
+    path: Path,
+    source_audio: AsrSourceAudio,
+    vad_parameters: VadParameters,
+) -> list[tuple[float, float]] | None:
+    try:
+        data = read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != VAD_RESULT_SCHEMA_VERSION:
+        return None
+    if data.get("source") != asdict(source_audio):
+        return None
+    if data.get("parameters") != asdict(vad_parameters):
+        return None
+    raw_intervals = data.get("speech_intervals")
+    if not isinstance(raw_intervals, list):
+        return None
+
+    intervals: list[tuple[float, float]] = []
+    previous_end = 0.0
+    for item in raw_intervals:
+        if not isinstance(item, dict):
+            return None
+        start = item.get("start")
+        end = item.get("end")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, (int, float))
+            or isinstance(end, bool)
+            or not isinstance(end, (int, float))
+        ):
+            return None
+        start_value = float(start)
+        end_value = float(end)
+        if (
+            not math.isfinite(start_value)
+            or not math.isfinite(end_value)
+            or start_value < previous_end
+            or end_value < start_value
+            or end_value > source_audio.duration
+        ):
+            return None
+        intervals.append((start_value, end_value))
+        previous_end = end_value
+    return intervals
 
 
 def write_plan(path: Path, plan: ParallelAsrPlan) -> None:

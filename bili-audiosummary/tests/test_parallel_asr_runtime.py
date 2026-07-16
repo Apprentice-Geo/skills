@@ -1,3 +1,4 @@
+import json
 import sys
 from dataclasses import asdict, fields, replace
 from pathlib import Path
@@ -7,8 +8,9 @@ import pytest
 
 from scripts.asr import parallel as parallel_asr
 from scripts.asr.parallel import media, runner, worker
+from scripts.process_logging import LoggingSession
 from scripts.runtime_options import TranscribeOptions
-from scripts.utils import write_json
+from scripts.utils import read_json, write_json
 
 
 def make_source(duration: float = 120.0) -> parallel_asr.AsrSourceAudio:
@@ -170,6 +172,7 @@ def test_schema_three_plan_and_result_are_not_reused(workspace_tmp_path: Path) -
 
 def test_exact_cache_match_skips_vad_and_model_on_second_run(
     workspace_tmp_path: Path,
+    capsys,
     monkeypatch,
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
@@ -180,7 +183,7 @@ def test_exact_cache_match_skips_vad_and_model_on_second_run(
 
     def fake_detect(path, _vad_parameters):
         vad_calls.append(Path(path))
-        return []
+        return [(1.25, 8.5)]
 
     class FakeWhisperModel:
         def __init__(self, model_path, **kwargs) -> None:
@@ -205,11 +208,144 @@ def test_exact_cache_match_skips_vad_and_model_on_second_run(
         cpu_threads=1,
     )
 
-    runner.run_parallel_whisper_transcribe(audio_path, options, output_dir, 120.0)
-    runner.run_parallel_whisper_transcribe(audio_path, options, output_dir, 120.0)
+    with LoggingSession(workspace_tmp_path / "parallel-cache.log"):
+        runner.run_parallel_whisper_transcribe(audio_path, options, output_dir, 120.0)
+        runner.run_parallel_whisper_transcribe(audio_path, options, output_dir, 120.0)
 
     assert vad_calls == [audio_path]
     assert len(model_instances) == 1
+    assert json.loads(
+        (output_dir / "asr_parallel" / "vad_result.json").read_text(
+            encoding="utf-8"
+        )
+    ) == {
+        "schema_version": 1,
+        "source": {
+            "path": audio_path.as_posix(),
+            "size": 5,
+            "mtime": audio_path.stat().st_mtime,
+            "duration": 120.0,
+        },
+        "parameters": {
+            "threshold": 0.5,
+            "min_speech_duration_ms": 250,
+            "min_silence_duration_ms": 500,
+            "speech_pad_ms": 0,
+            "sampling_rate": 16000,
+        },
+        "speech_intervals": [{"start": 1.25, "end": 8.5}],
+    }
+    assert "[Transcribe] VAD: skipped; reused matching ASR plan" in capsys.readouterr().out
+
+
+def test_valid_vad_result_is_reused_when_plan_rebuilds(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    output_dir = workspace_tmp_path / "output"
+    vad_calls: list[Path] = []
+
+    def fake_detect(path, _vad_parameters):
+        vad_calls.append(Path(path))
+        return []
+
+    class FakeWhisperModel:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def transcribe(self, _audio_path, **_kwargs):
+            return iter([]), SimpleNamespace(language="zh")
+
+    monkeypatch.setattr(runner.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(runner, "detect_speech_intervals", fake_detect)
+    isolate_runner_outputs(monkeypatch)
+    install_fake_whisper(monkeypatch, FakeWhisperModel)
+
+    with LoggingSession(workspace_tmp_path / "vad-cache.log"):
+        runner.run_parallel_whisper_transcribe(
+            audio_path,
+            TranscribeOptions(
+                model="model-dir",
+                language="zh",
+                beam_size=5,
+                num_workers=1,
+                cpu_threads=1,
+            ),
+            output_dir,
+            120.0,
+        )
+        runner.run_parallel_whisper_transcribe(
+            audio_path,
+            TranscribeOptions(
+                model="model-dir",
+                language="zh",
+                beam_size=3,
+                num_workers=1,
+                cpu_threads=1,
+            ),
+            output_dir,
+            120.0,
+        )
+
+    assert vad_calls == [audio_path]
+    assert "[Transcribe] VAD cache: reused vad_result.json" in capsys.readouterr().out
+
+
+def test_empty_vad_result_is_a_valid_cache_entry(workspace_tmp_path: Path) -> None:
+    source = make_source()
+    parameters = make_vad_parameters()
+    path = workspace_tmp_path / "vad_result.json"
+
+    parallel_asr.write_vad_result(path, source, parameters, [])
+
+    assert parallel_asr.load_valid_vad_result(path, source, parameters) == []
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["schema", "source", "parameters", "negative", "overlap", "out_of_bounds"],
+)
+def test_vad_cache_rejects_invalid_identity_or_intervals(
+    workspace_tmp_path: Path,
+    mismatch: str,
+) -> None:
+    source = make_source()
+    parameters = make_vad_parameters()
+    path = workspace_tmp_path / "vad_result.json"
+    parallel_asr.write_vad_result(
+        path,
+        source,
+        parameters,
+        [(0.0, 10.0), (20.0, 30.0)],
+    )
+    data = read_json(path)
+    if mismatch == "schema":
+        data["schema_version"] = 0
+    elif mismatch == "source":
+        data["source"]["size"] += 1
+    elif mismatch == "parameters":
+        data["parameters"]["threshold"] = 0.4
+    elif mismatch == "negative":
+        data["speech_intervals"][0]["start"] = -1.0
+    elif mismatch == "overlap":
+        data["speech_intervals"][1]["start"] = 9.0
+    else:
+        data["speech_intervals"][1]["end"] = source.duration + 1.0
+    write_json(path, data)
+
+    assert parallel_asr.load_valid_vad_result(path, source, parameters) is None
+
+
+def test_vad_cache_rejects_corrupt_json(workspace_tmp_path: Path) -> None:
+    source = make_source()
+    parameters = make_vad_parameters()
+    path = workspace_tmp_path / "vad_result.json"
+    path.write_text("{", encoding="utf-8")
+
+    assert parallel_asr.load_valid_vad_result(path, source, parameters) is None
 
 
 @pytest.mark.parametrize("mismatch", ["source", "asr", "vad", "worker"])
