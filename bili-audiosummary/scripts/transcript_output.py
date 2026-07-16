@@ -31,7 +31,7 @@ def normalize_segments_for_markdown(
 ) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
-    separator = "" if is_chinese_language(language) else " "
+    separator = "，" if is_chinese_language(language) else ", "
 
     def flush() -> None:
         nonlocal current

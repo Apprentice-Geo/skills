@@ -122,7 +122,7 @@ results/<BVID>/
 ```
 
 - Transcript JSON: structured metadata, source provider, language, and timestamped segments.
-- Transcript Markdown: human- and Agent-readable timestamped transcript.
+- Transcript Markdown: human- and Agent-readable timestamped transcript. When ASR segments are compacted onto one line, Chinese segments use `，` and other languages use `, ` as separators; line breaks caused by compaction limits do not receive extra punctuation.
 - `fetch_manifest.json`: canonical video identity plus paths to metadata, audio, and subtitles.
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
