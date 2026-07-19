@@ -126,17 +126,19 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider 
 
 ## ASR Benchmark
 
-benchmark 会对 8 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwen3-ASR，记录每次转写的总耗时、转写实时系数、转写进程树的采样峰值 RSS，以及 Qwen3 的 CUDA 峰值已分配/保留显存。计时包含模型加载、切片、推理、对齐和转写文件写入；音频下载、依赖安装和模型下载不计入结果。
+benchmark 会对 10 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwen3-ASR，记录每次转写的总耗时、转写实时系数、转写进程树的采样峰值 RSS，以及 Qwen3 的 CUDA 峰值已分配/保留显存。计时包含模型加载、切片、推理、对齐和转写文件写入；音频下载、依赖安装和模型下载不计入结果。
 
 | 视频 | 标注时长 |
 | --- | --- |
-| https://www.bilibili.com/video/BV1MN4y177PB/ | 00:11:27 |
 | https://www.bilibili.com/video/BV1W694BEE7F/ | 00:01:03 |
-| https://www.bilibili.com/video/BV1yt4y1Q7SS/ | 00:02:26 |
 | https://www.bilibili.com/video/BV1Ls41127sG/ | 00:05:57 |
-| https://www.bilibili.com/video/BV1Rq4y1n7CR/ | 00:25:46 |
+| https://www.bilibili.com/video/BV1Nt4y1D7pW/ | 00:07:56 |
+| https://www.bilibili.com/video/BV1MN4y177PB/ | 00:11:27 |
+| https://www.bilibili.com/video/BV1ks411e7W4/ | 00:19:45 |
+| https://www.bilibili.com/video/BV1Fa411c7Vh/ | 00:30:23 |
 | https://www.bilibili.com/video/BV1rb4y1D7Gf/ | 00:39:51 |
 | https://www.bilibili.com/video/BV1jJ411r7EL/ | 01:02:23 |
+| https://www.bilibili.com/video/BV1e24y1D7qt/ | 01:47:01 |
 | https://www.bilibili.com/video/BV1mL411z7Kf/ | 02:59:43 |
 
 请先完成默认依赖、两种模型和 Qwen3 可选依赖的安装，再显式执行：
@@ -145,7 +147,7 @@ benchmark 会对 8 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwen
 uv run --no-sync python -m scripts.benchmark
 ```
 
-默认会运行全部 8 个视频与两种模型，耗时很长。需要局部重测时可重复传入 `--video` 或 `--provider`：
+默认会运行全部 10 个视频与两种模型，耗时很长。需要局部重测时可重复传入 `--video` 或 `--provider`：
 
 ```powershell
 uv run --no-sync python -m scripts.benchmark --video BV1W694BEE7F --provider whisper
