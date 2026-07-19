@@ -24,9 +24,11 @@ def make_source(duration: float = 120.0) -> parallel_asr.AsrSourceAudio:
 
 def make_vad_parameters():
     return parallel_asr.VadParameters(
-        threshold=0.5,
-        min_speech_duration_ms=250,
-        min_silence_duration_ms=500,
+        threshold=0.35,
+        neg_threshold=0.25,
+        min_speech_duration_ms=0,
+        min_silence_duration_ms=300,
+        max_speech_duration_s=None,
         speech_pad_ms=0,
         sampling_rate=16000,
     )
@@ -48,6 +50,7 @@ def make_plan(
             duration=chunk_duration,
             path=f"chunks/chunk_{index:03d}.wav",
             end_boundary="audio_end" if index == chunk_count - 1 else "silence",
+            estimated_speech_duration=chunk_duration / 2,
         )
         for index in range(chunk_count)
     ]
@@ -61,6 +64,7 @@ def make_plan(
         device="cpu",
         compute_type="float32",
         vad_parameters=make_vad_parameters(),
+        planning_parameters=parallel_asr.PlanningParameters(),
         cpu_budget=3,
         num_workers=num_workers,
         cpu_threads=cpu_threads,
@@ -113,23 +117,30 @@ def isolate_runner_outputs(monkeypatch) -> None:
         )
 
 
-def test_schema_four_uses_flat_global_chunks() -> None:
-    assert parallel_asr.SCHEMA_VERSION == 4
+def test_schema_five_uses_flat_global_chunks_with_speech_estimates() -> None:
+    assert parallel_asr.SCHEMA_VERSION == 5
     assert [field.name for field in fields(parallel_asr.AsrChunkPlan)] == [
         "index",
         "start",
         "duration",
         "path",
         "end_boundary",
+        "estimated_speech_duration",
     ]
     plan_fields = {field.name for field in fields(parallel_asr.ParallelAsrPlan)}
-    assert {"chunks", "num_workers", "cpu_threads", "vad_parameters"} <= plan_fields
+    assert {
+        "chunks",
+        "num_workers",
+        "cpu_threads",
+        "vad_parameters",
+        "planning_parameters",
+    } <= plan_fields
     assert not {"macro_chunks", "asr_chunks", "overlap_seconds"} & plan_fields
 
 
-def test_schema_three_plan_and_result_are_not_reused(workspace_tmp_path: Path) -> None:
+def test_schema_four_plan_and_result_are_not_reused(workspace_tmp_path: Path) -> None:
     legacy_plan = {
-        "schema_version": 3,
+        "schema_version": 4,
         "source_audio": asdict(make_source()),
         "provider": "whisper",
         "model": "model-dir",
@@ -155,7 +166,7 @@ def test_schema_three_plan_and_result_are_not_reused(workspace_tmp_path: Path) -
     old_chunk, current_chunk = plan.chunks
     parallel_asr.write_chunk_result_atomic(
         parallel_asr.chunk_result_path(workspace_tmp_path, old_chunk),
-        make_chunk_result(plan, old_chunk, schema_version=3),
+        make_chunk_result(plan, old_chunk, schema_version=4),
     )
     parallel_asr.write_chunk_result_atomic(
         parallel_asr.chunk_result_path(workspace_tmp_path, current_chunk),
@@ -226,12 +237,14 @@ def test_exact_cache_match_skips_vad_and_model_on_second_run(
             "mtime": audio_path.stat().st_mtime,
             "duration": 120.0,
         },
-        "parameters": {
-            "threshold": 0.5,
-            "min_speech_duration_ms": 250,
-            "min_silence_duration_ms": 500,
-            "speech_pad_ms": 0,
-            "sampling_rate": 16000,
+            "parameters": {
+                "threshold": 0.35,
+                "neg_threshold": 0.25,
+                "min_speech_duration_ms": 0,
+                "min_silence_duration_ms": 300,
+                "max_speech_duration_s": None,
+                "speech_pad_ms": 0,
+                "sampling_rate": 16000,
         },
         "speech_intervals": [{"start": 1.25, "end": 8.5}],
     }
@@ -348,7 +361,7 @@ def test_vad_cache_rejects_corrupt_json(workspace_tmp_path: Path) -> None:
     assert parallel_asr.load_valid_vad_result(path, source, parameters) is None
 
 
-@pytest.mark.parametrize("mismatch", ["source", "asr", "vad", "worker"])
+@pytest.mark.parametrize("mismatch", ["source", "asr", "vad", "planning", "worker"])
 def test_cache_identity_change_rebuilds_plan(
     workspace_tmp_path: Path,
     monkeypatch,
@@ -371,6 +384,14 @@ def test_cache_identity_change_rebuilds_plan(
         cached_plan = replace(
             expected_plan,
             vad_parameters=replace(expected_plan.vad_parameters, threshold=0.4),
+        )
+    elif mismatch == "planning":
+        cached_plan = replace(
+            expected_plan,
+            planning_parameters=parallel_asr.PlanningParameters(
+                min_chunk_seconds=30.0,
+                max_chunk_seconds=300.0,
+            ),
         )
     else:
         cached_plan = replace(expected_plan, num_workers=2)
@@ -511,7 +532,7 @@ def test_valid_result_wins_over_failed_progress(
     assert resumed["chunks"][key]["retry_count"] == 0
 
 
-@pytest.mark.parametrize("mismatch", ["source", "asr", "vad", "worker"])
+@pytest.mark.parametrize("mismatch", ["source", "asr", "vad", "planning", "worker"])
 def test_chunk_result_is_ignored_when_cache_identity_changes(
     workspace_tmp_path: Path,
     mismatch: str,
@@ -533,6 +554,14 @@ def test_chunk_result_is_ignored_when_cache_identity_changes(
         current_plan = replace(
             old_plan,
             vad_parameters=replace(old_plan.vad_parameters, threshold=0.4),
+        )
+    elif mismatch == "planning":
+        current_plan = replace(
+            old_plan,
+            planning_parameters=parallel_asr.PlanningParameters(
+                min_chunk_seconds=30.0,
+                max_chunk_seconds=300.0,
+            ),
         )
     else:
         current_plan = replace(old_plan, cpu_threads=2)
@@ -610,6 +639,7 @@ def test_worker_uses_one_model_and_never_passes_initial_prompt(
     assert instances[0]["cpu_threads"] == 1
     assert len(transcribe_calls) == 2
     assert all(call[1]["vad_filter"] is True for call in transcribe_calls)
+    assert all("vad_parameters" not in call[1] for call in transcribe_calls)
     assert all("initial_prompt" not in call[1] for call in transcribe_calls)
     assert set(results) == {"chunk_000", "chunk_001"}
     assert sorted(path.name for path in (workspace_tmp_path / "chunk_results").glob("*.json")) == [

@@ -1,5 +1,6 @@
 import math
 import sys
+from itertools import combinations
 from pathlib import Path
 from time import perf_counter
 from types import ModuleType
@@ -8,15 +9,13 @@ import pytest
 
 from scripts.asr import parallel as parallel_asr
 from scripts.asr.parallel import media
+from scripts.asr.parallel.optimizer import optimize_chunk_boundaries
 from scripts.runtime_options import TranscribeOptions
 
 
 def make_source(duration: float) -> parallel_asr.AsrSourceAudio:
     return parallel_asr.AsrSourceAudio(
-        path="audio.m4a",
-        size=123,
-        mtime=456.0,
-        duration=duration,
+        path="audio.m4a", size=123, mtime=456.0, duration=duration
     )
 
 
@@ -27,6 +26,7 @@ def make_plan(
     speech_intervals: list[tuple[float, float]] | None = None,
     num_workers: int | None = None,
     cpu_threads: int | None = None,
+    max_chunk_seconds: float | None = None,
 ):
     return parallel_asr.build_parallel_asr_plan(
         duration_seconds=duration,
@@ -37,6 +37,7 @@ def make_plan(
             language="zh",
             num_workers=num_workers,
             cpu_threads=cpu_threads,
+            max_chunk_seconds=max_chunk_seconds,
         ),
         speech_intervals=speech_intervals or [],
     )
@@ -52,47 +53,28 @@ def assert_valid_layout(plan, duration: float) -> None:
     assert chunk_ends(plan)[-1] == pytest.approx(duration, abs=0.001)
     for index, chunk in enumerate(plan.chunks):
         assert chunk.index == index
-        assert chunk.duration <= 300.0
-        if duration >= 60.0:
-            assert chunk.duration >= 60.0
+        assert chunk.duration <= plan.planning_parameters.max_chunk_seconds
+        if duration >= 30.0:
+            assert chunk.duration >= 30.0
         if index:
             previous = plan.chunks[index - 1]
             assert chunk.start == pytest.approx(
-                previous.start + previous.duration,
-                abs=0.001,
+                previous.start + previous.duration, abs=0.001
             )
     assert len(plan.chunks) % plan.num_workers == 0
+    assert len(plan.chunks) // plan.num_workers == plan.batch_count
     assert plan.chunks[-1].end_boundary == "audio_end"
 
 
-def speech_intervals_for_cut_points(
-    duration: float,
-    cut_points: list[float],
-) -> list[tuple[float, float]]:
-    intervals: list[tuple[float, float]] = []
-    start = 0.0
-    for cut in cut_points:
-        intervals.append((start, cut - 10.0))
-        start = cut + 10.0
-    intervals.append((start, duration))
-    return intervals
-
-
-def test_detect_speech_intervals_uses_pinned_silero_vad_parameters(
-    monkeypatch,
-) -> None:
+def test_detect_speech_intervals_uses_pinned_silero_vad_parameters(monkeypatch) -> None:
     calls: dict[str, object] = {}
     decoded_audio = object()
-
     faster_whisper = ModuleType("faster_whisper")
     faster_whisper.__path__ = []  # type: ignore[attr-defined]
-
-    def fake_decode_audio(path: str, sampling_rate: int):
-        calls["decode"] = (path, sampling_rate)
-        return decoded_audio
-
-    faster_whisper.decode_audio = fake_decode_audio  # type: ignore[attr-defined]
-
+    faster_whisper.decode_audio = (  # type: ignore[attr-defined]
+        lambda path, sampling_rate: calls.setdefault("decode", (path, sampling_rate))
+        and decoded_audio
+    )
     vad = ModuleType("faster_whisper.vad")
 
     class FakeVadOptions:
@@ -101,263 +83,179 @@ def test_detect_speech_intervals_uses_pinned_silero_vad_parameters(
 
     def fake_get_speech_timestamps(audio, options, sampling_rate=16000):
         calls["vad_call"] = (audio, options, sampling_rate)
-        return [
-            {"start": 0, "end": 16_000},
-            {"start": 24_000, "end": 32_000},
-        ]
+        return [{"start": 0, "end": 16_000}]
 
     vad.VadOptions = FakeVadOptions  # type: ignore[attr-defined]
     vad.get_speech_timestamps = fake_get_speech_timestamps  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
     monkeypatch.setitem(sys.modules, "faster_whisper.vad", vad)
 
-    intervals = media.detect_speech_intervals(Path("audio.m4a"))
-
-    assert intervals == [(0.0, 1.0), (1.5, 2.0)]
+    assert media.detect_speech_intervals(Path("audio.m4a")) == [(0.0, 1.0)]
     assert calls["decode"] == ("audio.m4a", 16_000)
     assert calls["vad_options"] == {
-        "threshold": 0.5,
-        "min_speech_duration_ms": 250,
-        "min_silence_duration_ms": 500,
+        "threshold": 0.35,
+        "neg_threshold": 0.25,
+        "min_speech_duration_ms": 0,
+        "min_silence_duration_ms": 300,
+        "max_speech_duration_s": math.inf,
         "speech_pad_ms": 0,
     }
-    assert calls["vad_call"][0] is decoded_audio  # type: ignore[index]
 
 
-@pytest.mark.parametrize("duration", [60.0, 300.0, 301.0, 900.0, 3600.0])
-def test_planned_chunks_cover_audio_once_with_normal_duration_bounds(
-    duration: float,
-) -> None:
+@pytest.mark.parametrize("duration", [30.0, 180.0, 301.0, 900.0, 3600.0])
+def test_planned_chunks_cover_audio_once_with_strict_duration_bounds(duration) -> None:
     plan = make_plan(duration)
-
-    assert plan.schema_version == 4
+    assert plan.schema_version == 5
     assert_valid_layout(plan, duration)
-    assert all(
-        chunk.end_boundary in {"silence", "hard", "audio_end"}
-        for chunk in plan.chunks
-    )
 
 
-def test_short_audio_is_one_allowed_chunk_exception() -> None:
-    plan = make_plan(59.5)
-
+def test_audio_shorter_than_thirty_seconds_is_single_worker_single_chunk() -> None:
+    plan = make_plan(29.999)
     assert plan.num_workers == 1
-    assert plan.cpu_threads == 24
     assert len(plan.chunks) == 1
-    assert plan.chunks[0].duration == 59.5
-    assert_valid_layout(plan, 59.5)
+    assert plan.chunks[0].duration == 29.999
 
 
-def test_automatic_plan_uses_largest_feasible_budget_divisor() -> None:
-    plan = make_plan(900.0, cpu_count=32)
-
-    assert plan.cpu_budget == 24
-    assert plan.num_workers == 12
-    assert plan.cpu_threads == 2
-    assert len(plan.chunks) == 12
-    assert [chunk.duration for chunk in plan.chunks] == pytest.approx([75.0] * 12)
-    assert_valid_layout(plan, 900.0)
-
-
-def test_automatic_workers_only_consider_cpu_budget_divisors() -> None:
-    plan = make_plan(900.0, cpu_count=31)
-
-    assert plan.cpu_budget == 23
-    assert plan.num_workers == 1
-    assert plan.cpu_threads == 23
+def test_automatic_workers_are_capped_by_required_chunk_count() -> None:
+    short = make_plan(62.0, cpu_count=32)
+    long = make_plan(900.0, cpu_count=32)
+    assert (short.num_workers, short.cpu_threads, len(short.chunks)) == (1, 24, 1)
+    assert (long.num_workers, long.cpu_threads, len(long.chunks)) == (4, 6, 8)
 
 
 @pytest.mark.parametrize(
     ("num_workers", "cpu_threads", "expected_workers", "expected_threads"),
-    [
-        (5, 4, 5, 4),
-        (7, None, 7, 3),
-        (None, 5, 4, 5),
-    ],
+    [(5, 4, 5, 4), (7, None, 7, 3), (None, 5, 4, 5)],
 )
-def test_explicit_worker_parameters_have_documented_precedence(
-    num_workers: int | None,
-    cpu_threads: int | None,
-    expected_workers: int,
-    expected_threads: int,
+def test_explicit_worker_parameters_keep_precedence(
+    num_workers, cpu_threads, expected_workers, expected_threads
 ) -> None:
     plan = make_plan(
-        900.0,
-        num_workers=num_workers,
-        cpu_threads=cpu_threads,
+        900.0, num_workers=num_workers, cpu_threads=cpu_threads, max_chunk_seconds=180
     )
-
-    assert plan.num_workers == expected_workers
-    assert plan.cpu_threads == expected_threads
-    assert len(plan.chunks) % expected_workers == 0
-    assert plan.num_workers * plan.cpu_threads <= plan.cpu_budget
+    assert (plan.num_workers, plan.cpu_threads) == (expected_workers, expected_threads)
+    assert_valid_layout(plan, 900.0)
 
 
 @pytest.mark.parametrize(
-    ("duration", "num_workers", "cpu_threads"),
-    [
-        (900.0, 5, 5),
-        (900.0, 16, None),
-        (59.5, 2, None),
-        (900.0, None, 25),
-        (900.0, 0, None),
-        (900.0, None, 0),
-    ],
+    ("duration", "workers", "threads"),
+    [(900.0, 5, 5), (29.5, 2, None), (900.0, None, 25), (900.0, 0, None)],
 )
-def test_invalid_explicit_worker_configuration_is_rejected(
-    duration: float,
-    num_workers: int | None,
-    cpu_threads: int | None,
-) -> None:
+def test_invalid_explicit_worker_configuration_is_rejected(duration, workers, threads):
     with pytest.raises(ValueError):
-        make_plan(
-            duration,
-            num_workers=num_workers,
-            cpu_threads=cpu_threads,
-        )
+        make_plan(duration, num_workers=workers, cpu_threads=threads)
 
 
-def test_no_speech_and_one_long_speech_interval_use_balanced_hard_cuts() -> None:
-    no_speech = make_plan(900.0, speech_intervals=[])
-    continuous_speech = make_plan(900.0, speech_intervals=[(0.0, 900.0)])
-
-    assert no_speech == continuous_speech
-    assert [chunk.end_boundary for chunk in no_speech.chunks[:-1]] == ["hard"] * 11
-    assert [chunk.duration for chunk in no_speech.chunks] == pytest.approx([75.0] * 12)
+def test_no_speech_uses_any_silence_position_without_hard_cuts() -> None:
+    plan = make_plan(900.0, speech_intervals=[])
+    assert len(plan.chunks) == 8
+    assert [chunk.end_boundary for chunk in plan.chunks[:-1]] == ["silence"] * 7
+    assert plan.hard_cut_count == 0
 
 
-def test_planner_uses_silence_midpoint_before_adding_hard_cuts() -> None:
+def test_long_continuous_speech_uses_minimum_required_hard_cuts() -> None:
+    plan = make_plan(900.0, speech_intervals=[(0.0, 900.0)])
+    assert len(plan.chunks) == 8
+    assert [chunk.end_boundary for chunk in plan.chunks[:-1]] == ["hard"] * 7
+    assert plan.hard_cut_count == 7
+
+
+def test_leading_trailing_and_internal_silence_are_full_legal_windows() -> None:
     plan = make_plan(
         240.0,
         num_workers=3,
-        speech_intervals=[(0.0, 100.0), (140.0, 240.0)],
+        speech_intervals=[(40.0, 100.0), (140.0, 200.0)],
     )
-
     assert len(plan.chunks) == 3
-    assert 120.0 in chunk_ends(plan)
-    assert [chunk.end_boundary for chunk in plan.chunks].count("silence") == 1
-    assert [chunk.end_boundary for chunk in plan.chunks].count("hard") == 1
+    assert all(chunk.end_boundary != "hard" for chunk in plan.chunks)
     assert_valid_layout(plan, 240.0)
 
 
 def test_hard_cut_count_has_priority_over_batch_count() -> None:
-    cut_points = [100.0, 240.0, 400.0, 580.0, 780.0]
     plan = make_plan(
-        900.0,
-        num_workers=3,
-        speech_intervals=speech_intervals_for_cut_points(900.0, cut_points),
+        360.0,
+        num_workers=1,
+        max_chunk_seconds=180,
+        speech_intervals=[(0.0, 170.0), (190.0, 360.0)],
     )
-
-    assert len(plan.chunks) == 6
-    assert chunk_ends(plan) == cut_points + [900.0]
-    assert [chunk.end_boundary for chunk in plan.chunks] == ["silence"] * 5 + [
-        "audio_end"
-    ]
-
-
-def test_batch_count_breaks_tie_after_hard_cut_count() -> None:
-    cut_points = [150.0, 300.0, 450.0, 600.0, 750.0]
-    plan = make_plan(
-        900.0,
-        num_workers=3,
-        speech_intervals=speech_intervals_for_cut_points(900.0, cut_points),
-    )
-
-    assert len(plan.chunks) == 3
-    assert chunk_ends(plan) == [300.0, 600.0, 900.0]
-    assert [chunk.end_boundary for chunk in plan.chunks] == [
-        "silence",
-        "silence",
-        "audio_end",
-    ]
-
-
-def test_squared_duration_error_breaks_equal_cost_natural_cut_tie() -> None:
-    plan = make_plan(
-        240.0,
-        num_workers=2,
-        speech_intervals=[(0.0, 90.0), (110.0, 115.0), (125.0, 240.0)],
-    )
-
     assert len(plan.chunks) == 2
-    assert chunk_ends(plan) == [120.0, 240.0]
-    assert [chunk.duration for chunk in plan.chunks] == [120.0, 120.0]
+    assert plan.hard_cut_count == 0
 
 
-def test_reversing_speech_interval_input_produces_the_same_plan() -> None:
-    intervals = speech_intervals_for_cut_points(
-        900.0,
-        [100.0, 240.0, 400.0, 580.0, 780.0],
-    )
-
-    forward = make_plan(900.0, num_workers=3, speech_intervals=intervals)
-    reverse = make_plan(900.0, num_workers=3, speech_intervals=list(reversed(intervals)))
-
-    assert reverse == forward
-
-
-def test_dense_natural_boundaries_scale_to_one_hour() -> None:
-    duration = 3600.0
-    speech_intervals = [(0.0, 2.5)]
-    speech_intervals.extend(
-        (float(start) + 0.5, float(start) + 2.5)
-        for start in range(3, 3597, 3)
-    )
-    speech_intervals.append((3597.5, duration))
-
-    started = perf_counter()
+def test_batch_count_has_priority_over_speech_load_balance() -> None:
     plan = make_plan(
-        duration,
-        cpu_count=64,
-        speech_intervals=speech_intervals,
+        150.0,
+        num_workers=1,
+        speech_intervals=[(0.0, 140.0)],
     )
-    elapsed = perf_counter() - started
-
-    assert plan.num_workers == 48
-    assert len(plan.chunks) == 48
-    assert [chunk.duration for chunk in plan.chunks] == pytest.approx([75.0] * 48)
-    assert [chunk.end_boundary for chunk in plan.chunks[:-1]] == ["silence"] * 47
-    assert_valid_layout(plan, duration)
-    assert elapsed < 5.0
+    assert len(plan.chunks) == 1
+    assert plan.batch_count == 1
 
 
-def test_dense_boundaries_with_long_speech_gap_scale_and_use_one_hard_cut() -> None:
-    duration = 3600.0
-    speech_intervals = [(0.0, 2.5)]
-    speech_intervals.extend(
-        (float(start) + 0.5, float(start) + 2.5)
-        for start in range(3, 1497, 3)
+def _oracle(duration, count, speech, minimum, maximum):
+    def speech_at(value):
+        return sum(max(0, min(value, end) - start) for start, end in speech)
+
+    candidates = []
+    for internal in combinations(range(1, duration), count - 1):
+        boundaries = (0, *internal, duration)
+        lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
+        if not all(minimum <= value <= maximum for value in lengths):
+            continue
+        loads = [speech_at(b) - speech_at(a) for a, b in zip(boundaries, boundaries[1:])]
+        hard = sum(any(a < point < b for a, b in speech) for point in internal)
+        total = sum(loads)
+        msre = (
+            sum((count * load - total) ** 2 for load in loads)
+            / (count * total * total)
+            if total
+            else 0.0
+        )
+        candidates.append(((hard, max(loads), msre, boundaries), boundaries))
+    return min(candidates)[1]
+
+
+@pytest.mark.parametrize(
+    "speech",
+    [(), ((0, 12),), ((0, 3), (5, 7), (9, 12)), ((8, 12), (0, 4))],
+)
+def test_optimizer_matches_exhaustive_lexicographic_oracle(speech) -> None:
+    result = optimize_chunk_boundaries(
+        duration_ms=12,
+        chunk_count=3,
+        speech_intervals_ms=speech,
+        min_chunk_ms=3,
+        max_chunk_ms=6,
     )
-    speech_intervals.append((1497.5, 1901.5))
-    speech_intervals.extend(
-        (float(start) + 0.5, float(start) + 2.5)
-        for start in range(1902, 3597, 3)
-    )
-    speech_intervals.append((3597.5, duration))
+    assert result.boundaries_ms == _oracle(12, 3, speech, 3, 6)
 
+
+def test_reversing_and_overlapping_speech_input_produces_same_plan() -> None:
+    intervals = [(0.0, 80.0), (70.0, 160.0), (200.0, 360.0)]
+    assert make_plan(360.0, speech_intervals=intervals) == make_plan(
+        360.0, speech_intervals=list(reversed(intervals))
+    )
+
+
+def test_dense_boundaries_scale_to_one_hour_under_five_seconds() -> None:
+    intervals = [(float(start), float(start + 2)) for start in range(0, 3600, 3)]
     started = perf_counter()
-    plan = make_plan(
-        duration,
-        cpu_count=64,
-        speech_intervals=speech_intervals,
-    )
-    elapsed = perf_counter() - started
-
-    assert plan.num_workers == 48
-    assert len(plan.chunks) == 48
-    assert [chunk.end_boundary for chunk in plan.chunks].count("hard") == 1
-    assert_valid_layout(plan, duration)
-    assert elapsed < 5.0
+    plan = make_plan(3600.0, cpu_count=64, speech_intervals=intervals)
+    assert perf_counter() - started < 5.0
+    assert_valid_layout(plan, 3600.0)
 
 
-def test_plan_records_effective_vad_parameters() -> None:
-    plan = make_plan(900.0)
-
+def test_plan_records_effective_vad_and_planning_parameters() -> None:
+    plan = make_plan(900.0, max_chunk_seconds=180)
     assert plan.vad_parameters == parallel_asr.VadParameters(
-        threshold=0.5,
-        min_speech_duration_ms=250,
-        min_silence_duration_ms=500,
+        threshold=0.35,
+        neg_threshold=0.25,
+        min_speech_duration_ms=0,
+        min_silence_duration_ms=300,
+        max_speech_duration_s=None,
         speech_pad_ms=0,
         sampling_rate=16_000,
     )
-    assert math.isfinite(plan.source_audio.duration)
+    assert plan.planning_parameters == parallel_asr.PlanningParameters(
+        min_chunk_seconds=30.0, max_chunk_seconds=180.0
+    )

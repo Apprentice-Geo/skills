@@ -59,3 +59,5 @@ Processing time depends on whether a valid subtitle or cached result is availabl
 Subtitle reuse is normally the shortest path. Downloading resources adds network-dependent time. CPU faster-whisper processing generally grows with video length and local CPU performance. On supported CUDA hardware, Qwen3-ASR can be more efficient, but model setup, loading, and available GPU resources also affect total time.
 
 faster-whisper splits audio into parallel chunks. If a run is interrupted or exhausts a chunk retry, rerunning the same complete transcription plan reuses valid chunk results and gives unfinished chunks a fresh per-run retry budget.
+
+The global planning VAD uses a 300ms minimum silence and full silence windows as legal boundaries. Normal external chunks are 30-180 seconds; audio shorter than 30 seconds uses one worker and one chunk. Schema 5 plans minimize hard cuts, then batches, maximum estimated VAD speech load, speech-load MSRE, and boundary order. Chunk transcription remains isolated from the planning VAD and passes only `vad_filter=True`.

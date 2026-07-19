@@ -20,6 +20,7 @@ def make_chunk(
         duration=duration,
         path=f"chunks/chunk_{index:03d}.wav",
         end_boundary=end_boundary,
+        estimated_speech_duration=duration / 2,
     )
 
 
@@ -230,6 +231,10 @@ def test_metrics_records_flat_worker_chunk_and_final_segment_fields(
     assert metrics["cpu_threads"] == 3
     assert metrics["chunk_count"] == 4
     assert metrics["batch_count"] == 2
+    assert metrics["hard_cut_count"] == 0
+    assert metrics["chunk_estimated_speech_durations"] == [5.0] * 4
+    assert metrics["max_estimated_speech_duration"] == 5.0
+    assert metrics["speech_load_msre"] == 0.0
     assert metrics["chunk_elapsed_seconds"] == [
         {"chunk_index": 0, "elapsed_seconds": 0.25},
         {"chunk_index": 1, "elapsed_seconds": 1.25},

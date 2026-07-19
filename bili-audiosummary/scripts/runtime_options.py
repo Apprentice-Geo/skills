@@ -73,6 +73,7 @@ class TranscribeOptions:
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE
     cpu_threads: int | None = None
     num_workers: int | None = None
+    max_chunk_seconds: float | None = None
 
     @classmethod
     def from_args(
@@ -93,6 +94,7 @@ class TranscribeOptions:
             beam_size=getattr(args, "beam_size", DEFAULT_TRANSCRIBE_BEAM_SIZE),
             cpu_threads=getattr(args, "cpu_threads", None),
             num_workers=getattr(args, "num_workers", None),
+            max_chunk_seconds=getattr(args, "max_chunk_seconds", None),
         )
 
 

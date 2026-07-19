@@ -54,7 +54,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 - `scripts/asr/common.py`: shared ASR segment normalization helpers.
 - `scripts/asr/qwen3.py`: loads local Qwen3 ASR and forced-aligner models, runs CUDA transcription, and builds timestamped sentence segments.
-- `scripts/asr/parallel/`: faster-whisper parallel ASR package. It contains planning, ffmpeg media splitting, schema-versioned chunk-result caching, resume state, worker execution, merge logic, metrics, process logging, and runner orchestration.
+- `scripts/asr/parallel/`: faster-whisper parallel ASR package. `plan.py` owns identities, worker selection, and assembly; `optimizer.py` owns integer-millisecond boundary optimization. The package also contains ffmpeg splitting, schema-versioned caching, resume state, worker execution, merge logic, metrics, logging, and orchestration.
 - `scripts/config.py`: owns repository paths, language priorities, model locations, ASR defaults, and summary template selection.
 - `scripts/manifest_io.py`: resolves manifest-relative paths, loads manifests and metadata, and infers result directories.
 - `scripts/process_logging.py`: provides shared file logging, concise terminal filtering, timestamped log names, log relocation, subprocess capture, and failure reporting.
@@ -65,16 +65,16 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 ### Parallel faster-whisper Invariants
 
-- Audio is decoded as 16kHz mono for the bundled ONNX Silero VAD. The fixed parameters are `threshold=0.5`, `min_speech_duration_ms=250`, `min_silence_duration_ms=500`, `speech_pad_ms=0`, and `sampling_rate=16000`.
-- The midpoint of each qualifying silence gap is a natural boundary. The global planner adds hard boundaries when VAD reports no speech or leaves continuous speech longer than 300 seconds. Chunks continuously cover the complete audio without sharing samples. Normal chunks are 60-300 seconds; audio shorter than 60 seconds may use one shorter chunk.
-- The CPU budget is `B = max(1, floor(cpu_count * 0.75))`. Automatic worker candidates must divide `B`; the planner chooses the largest worker count `W` for which a legal chunk count exists. For `D >= 60`, a legal `N` is between `ceil(D / 300)` and `floor(D / 60)` and satisfies `N % W == 0`.
-- Worker count has the highest planning priority. For a fixed `W`, candidate plans minimize hard speech cuts, then batches `N / W`, then the sum of squared deviations from target duration `D / N`. Planning consumes all candidate boundaries at once, so reversing candidate input order produces the same layout.
+- Audio is decoded as 16kHz mono for the bundled ONNX Silero VAD. Planning uses `threshold=0.35`, `neg_threshold=0.25`, `min_speech_duration_ms=0`, `min_silence_duration_ms=300`, unlimited `max_speech_duration_s`, `speech_pad_ms=0`, and `sampling_rate=16000`.
+- Speech intervals are clipped, sorted, and merged on an integer-millisecond timeline. The full complement, including leading and trailing silence, is safe boundary space; only a boundary strictly inside speech is `hard`. Chunks cover the complete audio once. Normal chunks are 30-180 seconds; audio shorter than 30 seconds uses one worker and one shorter chunk.
+- The CPU budget is `B = max(1, floor(cpu_count * 0.75))`. Automatic workers do not exceed `ceil(D / 180)`, divide `B` for equal threads, and must admit a legal chunk count `N` divisible by `W`. Explicit worker/thread values keep precedence but must remain legal.
+- Candidate plans are compared globally by hard cuts, batches `N / W`, maximum estimated VAD speech load, speech-load MSRE, and boundary tuple. No-speech regions can split anywhere in silence without a hard-cut charge; long continuous speech uses the fewest necessary explicit hard boundaries.
 - Explicit CLI values constrain the same planner. Two explicit values must satisfy `num_workers * cpu_threads <= B`; worker-only mode uses `floor(B / W)` threads per worker; thread-only mode chooses the largest feasible worker count. An impossible explicit configuration fails before chunk files are written or the ASR model is loaded.
-- Schema 4 stores a flat `chunks` list. Each `AsrChunkPlan` contains only its global `index`, `start`, `duration`, output `path`, and `end_boundary` (`silence`, `hard`, or `audio_end`). The plan also records the source fingerprint, ASR parameters, VAD parameters, CPU budget, worker count, threads per worker, and final layout.
+- Schema 5 stores a flat `chunks` list. Each chunk adds `estimated_speech_duration` to its identity, and the plan records source, ASR, VAD, planning parameters, CPU budget, workers, threads, and layout. Schema 4 plan, progress, and chunk results are rejected.
 - `vad_result.json` has its own Schema 1 identity based only on the source fingerprint and VAD parameters. A valid result, including an empty interval list, can rebuild a plan without decoding the audio or running VAD again. A matching complete plan skips VAD without loading the separate file.
-- One `WhisperModel` uses the resolved worker configuration for all pending chunks. Chunk transcription keeps `vad_filter=True` to skip internal silence and does not pass `initial_prompt`.
+- One `WhisperModel` uses the resolved worker configuration for all pending chunks. Chunk transcription passes `vad_filter=True` but no `vad_parameters`, keeping faster-whisper's internal defaults separate from planning VAD.
 - Merge adds `chunk.start` to every local segment timestamp and orders segments by chunk index and time. Adjacent segments whose time ranges truly intersect are combined; endpoint contact is kept separate. Chinese text is concatenated directly, other languages use one separating space, and no character-level deduplication is performed.
-- Metrics record worker count, threads per worker, chunk count, batch count, elapsed time per chunk, and the final merged segment count.
+- Metrics add hard-cut count, per-chunk estimated speech durations, maximum estimated speech duration, and speech-load MSRE to worker, chunk, batch, elapsed, and segment fields. Soft-duration metrics are not recorded.
 
 ### Setup Entry Points
 
@@ -126,7 +126,7 @@ results/<BVID>/
 - `fetch_manifest.json`: canonical video identity plus paths to metadata, audio, and subtitles.
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
-- `asr_parallel/`: faster-whisper-only workspace. It stores the Schema 4 plan, progress state, Schema 1 VAD result, generated audio chunks, per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery. Plan, progress, VAD, and chunk-result JSON writes are atomic.
+- `asr_parallel/`: faster-whisper-only workspace. It stores the Schema 5 plan, progress state, Schema 1 VAD result, generated audio chunks, per-chunk results, merged intermediate transcript, and metrics used for cache reuse and interrupted-run recovery. Plan, progress, VAD, and chunk-result JSON writes are atomic.
 - `asr_qwen3/result.json`: atomic Schema 1 Qwen3 cache containing source/request identity, raw text, and word-level timestamps. Reuse requires exact identity plus non-empty valid text and timestamps, and occurs before dependency, CUDA, or model checks. Fields that the model does not return are omitted and incomplete results are not reusable.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
 - Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.

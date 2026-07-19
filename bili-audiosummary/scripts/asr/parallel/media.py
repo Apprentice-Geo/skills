@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 from pathlib import Path
@@ -58,6 +59,7 @@ def detect_speech_intervals(
     audio_path: Path,
     vad_parameters: VadParameters = DEFAULT_VAD_PARAMETERS,
 ) -> list[tuple[float, float]]:
+    # VAD 切分
     from faster_whisper import decode_audio
     from faster_whisper.vad import VadOptions, get_speech_timestamps
 
@@ -67,8 +69,14 @@ def detect_speech_intervals(
     )
     options = VadOptions(
         threshold=vad_parameters.threshold,
+        neg_threshold=vad_parameters.neg_threshold,
         min_speech_duration_ms=vad_parameters.min_speech_duration_ms,
         min_silence_duration_ms=vad_parameters.min_silence_duration_ms,
+        max_speech_duration_s=(
+            math.inf
+            if vad_parameters.max_speech_duration_s is None
+            else vad_parameters.max_speech_duration_s
+        ),
         speech_pad_ms=vad_parameters.speech_pad_ms,
     )
     timestamps = get_speech_timestamps(

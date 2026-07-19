@@ -22,6 +22,15 @@ def write_metrics(
             key=lambda value: int(chunk_results[value]["chunk_index"]),
         )
     ]
+    speech_loads = [chunk.estimated_speech_duration for chunk in plan.chunks]
+    total_speech = sum(speech_loads)
+    chunk_count = len(speech_loads)
+    speech_load_msre = (
+        sum((chunk_count * load - total_speech) ** 2 for load in speech_loads)
+        / (chunk_count * total_speech * total_speech)
+        if total_speech
+        else 0.0
+    )
     metrics = {
         "schema_version": SCHEMA_VERSION,
         "total_elapsed_seconds": round(float(total_elapsed_seconds), 3),
@@ -36,6 +45,12 @@ def write_metrics(
         "cpu_threads": plan.cpu_threads,
         "chunk_count": len(plan.chunks),
         "batch_count": len(plan.chunks) // plan.num_workers,
+        "hard_cut_count": sum(
+            chunk.end_boundary == "hard" for chunk in plan.chunks
+        ),
+        "chunk_estimated_speech_durations": speech_loads,
+        "max_estimated_speech_duration": max(speech_loads, default=0.0),
+        "speech_load_msre": speech_load_msre,
         "segment_count": segment_count,
         "failed_chunks": failed_chunks or [],
     }

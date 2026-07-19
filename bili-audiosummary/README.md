@@ -80,15 +80,15 @@ uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-di
 uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-dir "<result-dir>" --asr-provider whisper --num-workers 1 --cpu-threads 1
 ```
 
-CPU 线程预算为 `B = max(1, floor(cpu_count * 0.75))`。自动模式只考虑能整除 `B` 且存在合法切片方案的 worker 数，并选择最大的可行值。只指定 `--num-workers` 时，每个 worker 使用 `floor(B / W)` 个线程；只指定 `--cpu-threads` 时，在预算内选择最大的可行 worker 数；同时指定时保留两个显式值，但要求乘积不超过 `B`。显式值不会被静默降低，非正数、预算超限或无法生成合法切片计划都会在写入切片和加载模型前直接失败。
+CPU 线程预算为 `B = max(1, floor(cpu_count * 0.75))`。自动模式只考虑不超过必要块数、能整除 `B` 且存在合法切片方案的 worker 数，并选择最大的可行值。只指定 `--num-workers` 时，每个 worker 使用 `floor(B / W)` 个线程；只指定 `--cpu-threads` 时，在预算内选择最大的可行 worker 数；同时指定时保留两个显式值，但要求乘积不超过 `B`。显式值不会被静默降低，非正数、预算超限或无法生成合法切片计划都会在写入切片和加载模型前直接失败。
 
-faster-whisper 并行路径复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不需要额外安装 `silero-vad`、PyTorch 或 torchaudio。音频先解码为 16kHz 单声道，VAD 使用 `threshold=0.5`、最短语音 `250ms`、最短静音 `500ms` 和 `speech_pad_ms=0`。相邻语音区间之间的静音中点作为自然切点；无语音或连续语音过长时，规划器补充必要的硬切点。
+faster-whisper 并行路径复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不需要额外安装 `silero-vad`、PyTorch 或 torchaudio。音频先解码为 16kHz 单声道，规划 VAD 固定使用 `threshold=0.35`、`neg_threshold=0.25`、最短语音 `0ms`、最短静音 `300ms`、不限制最长语音、`speech_pad_ms=0` 和 `sampling_rate=16000`。VAD 语音区间会先裁剪、排序并合并，完整静音窗口内的任意整数毫秒位置都可以安全切分；只有严格落在语音区间内部的边界才记为硬切。
 
-正常切片连续覆盖完整音频、互不重叠，时长为 `60s-300s`；完整音频不足 60 秒时允许单切片例外。切片数 `N` 必须是 worker 数 `W` 的整数倍。相同 worker 数下，规划器依次减少语音中的硬切、批次数 `N / W` 和切片相对目标时长的平方偏差，且结果不受候选切点输入顺序影响。例如 CPU 预算为 24、音频为 900 秒时，自动计划使用 12 个 worker、每个 worker 2 个线程，以及 12 个约 75 秒的切片。
+正常切片连续覆盖完整音频、互不重叠，时长为 `30s-180s`；完整音频不足 30 秒时只允许单 worker、单切片例外。切片数 `N` 必须是 worker 数 `W` 的整数倍，批次数严格为 `N / W`。自动 worker 数不超过 `ceil(D / 180)`，并继续遵守 CPU 预算与等线程分配；显式 worker/thread 参数仍优先，但必须能产生合法切片。规划器对所有候选依次最小化硬切数、批次数、最大预计 VAD 语音负载、语音负载 MSRE 和边界顺序。chunk 内 faster-whisper 仍只接收 `vad_filter=True`，不接收这组外部规划 VAD 参数。
 
 ### faster-whisper 并行产物与缓存
 
-Schema 4 使用平铺的 chunk 布局，不再生成分组目录：
+Schema 5 使用平铺的 chunk 布局，不再生成分组目录：
 
 ```text
 asr_parallel/
@@ -103,11 +103,11 @@ asr_parallel/
    └─ chunk_<index>.json
 ```
 
-只有音频指纹、ASR 参数、VAD 参数、worker 配置和最终切片布局全部匹配时，Schema 4 计划与有效 chunk result 才会复用。配置变化时会重建 plan 和 progress，但不会预先删除不兼容的旧结果；同名 chunk 成功后，新结果会通过原子替换覆盖旧文件，其他旧文件继续保留在磁盘上但不会被复用。Schema 4 以前的计划和 chunk result 不复用。
+只有音频指纹、ASR 参数、VAD 参数、规划参数、worker 配置和最终切片布局全部匹配时，Schema 5 计划与有效 chunk result 才会复用。Schema 4 plan、progress 和 chunk result 均不复用；VAD 参数身份变化也会使旧 VAD 缓存自动失效。配置变化时会重建 plan 和 progress，但不会预先删除不兼容的旧结果；同名 chunk 成功后，新结果会通过原子替换覆盖旧文件，其他旧文件继续保留在磁盘上但不会被复用。
 
 `vad_result.json` 使用独立的 Schema 1，只按音频指纹与 VAD 参数校验，空语音区间也是合法结果。完整 plan 命中时会直接跳过 VAD；plan 因 worker 或 ASR 参数变化而重建时，仍可复用合法的 VAD 结果。终端会明确报告 VAD 是随 plan 跳过、从文件复用，还是因缺失或无效而重新生成。
 
-合并时，chunk 内时间戳直接加上该 chunk 的全局开始时间。segment 按 chunk index 和时间排序；只有时间范围真正相交时才合并，端点仅相接时保持分离。中文文本直接拼接，其他语言以一个空格连接，不执行字符级去重。`metrics.json` 记录 worker 数、每 worker 线程数、切片数、批次数、各切片耗时和最终 segment 数。
+合并时，chunk 内时间戳直接加上该 chunk 的全局开始时间。segment 按 chunk index 和时间排序；只有时间范围真正相交时才合并，端点仅相接时保持分离。中文文本直接拼接，其他语言以一个空格连接，不执行字符级去重。`metrics.json` 记录 worker、chunk、batch、硬切数、逐 chunk 预计语音时长、最大预计语音负载、语音负载 MSRE、各切片耗时和最终 segment 数，不再记录软时长指标。
 
 有可用 CUDA 时，可安装 Qwen3-ASR 的可选依赖和模型：
 

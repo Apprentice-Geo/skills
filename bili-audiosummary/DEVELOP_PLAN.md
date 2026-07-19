@@ -69,70 +69,13 @@
 
 ### Task 8: 修改并行切分策略，使用 Silero VAD 预先切分音频（已完成）
 
-**目标：** 使用静音切点替代固定重叠窗口，移除不可靠的字符重叠检查和 macro-chunk 组织，同时保留并行转写、计划落盘、chunk 结果缓存及断点续跑。
+- faster-whisper 并行路径使用内置 Silero VAD 生成语音区间。规划 VAD 使用当前固定参数，完整静音窗口均可作为安全切点；chunk 内转写仍只传递 `vad_filter=True`，与规划 VAD 参数相互独立。
+- 正常 chunk 时长为 `30s-180s`，不足 30 秒的音频使用单 worker、单 chunk。自动 worker 数受必要 chunk 数和 CPU 线程预算约束，显式 worker/thread 参数保持优先并严格校验。
+- `plan.py` 枚举合法 chunk 数并比较批次数，`optimizer.py` 在整数毫秒时间线上优化硬切数、最大预计语音负载、语音负载 MSRE 和边界顺序。
+- Schema 5 记录规划参数和每个 chunk 的预计语音时长；缓存复用要求音频、ASR、VAD、规划参数及 worker 配置匹配，旧 schema 不复用。
+- 合并逻辑使用 chunk 全局起点还原时间戳，只合并真正重叠的 segment；metrics 记录 worker、chunk、batch、硬切数和预计语音负载等信息。相关测试和用户文档已同步。
 
-#### Task 8.1 开发分支与实验改动隔离
-
-- 开发前先保存当前 `benchmark/whisper-parallel-speedup` 的未提交改动，从 `feat/bili-audiosummary` 创建 `feat/silero-vad-chunking`。
-- 新分支带入本计划文档，但不带入当前 `merge.py` 的实验改动。
-- `worker.py` 移除 `initial_prompt` 属于独立 bug 修复；不走 merge 流程，在 Task 8 开发中重新实现并移除对应失效 import。
-- 当前实验改动需要保留，确保之后仍可回到实验分支恢复。
-
-#### Task 8.2 Silero VAD 与自然切点
-
-- 复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不新增 `silero-vad`、PyTorch 或 torchaudio 基础依赖。
-- 将音频解码为 16kHz 单声道后获取 start-end 语音区间；使用 `threshold=0.5`、最短语音 `250ms`、最短静音 `500ms`、无 speech padding。
-- 相邻语音区间之间的静音中点是自然切点；VAD 未检测到语音或连续语音过长时，由全局规划器生成必要的硬切点。
-- 最终切片连续覆盖完整音频、互不重叠，正常时长限制为 `60s-300s`；完整音频不足 60 秒时允许单切片例外。
-
-#### Task 8.3 联合规划切片数与 worker 数
-
-- CPU 线程预算保持 `B = max(1, floor(cpu_count * 0.75))`。
-- 自动模式移除 worker 最大值 8 和固定 worker 档位，worker 上限改为 `B`；只考虑满足 `B % W == 0` 的 worker 数，并优先选择最大的可行 `W`，每个 worker 使用 `B / W` 个线程。
-- 对音频时长 `D`，正常切片数范围为 `ceil(D / 300)` 到 `floor(D / 60)`，并强制 `N % W == 0`，使每个 worker 获得相同数量的切片。
-- 对每个候选切片数 `N`，使用固定段数的有向无环图动态规划选择全局边界：
-  1. 切片必须满足 `60s-300s`，完整覆盖音频且没有交叠。
-  2. 优先最小化语音中的硬切次数。
-  3. 再最小化批次数 `N / W`。
-  4. 最后最小化各切片相对目标时长 `D / N` 的平方偏差，使切片和 worker 负载尽可能均衡。
-- worker 数是最高层规划优先级；静音切点、批次数和时长均衡只在相同 worker 数下比较。算法使用全部候选切点一次性求解，结果不依赖正序或逆序贪心。
-- 显式 CLI 参数优先于自动规划：
-  - 同时指定 `--num-workers` 和 `--cpu-threads` 时保留用户值，但要求乘积不超过线程预算。
-  - 只指定 worker 数时，每个 worker 使用 `floor(B / W)` 个线程，允许余数线程闲置。
-  - 只指定每 worker 线程数时，在预算内选择存在合法切片方案的最大 worker 数。
-  - 显式 worker 仍要求 `N % W == 0`；若不存在满足时长限制的切片数，在音频切分和模型加载前报错。
-
-#### Task 8.4 简化 plan、执行和断点续跑
-
-- ASR plan schema 升级，删除 `MacroChunkPlan`、macro index、trusted window、source overlap、左右 overlap 等字段；旧 schema 的 plan 和 chunk result 不复用。
-- 每个 chunk 只记录全局 index、start、duration、输出路径和结束边界类型（静音、硬切或音频结尾）。plan 同时记录 VAD 参数、CPU 预算、worker 配置和最终切片布局。
-- workspace 简化为 `chunks/chunk_<index>.wav` 和 `chunk_results/chunk_<index>.json`。
-- plan 的音频指纹、ASR 参数、VAD 参数及 worker 配置完全匹配时，重跑直接复用切分计划和有效 chunk result；不匹配时重建 plan/progress，旧结果保留但忽略。
-- 保留 JSON 原子替换、有效结果优先、单次运行内失败重试一次，以及再次运行时为未完成 chunk 提供新重试预算的行为。
-- 移除按 macro 串行执行的逻辑，只加载一个统一配置的 WhisperModel，使用规划出的 worker 数处理全部 pending chunks。
-- chunk 转写继续使用 `vad_filter=True` 跳过内部静音，但不再传递 `initial_prompt`。
-
-#### Task 8.5 简化结果合并与指标
-
-- chunk 内 segment 时间戳直接加 `chunk.start` 转为全局时间，不再按 trusted window 裁剪，也不再执行字符级重叠检测。
-- 按 chunk index 和 segment 时间排序；若相邻 segment 的时间范围真正重叠，则合并为一个 segment，start 取较早值、end 取较晚值，中文文本直接拼接，其他语言使用单个空格连接。
-- 时间端点仅相接时不合并；合并完成后重新连续编号，并继续校验结束时间不得早于开始时间。
-- metrics 删除 macro 指标，记录 worker 数、每 worker 线程数、切片数、批次数、各切片耗时和最终 segment 数。
-
-#### Task 8.6 测试与文档验收
-
-- VAD 测试覆盖 500ms 静音配置、静音中点、无语音输入和连续长语音硬切。
-- 规划测试覆盖完整音频无缝覆盖、`60s-300s`、`N % W == 0`、最大 worker 优先、硬切最少、负载均衡，以及正序/逆序输入得到相同计划。
-- worker 测试覆盖不同 CPU 预算、显式参数和闲置线程；例如预算 24、音频 900 秒时应规划为 12 worker、12 个约 75 秒切片。
-- 缓存测试覆盖旧 schema 不复用、新 schema 完整匹配时复用 plan/result，以及音频、VAD 或 worker 配置变化时重建。
-- merge 测试覆盖全局时间偏移、真实重叠合并、端点相接不合并、无字符去重和非法时间戳。
-- 增加回归测试，确保实际 chunk 转写调用不包含 `initial_prompt`。
-- 同步 `README.md`、`references/architecture.md` 和 `references/error-handling.md` 中的 worker 约束、目录结构、schema、缓存及 merge 说明。
-- 完成后运行 `pytest tests -q`，再使用已有本地音频验证切片计划、并行转写、缓存复用和最终时间线。
-
-### Task 9: 增加 Qwen3-ASR 的中间结果落盘
-
-目前的 Qwen3-ASR 路径会直接落盘最终结果，但是中间的text和词级别时间戳不会落盘，需要类似 whisper 路径的中间结果落盘，便于排查。 
+### Task 9: 增加 Qwen3-ASR 的中间结果落盘（已完成）
 
 ---
 

@@ -26,6 +26,59 @@ def test_whisper_parallel_benchmark_cli_defaults_to_three_repetitions(monkeypatc
 
     assert args.video == ["BV1MN4y177PB"]
     assert args.repetitions == 3
+    assert args.max_chunk_seconds == [180, 300, 450]
+
+
+def test_chunk_limit_benchmark_rotates_limit_order() -> None:
+    assert whisper_parallel_benchmark.rotated_limits((180, 300, 450), 0) == (
+        180,
+        300,
+        450,
+    )
+    assert whisper_parallel_benchmark.rotated_limits((180, 300, 450), 1) == (
+        300,
+        450,
+        180,
+    )
+    assert whisper_parallel_benchmark.rotated_limits((180, 300, 450), 2) == (
+        450,
+        180,
+        300,
+    )
+
+
+def test_chunk_limit_report_applies_hard_cut_gate_and_geometric_mean() -> None:
+    results = []
+    values = {
+        "a": {180: (10.0, 0), 300: (12.0, 0), 450: (9.0, 1)},
+        "b": {180: (20.0, 0), 300: (20.0, 0), 450: (18.0, 0)},
+    }
+    for bvid, by_limit in values.items():
+        for limit, (elapsed, hard_cuts) in by_limit.items():
+            for repetition in range(3):
+                results.append(
+                    {
+                        "bvid": bvid,
+                        "max_chunk_seconds": limit,
+                        "repetition": repetition + 1,
+                        "elapsed_seconds": elapsed,
+                        "chunk_count": 2,
+                        "num_workers": 1,
+                        "batch_count": 2,
+                        "hard_cut_count": hard_cuts,
+                        "chunk_estimated_speech_durations": [1.0, 1.0],
+                        "max_estimated_speech_duration": 1.0,
+                        "speech_load_msre": 0.0,
+                    }
+                )
+
+    summary = whisper_parallel_benchmark.summarize_results(results)
+
+    assert summary["quality_pass"] == {"180": True, "300": True, "450": False}
+    assert summary["winner_max_chunk_seconds"] == 180
+    assert summary["geometric_mean_runtime_ratio_to_300"]["180"] == pytest.approx(
+        (10 / 12 * 20 / 20) ** 0.5
+    )
 
 
 def test_default_benchmark_matrix_covers_requested_videos_and_models() -> None:
