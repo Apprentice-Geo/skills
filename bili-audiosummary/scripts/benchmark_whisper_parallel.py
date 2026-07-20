@@ -26,7 +26,6 @@ from scripts.utils import ensure_dir, read_json, write_json
 DEFAULT_MAX_CHUNK_SECONDS = (180, 300, 450)
 DEFAULT_VIDEO_IDS = (
     "BV1W694BEE7F",
-    "BV1Ls41127sG",
     "BV1Nt4y1D7pW",
     "BV1MN4y177PB",
     "BV1ks411e7W4",

@@ -126,12 +126,11 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider 
 
 ## ASR Benchmark
 
-benchmark 会对 10 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwen3-ASR，记录每次转写的总耗时、转写实时系数、转写进程树的采样峰值 RSS，以及 Qwen3 的 CUDA 峰值已分配/保留显存。计时包含模型加载、切片、推理、对齐和转写文件写入；音频下载、依赖安装和模型下载不计入结果。
+benchmark 会对 9 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwen3-ASR，记录每次转写的总耗时、转写实时系数、转写进程树的采样峰值 RSS，以及 Qwen3 的 CUDA 峰值已分配/保留显存。计时包含模型加载、切片、推理、对齐和转写文件写入；音频下载、依赖安装和模型下载不计入结果。
 
 | 视频 | 标注时长 |
 | --- | --- |
 | https://www.bilibili.com/video/BV1W694BEE7F/ | 00:01:03 |
-| https://www.bilibili.com/video/BV1Ls41127sG/ | 00:05:57 |
 | https://www.bilibili.com/video/BV1Nt4y1D7pW/ | 00:07:56 |
 | https://www.bilibili.com/video/BV1MN4y177PB/ | 00:11:27 |
 | https://www.bilibili.com/video/BV1ks411e7W4/ | 00:19:45 |
@@ -147,7 +146,7 @@ benchmark 会对 10 个固定 Bilibili 视频分别运行 faster-whisper 与 Qwe
 uv run --no-sync python -m scripts.benchmark
 ```
 
-默认会运行全部 10 个视频与两种模型，耗时很长。需要局部重测时可重复传入 `--video` 或 `--provider`：
+默认会运行全部 9 个视频与两种模型，耗时很长。需要局部重测时可重复传入 `--video` 或 `--provider`：
 
 ```powershell
 uv run --no-sync python -m scripts.benchmark --video BV1W694BEE7F --provider whisper

@@ -46,7 +46,6 @@ class BenchmarkVideo:
 BENCHMARK_VIDEOS = (
       
     BenchmarkVideo("BV1W694BEE7F", "00:01:03"), 
-    BenchmarkVideo("BV1Ls41127sG", "00:05:57"),
     BenchmarkVideo("BV1Nt4y1D7pW", "00:07:56"), 
     BenchmarkVideo("BV1MN4y177PB", "00:11:27"),
     BenchmarkVideo("BV1ks411e7W4", "00:19:45"),  

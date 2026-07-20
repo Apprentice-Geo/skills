@@ -84,7 +84,6 @@ def test_chunk_limit_report_applies_hard_cut_gate_and_geometric_mean() -> None:
 def test_default_benchmark_matrix_covers_requested_videos_and_models() -> None:
     assert [(video.bvid, video.duration_label) for video in benchmark.BENCHMARK_VIDEOS] == [
          ("BV1W694BEE7F", "00:01:03"), 
-     ("BV1Ls41127sG", "00:05:57"),
      ("BV1Nt4y1D7pW", "00:07:56"), 
      ("BV1MN4y177PB", "00:11:27"),
      ("BV1ks411e7W4", "00:19:45"),
@@ -95,6 +94,12 @@ def test_default_benchmark_matrix_covers_requested_videos_and_models() -> None:
      ("BV1mL411z7Kf", "02:59:43"),
     ]
     assert benchmark.DEFAULT_PROVIDERS == ("whisper", "qwen3")
+    assert whisper_parallel_benchmark.DEFAULT_VIDEO_IDS == (
+        "BV1W694BEE7F",
+        "BV1Nt4y1D7pW",
+        "BV1MN4y177PB",
+        "BV1ks411e7W4",
+    )
 
 
 def test_benchmark_fetches_audio_without_subtitles_or_explicit_cookies(mocker) -> None:
