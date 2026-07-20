@@ -169,6 +169,9 @@ def _normalize_speech_intervals(
 
 
 def _merge_ranges(ranges: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
+    '''
+    合并重叠或相邻连续区间
+    '''
     ordered = sorted((lo, hi) for lo, hi in ranges if lo <= hi)
     merged: list[list[int]] = []
     for lo, hi in ordered:
@@ -183,6 +186,9 @@ def _intersect_ranges(
     left: Iterable[tuple[int, int]],
     right: Iterable[tuple[int, int]],
 ) -> list[tuple[int, int]]:
+    '''
+    对两个区间列表取交集
+    '''
     left_ranges = list(left)
     right_ranges = list(right)
     result: list[tuple[int, int]] = []
@@ -207,6 +213,7 @@ def _clip_ranges(
     lo: int,
     hi: int,
 ) -> list[tuple[int, int]]:
+    # 裁剪区间列表到指定范围
     if lo > hi:
         return []
     return _intersect_ranges(ranges, [(lo, hi)])
@@ -219,6 +226,10 @@ def _stage_window(
     minimum: int,
     maximum: int,
 ) -> tuple[int, int]:
+    '''
+    基于 chunk 长度限制
+    计算指定 chunk 的合法时间窗口范围
+    '''
     return (
         max(stage * minimum, duration - (chunk_count - stage) * maximum),
         min(stage * maximum, duration - (chunk_count - stage) * minimum),
@@ -280,6 +291,10 @@ def _advance_reachable(
     maximum_load: int | None,
     minimum_window_allowed: list[tuple[int, int]] | None,
 ) -> list[tuple[int, int]]:
+    '''
+    根据上一边界的可达范围
+    计算下一边界的可达范围
+    '''
     if maximum_load is None:
         return _merge_ranges(
             (lo + minimum, min(timeline.duration, hi + maximum))
@@ -318,11 +333,19 @@ def _reachable_layers(
     maximum_load: int | None,
     hard_limit: int | None = None,
 ) -> list[dict[int, list[tuple[int, int]]]]:
+    '''
+    在限制条件下寻找并返回可行切分
+    '''
     minimum_window_allowed = (
         None
         if maximum_load is None
         else _minimum_window_allowed_ranges(timeline, minimum, maximum_load)
     )
+    '''
+    layers[i][j]
+    恰使用 j 个硬切点
+    第 i 个边界可达的时间范围列表
+    '''
     layers: list[dict[int, list[tuple[int, int]]]] = [{0: [(0, 0)]}]
     for stage in range(1, chunk_count + 1):
         window_lo, window_hi = _stage_window(
@@ -334,6 +357,9 @@ def _reachable_layers(
         )
         next_layer: dict[int, list[tuple[int, int]]] = {}
         for hard_used, ranges in layers[-1].items():
+            '''
+            layers[i][j] 由 layers[i-1][j] 和 layers[i-1][j-1] 递推得到
+            '''
             advanced = _advance_reachable(
                 ranges,
                 timeline,
@@ -382,6 +408,7 @@ def _minimum_hard_cut_count(
         maximum,
         maximum_load=None,
     )
+    # 在可行切分中取硬切最少的
     feasible = [
         hard_used
         for hard_used, ranges in layers[-1].items()
@@ -399,6 +426,11 @@ def _minimum_maximum_load(
     maximum: int,
     hard_cut_count: int,
 ) -> tuple[int, list[dict[int, list[tuple[int, int]]]]]:
+    '''
+    二分答案
+    确定最少硬切数时
+    最小化最大语音切片长度
+    '''
     low = math.ceil(timeline.total_speech / chunk_count)
     high = timeline.total_speech
     best_layers: list[dict[int, list[tuple[int, int]]]] | None = None
@@ -414,10 +446,12 @@ def _minimum_maximum_load(
             hard_limit=hard_cut_count,
         )
         if hard_cut_count in layers[-1]:
+            # middle 可行 减少负载
             high = middle
             best_layers = layers
             best_load = middle
         else:
+            # middle 不可行 增加负载
             low = middle + 1
     if best_layers is None or best_load != low:
         best_layers = _reachable_layers(
