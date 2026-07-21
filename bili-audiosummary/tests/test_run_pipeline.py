@@ -77,9 +77,7 @@ def make_transcribe_result(result_dir: Path) -> dict:
 def test_make_transcribe_args_uses_automatic_parallel_configuration(
     workspace_tmp_path: Path,
 ) -> None:
-    options = run_pipeline.PipelineOptions(
-        url="https://www.bilibili.com/video/BVTEST/"
-    )
+    options = run_pipeline.PipelineOptions(url="https://www.bilibili.com/video/BVTEST/")
 
     transcribe_options = run_pipeline.make_transcribe_args(
         options,
@@ -210,7 +208,12 @@ def test_parse_args_accepts_summary_language(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["run_pipeline.py", "https://www.bilibili.com/video/BVTEST/", "--summary-language", "en"],
+        [
+            "run_pipeline.py",
+            "https://www.bilibili.com/video/BVTEST/",
+            "--summary-language",
+            "en",
+        ],
     )
 
     options = run_pipeline.PipelineOptions.from_args(run_pipeline.parse_args())
@@ -234,7 +237,9 @@ def test_pipeline_prefers_usable_subtitle_without_calling_asr(
         manifest_payload,
         metadata_payload,
     )
-    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
     transcribe_mock = mocker.patch("scripts.run_pipeline.transcribe.run_transcribe")
 
     result = run_pipeline.run_pipeline(make_args())
@@ -260,14 +265,19 @@ def test_pipeline_uses_explicit_summary_language(
         manifest_payload,
         metadata_payload,
     )
-    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
     args = make_args()
     args.summary_language = "en"
 
     result = run_pipeline.run_pipeline(args)
 
     assert result["prompt"]["summary_path"].name == "BVTEST_summary_en.md"
-    assert result["prompt"]["template_path"] == run_pipeline.SUMMARY_TEMPLATE_BY_LANGUAGE["en"]
+    assert (
+        result["prompt"]["template_path"]
+        == run_pipeline.SUMMARY_TEMPLATE_BY_LANGUAGE["en"]
+    )
 
 
 def test_skip_subtitles_forces_asr_even_when_subtitle_exists(
@@ -286,7 +296,9 @@ def test_skip_subtitles_forces_asr_even_when_subtitle_exists(
         manifest_payload,
         metadata_payload,
     )
-    run_fetch_mock = mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    run_fetch_mock = mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
     transcribe_mock = mocker.patch(
         "scripts.run_pipeline.transcribe.run_transcribe",
         return_value=make_transcribe_result(fetch_result["paths"]["result"]),
@@ -307,8 +319,12 @@ def test_pipeline_fails_before_asr_when_no_audio_is_available(
     metadata_payload: dict,
     mocker,
 ) -> None:
-    fetch_result = make_fetch_result(workspace_tmp_path, [], [], manifest_payload, metadata_payload)
-    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    fetch_result = make_fetch_result(
+        workspace_tmp_path, [], [], manifest_payload, metadata_payload
+    )
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
     transcribe_mock = mocker.patch("scripts.run_pipeline.transcribe.run_transcribe")
 
     with pytest.raises(RuntimeError, match="No usable audio files available"):
@@ -404,6 +420,7 @@ def test_pipeline_stdout_matches_asr_stage_contract(
         return fetch_result
 
     mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", side_effect=fake_fetch)
+
     def fake_transcribe(_args):
         run_pipeline.terminal_info(
             run_pipeline.get_logger("transcribe"),
@@ -477,7 +494,9 @@ def test_transcribe_failure_does_not_report_completed(
         manifest_payload,
         metadata_payload,
     )
-    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
     mocker.patch(
         "scripts.run_pipeline.transcribe.run_transcribe",
         side_effect=RuntimeError("transcribe failed"),
@@ -512,7 +531,9 @@ def test_qwen3_failure_stops_pipeline_before_summary_prompt(
         manifest_payload,
         metadata_payload,
     )
-    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result)
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
     transcribe_mock = mocker.patch(
         "scripts.run_pipeline.transcribe.run_transcribe",
         side_effect=RuntimeError("qwen3 failed"),

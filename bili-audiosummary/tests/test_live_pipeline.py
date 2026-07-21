@@ -13,7 +13,9 @@ def test_live_pipeline_can_force_asr_with_url_and_cookies() -> None:
     url = os.environ.get("BILI_TEST_URL")
     cookies = os.environ.get("BILI_TEST_COOKIES")
     if not url or not cookies:
-        pytest.skip("Set BILI_TEST_URL and BILI_TEST_COOKIES to run live pipeline tests.")
+        pytest.skip(
+            "Set BILI_TEST_URL and BILI_TEST_COOKIES to run live pipeline tests."
+        )
 
     completed = subprocess.run(
         [

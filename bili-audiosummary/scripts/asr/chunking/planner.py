@@ -39,7 +39,11 @@ def legal_chunk_count_range(
     sample_count: int,
     parameters: PlanningParameters = DEFAULT_PLANNING_PARAMETERS,
 ) -> tuple[int, int]:
-    if isinstance(sample_count, bool) or not isinstance(sample_count, int) or sample_count <= 0:
+    if (
+        isinstance(sample_count, bool)
+        or not isinstance(sample_count, int)
+        or sample_count <= 0
+    ):
         raise ValueError(f"Invalid audio sample count: {sample_count!r}.")
     if sample_count < parameters.min_chunk_samples:
         return 1, 1
@@ -57,12 +61,18 @@ def candidate_chunk_counts(
     count_strategy: CountStrategy,
     parameters: PlanningParameters = DEFAULT_PLANNING_PARAMETERS,
 ) -> list[int]:
-    if isinstance(group_size, bool) or not isinstance(group_size, int) or group_size < 1:
+    if (
+        isinstance(group_size, bool)
+        or not isinstance(group_size, int)
+        or group_size < 1
+    ):
         raise ValueError("group_size must be a positive integer.")
     minimum, maximum = legal_chunk_count_range(sample_count, parameters)
     if minimum == maximum == 1 and sample_count < parameters.min_chunk_samples:
         return [1]
-    divisible = [count for count in range(minimum, maximum + 1) if count % group_size == 0]
+    divisible = [
+        count for count in range(minimum, maximum + 1) if count % group_size == 0
+    ]
     if count_strategy == "divisible":
         return divisible
     if count_strategy == "full":
@@ -183,7 +193,11 @@ def plan_chunks(
         layouts = plan_fixed_chunk_count(sample_count, count, intervals, parameters)
         loads = tuple(item.estimated_speech_samples for item in layouts)
         mean = sum(loads) / len(loads)
-        msre = sum(((value - mean) / mean) ** 2 for value in loads) / len(loads) if mean else 0.0
+        msre = (
+            sum(((value - mean) / mean) ** 2 for value in loads) / len(loads)
+            if mean
+            else 0.0
+        )
         rank = (
             sum(item.end_boundary == BOUNDARY_HARD for item in layouts),
             math.ceil(count / group_size),

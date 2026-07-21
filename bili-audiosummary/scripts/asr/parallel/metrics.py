@@ -45,9 +45,7 @@ def write_metrics(
         "cpu_threads": plan.cpu_threads,
         "chunk_count": len(plan.chunks),
         "batch_count": len(plan.chunks) // plan.num_workers,
-        "hard_cut_count": sum(
-            chunk.end_boundary == "hard" for chunk in plan.chunks
-        ),
+        "hard_cut_count": sum(chunk.end_boundary == "hard" for chunk in plan.chunks),
         "chunk_estimated_speech_durations": speech_loads,
         "max_estimated_speech_duration": max(speech_loads, default=0.0),
         "speech_load_msre": speech_load_msre,

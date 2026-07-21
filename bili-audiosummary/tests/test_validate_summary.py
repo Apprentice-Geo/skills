@@ -37,7 +37,9 @@ def test_validate_summary_accepts_matching_template_languages(
     chinese_summary = workspace_tmp_path / "BVTEST_summary_zh.md"
     english_summary = workspace_tmp_path / "BVTEST_summary_en.md"
     chinese_summary.write_text("# 视频总结\n\n这是完整内容。\n", encoding="utf-8")
-    english_summary.write_text("# Video Summary\n\nThis is complete.\n", encoding="utf-8")
+    english_summary.write_text(
+        "# Video Summary\n\nThis is complete.\n", encoding="utf-8"
+    )
 
     assert validate_summary.validate_summary(chinese_summary).ok
     assert validate_summary.validate_summary(english_summary).ok
@@ -147,7 +149,9 @@ def test_validate_summary_reports_language_warning_separately_from_errors(
     workspace_tmp_path: Path,
 ) -> None:
     summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text("{{title}}\n<!-- remove this -->\nEnglish text\n", encoding="utf-8")
+    summary.write_text(
+        "{{title}}\n<!-- remove this -->\nEnglish text\n", encoding="utf-8"
+    )
 
     result = validate_summary.validate_summary(summary)
 

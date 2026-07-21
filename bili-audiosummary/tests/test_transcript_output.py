@@ -86,6 +86,5 @@ def test_write_markdown_from_json_preserves_json_and_compacts_transcript_lines(
     assert read_json(json_path) == payload
     markdown = markdown_path.read_text(encoding="utf-8")
     assert (
-        "[00:00:00 - 00:00:10] 第一段，第二段\n"
-        "[00:00:10 - 00:00:11] 结束。"
+        "[00:00:00 - 00:00:10] 第一段，第二段\n[00:00:10 - 00:00:11] 结束。"
     ) in markdown

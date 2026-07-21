@@ -151,7 +151,11 @@ def transcribe_whisper_chunks(
 
     with ThreadPoolExecutor(max_workers=plan.num_workers) as executor:
         while True:
-            current = [chunk for chunk in plan.chunks if progress["chunks"][chunk_key(chunk)]["status"] == "pending"]
+            current = [
+                chunk
+                for chunk in plan.chunks
+                if progress["chunks"][chunk_key(chunk)]["status"] == "pending"
+            ]
             if not current:
                 break
             futures: dict[Future, AsrChunkPlan] = {}
@@ -170,17 +174,25 @@ def transcribe_whisper_chunks(
                     retries = int(item.get("retry_count", 0))
                     logger.warning("ASR chunk %s failed", key, exc_info=True)
                     if retries < MAX_CHUNK_RETRIES:
-                        item.update(status="pending", retry_count=retries + 1, error=None)
+                        item.update(
+                            status="pending", retry_count=retries + 1, error=None
+                        )
                     else:
-                        item.update(status="failed", retry_count=retries, error=str(exc))
+                        item.update(
+                            status="failed", retry_count=retries, error=str(exc)
+                        )
                     write_progress(progress_path, progress)
                     continue
                 payload = _chunk_result_payload(plan, chunk, elapsed, info, segments)
-                write_chunk_result_atomic(chunk_result_path(workspace_dir, chunk), payload)
+                write_chunk_result_atomic(
+                    chunk_result_path(workspace_dir, chunk), payload
+                )
                 results[key] = payload
                 progress["chunks"][key].update(status="succeeded", error=None)
                 write_progress(progress_path, progress)
             blocking = failed_chunks_blocking_merge(progress)
             if blocking:
-                raise RuntimeError(f"ASR chunk failed after retry: {', '.join(blocking)}")
+                raise RuntimeError(
+                    f"ASR chunk failed after retry: {', '.join(blocking)}"
+                )
     return results

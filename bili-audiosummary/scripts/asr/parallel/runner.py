@@ -69,7 +69,9 @@ def _load_matching_plan(
         if options.model is not None and options.model != plan.model:
             return None
         plan_options = _options_with_model(options, str(plan.model))
-        workers = resolve_worker_config(plan.source_audio.sample_count, os.cpu_count(), plan_options)
+        workers = resolve_worker_config(
+            plan.source_audio.sample_count, os.cpu_count(), plan_options
+        )
         if not plan_matches_request(plan, plan.source_audio, plan_options, workers):
             return None
         return plan, plan_options
@@ -92,7 +94,10 @@ def run_parallel_whisper_transcribe(
     if plan is not None:
         cached = load_valid_chunk_results(workspace_dir, plan)
         if len(cached) == len(plan.chunks):
-            terminal_info(logger, "[Transcribe] cache: complete; skipped audio decode and model load")
+            terminal_info(
+                logger,
+                "[Transcribe] cache: complete; skipped audio decode and model load",
+            )
             merged = merge_chunk_results(plan, cached)
             return _result(plan, merged)
 
@@ -104,12 +109,20 @@ def run_parallel_whisper_transcribe(
     if plan is None:
         model_path = _resolve_model_path(options.model)
         plan_options = _options_with_model(options, model_path)
-        workers = resolve_worker_config(audio.sample_count, os.cpu_count(), plan_options)
+        workers = resolve_worker_config(
+            audio.sample_count, os.cpu_count(), plan_options
+        )
         vad_existed = paths["vad_result"].exists()
-        speech = load_valid_vad_result(paths["vad_result"], source, DEFAULT_VAD_PARAMETERS) if vad_existed else None
+        speech = (
+            load_valid_vad_result(paths["vad_result"], source, DEFAULT_VAD_PARAMETERS)
+            if vad_existed
+            else None
+        )
         if speech is None:
             speech = detect_speech_intervals(audio, DEFAULT_VAD_PARAMETERS)
-            write_vad_result(paths["vad_result"], source, DEFAULT_VAD_PARAMETERS, speech)
+            write_vad_result(
+                paths["vad_result"], source, DEFAULT_VAD_PARAMETERS, speech
+            )
         plan = build_parallel_asr_plan(
             sample_count=audio.sample_count,
             cpu_count=os.cpu_count(),
@@ -154,7 +167,9 @@ def _result(
             "device": plan.device,
             "compute_type": plan.compute_type,
             "beam_size": plan.beam_size,
-            "text_normalization": "simplified-chinese" if is_chinese_language(plan.language) else None,
+            "text_normalization": "simplified-chinese"
+            if is_chinese_language(plan.language)
+            else None,
         },
         segments,
         "faster-whisper",

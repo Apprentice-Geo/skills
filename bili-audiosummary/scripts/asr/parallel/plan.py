@@ -151,12 +151,16 @@ class AsrChunkPlan:
                 raise TypeError("end_sample is required")
             end_sample = start_sample + round(float(duration) * SAMPLE_RATE)
         if estimated_speech_samples is None:
-            estimated_speech_samples = round(float(estimated_speech_duration or 0.0) * SAMPLE_RATE)
+            estimated_speech_samples = round(
+                float(estimated_speech_duration or 0.0) * SAMPLE_RATE
+            )
         object.__setattr__(self, "index", int(index))
         object.__setattr__(self, "start_sample", int(start_sample))
         object.__setattr__(self, "end_sample", int(end_sample))
         object.__setattr__(self, "end_boundary", str(end_boundary))
-        object.__setattr__(self, "estimated_speech_samples", int(estimated_speech_samples))
+        object.__setattr__(
+            self, "estimated_speech_samples", int(estimated_speech_samples)
+        )
 
     @property
     def start(self) -> float:
@@ -223,12 +227,22 @@ def source_audio_fingerprint(
         if isinstance(sample_count, float)
         else int(sample_count)
     )
-    return AsrSourceAudio(path_to_posix(audio_path), stat.st_size, stat.st_mtime, resolved_count, sample_rate)
+    return AsrSourceAudio(
+        path_to_posix(audio_path),
+        stat.st_size,
+        stat.st_mtime,
+        resolved_count,
+        sample_rate,
+    )
 
 
 def source_file_matches(source: AsrSourceAudio, audio_path: Path) -> bool:
     stat = audio_path.stat()
-    return source.path == path_to_posix(audio_path) and source.size == stat.st_size and source.mtime == stat.st_mtime
+    return (
+        source.path == path_to_posix(audio_path)
+        and source.size == stat.st_size
+        and source.mtime == stat.st_mtime
+    )
 
 
 def _options_value(options: Any, name: str, default: Any = None) -> Any:
@@ -243,7 +257,9 @@ def resolve_planning_parameters(options: TranscribeOptions | Any) -> PlanningPar
     requested = _options_value(options, "max_chunk_seconds", None)
     maximum = MAX_ASR_CHUNK_SECONDS if requested is None else float(requested)
     if not math.isfinite(maximum) or maximum < MIN_ASR_CHUNK_SECONDS:
-        raise ValueError(f"Invalid max_chunk_seconds={requested!r}: expected at least 30.")
+        raise ValueError(
+            f"Invalid max_chunk_seconds={requested!r}: expected at least 30."
+        )
     return PlanningParameters(max_chunk_seconds=maximum)
 
 
@@ -260,7 +276,11 @@ def resolve_worker_config(
     planning_parameters: PlanningParameters | None = None,
 ) -> WorkerConfig:
     parameters = planning_parameters or resolve_planning_parameters(options)
-    sample_count = round(duration_or_samples * SAMPLE_RATE) if isinstance(duration_or_samples, float) else int(duration_or_samples)
+    sample_count = (
+        round(duration_or_samples * SAMPLE_RATE)
+        if isinstance(duration_or_samples, float)
+        else int(duration_or_samples)
+    )
     budget = _cpu_budget(cpu_count)
     requested_workers = _options_value(options, "num_workers", None)
     requested_threads = _options_value(options, "cpu_threads", None)
@@ -270,14 +290,27 @@ def resolve_worker_config(
         requested_threads = _positive_int(requested_threads, "cpu_threads")
 
     def legal(workers: int) -> bool:
-        return bool(candidate_chunk_counts(sample_count, group_size=workers, count_strategy="divisible", parameters=parameters.as_sample_parameters()))
+        return bool(
+            candidate_chunk_counts(
+                sample_count,
+                group_size=workers,
+                count_strategy="divisible",
+                parameters=parameters.as_sample_parameters(),
+            )
+        )
 
     if requested_workers is not None:
-        threads = requested_threads if requested_threads is not None else budget // requested_workers
+        threads = (
+            requested_threads
+            if requested_threads is not None
+            else budget // requested_workers
+        )
         if threads < 1 or requested_workers * threads > budget:
             raise ValueError("Invalid worker configuration: exceeds CPU budget.")
         if not legal(requested_workers):
-            raise ValueError(f"No legal chunk count for num_workers={requested_workers}.")
+            raise ValueError(
+                f"No legal chunk count for num_workers={requested_workers}."
+            )
         return WorkerConfig(budget, requested_workers, threads)
 
     minimum_count = math.ceil(sample_count / parameters.max_chunk_samples)
@@ -300,7 +333,9 @@ def _source_from_value(value: AsrSourceAudio | dict[str, Any]) -> AsrSourceAudio
     return AsrSourceAudio(**value)
 
 
-def _speech_to_samples(intervals: Iterable[Any], sample_count: int) -> tuple[tuple[int, int], ...]:
+def _speech_to_samples(
+    intervals: Iterable[Any], sample_count: int
+) -> tuple[tuple[int, int], ...]:
     values = []
     for interval in intervals:
         if isinstance(interval, dict):
@@ -308,8 +343,13 @@ def _speech_to_samples(intervals: Iterable[Any], sample_count: int) -> tuple[tup
         else:
             start, end = interval
         if isinstance(start, float) or isinstance(end, float):
-            start, end = round(float(start) * SAMPLE_RATE), round(float(end) * SAMPLE_RATE)
-        values.append((max(0, min(sample_count, int(start))), max(0, min(sample_count, int(end)))))
+            start, end = (
+                round(float(start) * SAMPLE_RATE),
+                round(float(end) * SAMPLE_RATE),
+            )
+        values.append(
+            (max(0, min(sample_count, int(start))), max(0, min(sample_count, int(end))))
+        )
     return tuple(values)
 
 
@@ -332,7 +372,9 @@ def build_parallel_asr_plan(
     if duration_seconds is not None and round(duration_seconds * SAMPLE_RATE) != count:
         raise ValueError("Source duration does not match plan sample count.")
     parameters = planning_parameters or resolve_planning_parameters(options)
-    config = worker_config or resolve_worker_config(count, cpu_count, options, parameters)
+    config = worker_config or resolve_worker_config(
+        count, cpu_count, options, parameters
+    )
     speech = _speech_to_samples(speech_intervals or (), count)
     layouts = plan_chunks(
         count,
@@ -341,7 +383,16 @@ def build_parallel_asr_plan(
         count_strategy="divisible",
         parameters=parameters.as_sample_parameters(),
     )
-    chunks = [AsrChunkPlan(item.index, item.start_sample, item.end_sample, item.end_boundary, item.estimated_speech_samples) for item in layouts]
+    chunks = [
+        AsrChunkPlan(
+            item.index,
+            item.start_sample,
+            item.end_sample,
+            item.end_boundary,
+            item.estimated_speech_samples,
+        )
+        for item in layouts
+    ]
     plan = ParallelAsrPlan(
         SCHEMA_VERSION,
         source,
@@ -414,7 +465,9 @@ def plan_to_dict(plan: ParallelAsrPlan) -> dict[str, Any]:
 
 def plan_from_dict(data: dict[str, Any]) -> ParallelAsrPlan:
     if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError(f"Invalid ASR plan schema_version: expected {SCHEMA_VERSION}, got {data.get('schema_version') if isinstance(data, dict) else None}.")
+        raise ValueError(
+            f"Invalid ASR plan schema_version: expected {SCHEMA_VERSION}, got {data.get('schema_version') if isinstance(data, dict) else None}."
+        )
     try:
         plan = ParallelAsrPlan(
             schema_version=int(data["schema_version"]),

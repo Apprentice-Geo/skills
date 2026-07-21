@@ -143,7 +143,9 @@ def write_summary_prompt(
     summary_path = result_dir / f"{video_id}_summary_{template_language}.md"
 
     if not SUMMARY_INSTRUCTIONS_PATH.exists():
-        raise FileNotFoundError(f"Summary instructions not found: {SUMMARY_INSTRUCTIONS_PATH}")
+        raise FileNotFoundError(
+            f"Summary instructions not found: {SUMMARY_INSTRUCTIONS_PATH}"
+        )
 
     transcript_link_path = transcript_markdown_path.relative_to(prompt_path.parent)
     sections = [
@@ -250,8 +252,12 @@ def parse_args() -> argparse.Namespace:
         description="Run the full Bilibili audio summary preparation pipeline: fetch subtitles and audio, prefer usable subtitles, fall back to STT when needed, then build a summary prompt."
     )
     parser.add_argument("url", help="Bilibili video URL.")
-    parser.add_argument("--cookies", type=Path, help="Path to a Netscape-format cookies.txt file.")
-    parser.add_argument("--language", choices=("zh", "en"), default=DEFAULT_TRANSCRIBE_LANGUAGE)
+    parser.add_argument(
+        "--cookies", type=Path, help="Path to a Netscape-format cookies.txt file."
+    )
+    parser.add_argument(
+        "--language", choices=("zh", "en"), default=DEFAULT_TRANSCRIBE_LANGUAGE
+    )
     parser.add_argument(
         "--summary-language",
         choices=("zh", "en"),
@@ -290,10 +296,14 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
 
     subtitle_files = fetch_result.get("subtitle_files") or []
     audio_files = [Path(path) for path in (fetch_result.get("audio_files") or [])]
-    usable_subtitle_files = [Path(path) for path in subtitle_files if fetch_audio.is_usable_subtitle(Path(path))]
+    usable_subtitle_files = [
+        Path(path)
+        for path in subtitle_files
+        if fetch_audio.is_usable_subtitle(Path(path))
+    ]
     if options.skip_subtitles:
         logger.info("Skipping subtitles; using ASR from audio.")
-        transcript_result = run_asr_transcript(options, fetch_result, audio_files)  
+        transcript_result = run_asr_transcript(options, fetch_result, audio_files)
     elif usable_subtitle_files:
         subtitle_path = select_usable_subtitle(
             usable_subtitle_files,
@@ -308,12 +318,12 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
             )
         else:
             logger.warning("Subtitle SRT is empty or invalid; falling back to STT.")
-            transcript_result = run_asr_transcript(options, fetch_result, audio_files)    
+            transcript_result = run_asr_transcript(options, fetch_result, audio_files)
     else:
         if subtitle_files:
             logger.warning("No usable SRT subtitles found; falling back to STT.")
         transcript_result = run_asr_transcript(options, fetch_result, audio_files)
-        
+
     terminal_info(logger, "[Stage] Build summary prompt")
     prompt_result = write_prompt_for_transcript(
         fetch_result,

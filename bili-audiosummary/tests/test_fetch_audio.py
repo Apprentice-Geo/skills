@@ -8,7 +8,9 @@ from scripts.process_logging import LoggingSession
 from scripts.utils import read_json
 
 
-def make_args(workspace_tmp_path: Path, skip_subtitles: bool = False) -> argparse.Namespace:
+def make_args(
+    workspace_tmp_path: Path, skip_subtitles: bool = False
+) -> argparse.Namespace:
     return argparse.Namespace(
         url="https://www.bilibili.com/video/BVTEST/",
         output_dir=workspace_tmp_path,
@@ -35,7 +37,10 @@ def test_build_canonical_url_preserves_non_first_page() -> None:
         "webpage_url": "https://www.bilibili.com/video/BVTEST/?spm_id=x&p=2",
     }
 
-    assert fetch_audio.build_canonical_url(info, "BVTEST_p2") == "https://www.bilibili.com/video/BVTEST/?p=2"
+    assert (
+        fetch_audio.build_canonical_url(info, "BVTEST_p2")
+        == "https://www.bilibili.com/video/BVTEST/?p=2"
+    )
 
 
 def test_build_canonical_url_preserves_first_page() -> None:
@@ -44,7 +49,10 @@ def test_build_canonical_url_preserves_first_page() -> None:
         "webpage_url": "https://www.bilibili.com/video/BVTEST/?p=1",
     }
 
-    assert fetch_audio.build_canonical_url(info, "BVTEST_p1") == "https://www.bilibili.com/video/BVTEST/?p=1"
+    assert (
+        fetch_audio.build_canonical_url(info, "BVTEST_p1")
+        == "https://www.bilibili.com/video/BVTEST/?p=1"
+    )
 
 
 def test_select_valid_srt_files_filters_invalid_subtitles(
@@ -67,7 +75,9 @@ def test_make_base_options_requires_packaged_ffmpeg(mocker) -> None:
         fetch_audio.make_base_options(make_args(Path(".")))
 
 
-def test_run_fetch_skip_subtitles_does_not_download_subtitles(workspace_tmp_path: Path, mocker) -> None:
+def test_run_fetch_skip_subtitles_does_not_download_subtitles(
+    workspace_tmp_path: Path, mocker
+) -> None:
     info = {
         "id": "BVTEST",
         "title": "测试视频",
@@ -107,7 +117,9 @@ def test_run_fetch_uses_canonical_url_for_watchlater_video(
     args = make_args(workspace_tmp_path)
     args.url = watchlater_url
 
-    extract_metadata = mocker.patch("scripts.fetch_audio.extract_metadata", return_value=info)
+    extract_metadata = mocker.patch(
+        "scripts.fetch_audio.extract_metadata", return_value=info
+    )
     download_subtitles = mocker.patch(
         "scripts.fetch_audio.download_subtitles",
         return_value=[],
@@ -140,9 +152,7 @@ def test_run_fetch_downloads_only_selected_page(
         "scripts.fetch_audio.extract_metadata", return_value=info
     )
     mocker.patch("scripts.fetch_audio.download_subtitles", return_value=[])
-    download_audio = mocker.patch(
-        "scripts.fetch_audio.download_audio", return_value=[]
-    )
+    download_audio = mocker.patch("scripts.fetch_audio.download_audio", return_value=[])
 
     result = fetch_audio.run_fetch(args)
     manifest = read_json(result["manifest_path"])

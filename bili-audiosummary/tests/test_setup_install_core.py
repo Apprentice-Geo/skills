@@ -16,9 +16,7 @@ class RecordingLogger:
         self.calls: list[tuple[list[str], dict[str, str], bool]] = []
 
     def run(self, command, _description, *, env=None, check=True, **_kwargs):
-        self.calls.append(
-            ([str(part) for part in command], dict(env or {}), check)
-        )
+        self.calls.append(([str(part) for part in command], dict(env or {}), check))
         result = self.results.pop(0)
         if check and result.returncode:
             raise SetupError("command failed")
@@ -51,9 +49,7 @@ def test_resolve_packaged_ffmpeg_returns_package_binaries(
     ffmpeg.write_bytes(b"")
     ffprobe.write_bytes(b"")
     (modules_dir / "ffmpeg_binaries.py").write_text(
-        f"FFMPEG_PATH = r'{ffmpeg}'\n"
-        "def init():\n"
-        "    pass\n",
+        f"FFMPEG_PATH = r'{ffmpeg}'\ndef init():\n    pass\n",
         encoding="utf-8",
     )
     env = os.environ.copy()

@@ -98,7 +98,9 @@ def sort_subtitle_files(
 
     def sort_key(path: Path) -> tuple[int, float, str]:
         language = infer_subtitle_language(path)
-        language_order = order.get(language, len(order)) if language is not None else len(order)
+        language_order = (
+            order.get(language, len(order)) if language is not None else len(order)
+        )
         return language_order, -path.stat().st_mtime, path.name
 
     return sorted(
@@ -493,7 +495,9 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     should_download_audio = not options.skip_audio
     audio_files = []
     if should_download_audio:
-        audio_files = download_audio(canonical_url, paths["resource"], video_id, options)
+        audio_files = download_audio(
+            canonical_url, paths["resource"], video_id, options
+        )
     manifest_path = write_manifest(
         paths["result"], info, audio_files, subtitle_files, canonical_url
     )

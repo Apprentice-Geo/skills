@@ -36,7 +36,5 @@ def download_model(
         env=env,
     )
     if not model_has_weights(model_dir, weight_patterns):
-        raise SetupError(
-            f"Downloaded model is missing required weights: {model_dir}"
-        )
+        raise SetupError(f"Downloaded model is missing required weights: {model_dir}")
     return True

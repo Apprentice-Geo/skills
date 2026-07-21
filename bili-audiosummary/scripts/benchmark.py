@@ -43,17 +43,15 @@ class BenchmarkVideo:
 
 # Benchmark videos and their supplied durations in HH:MM:SS format.
 BENCHMARK_VIDEOS = (
-      
-    BenchmarkVideo("BV1W694BEE7F", "00:01:03"), 
-    BenchmarkVideo("BV1Nt4y1D7pW", "00:07:56"), 
+    BenchmarkVideo("BV1W694BEE7F", "00:01:03"),
+    BenchmarkVideo("BV1Nt4y1D7pW", "00:07:56"),
     BenchmarkVideo("BV1MN4y177PB", "00:11:27"),
-    BenchmarkVideo("BV1ks411e7W4", "00:19:45"),  
-    BenchmarkVideo("BV1Fa411c7Vh", "00:30:23"),  
-    BenchmarkVideo("BV1rb4y1D7Gf", "00:39:51"),  
-    BenchmarkVideo("BV1jJ411r7EL", "01:02:23"), 
-    BenchmarkVideo("BV1e24y1D7qt", "01:47:01"), 
+    BenchmarkVideo("BV1ks411e7W4", "00:19:45"),
+    BenchmarkVideo("BV1Fa411c7Vh", "00:30:23"),
+    BenchmarkVideo("BV1rb4y1D7Gf", "00:39:51"),
+    BenchmarkVideo("BV1jJ411r7EL", "01:02:23"),
+    BenchmarkVideo("BV1e24y1D7qt", "01:47:01"),
     BenchmarkVideo("BV1mL411z7Kf", "02:59:43"),
- 
 )
 
 
@@ -73,7 +71,9 @@ def require_provider_ready(provider: str) -> None:
         try:
             import faster_whisper  # noqa: F401
         except ImportError as exc:
-            raise RuntimeError("faster-whisper dependencies are not installed. Run .\\scripts\\setup\\setup_windows.bat.") from exc
+            raise RuntimeError(
+                "faster-whisper dependencies are not installed. Run .\\scripts\\setup\\setup_windows.bat."
+            ) from exc
         transcribe.default_model_path()
         return
 
@@ -90,7 +90,9 @@ def require_provider_ready(provider: str) -> None:
         ) from exc
     if not torch.cuda.is_available():
         raise RuntimeError("Qwen3 ASR requires an available CUDA GPU.")
-    if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
+    if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(
+        QWEN3_ALIGNER_MODEL_DIR
+    ):
         raise RuntimeError(
             "Qwen3 local models are missing. Run "
             "uv run --no-sync python -m scripts.setup.install_model --model qwen3."
@@ -107,7 +109,9 @@ def require_psutil() -> Any:
     return psutil
 
 
-def prefetch_audio(videos: tuple[BenchmarkVideo, ...], cache_dir: Path) -> dict[str, Path]:
+def prefetch_audio(
+    videos: tuple[BenchmarkVideo, ...], cache_dir: Path
+) -> dict[str, Path]:
     audio_by_bvid: dict[str, Path] = {}
     for video in videos:
         result = fetch_audio.run_fetch(make_fetch_options(video, cache_dir))
@@ -223,7 +227,9 @@ def run_case_process(case_path: Path, log_path: Path) -> dict[str, Any]:
         monitored_process = psutil.Process(process.pid)
         peak_rss_bytes = 0
         while process.poll() is None:
-            peak_rss_bytes = max(peak_rss_bytes, process_tree_rss_bytes(monitored_process))
+            peak_rss_bytes = max(
+                peak_rss_bytes, process_tree_rss_bytes(monitored_process)
+            )
             time.sleep(POLL_INTERVAL_SECONDS)
         peak_rss_bytes = max(peak_rss_bytes, process_tree_rss_bytes(monitored_process))
         returncode = process.wait()
@@ -356,8 +362,12 @@ def run_benchmark(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark local ASR transcription time and memory.")
-    parser.add_argument("--video", action="append", choices=[video.bvid for video in BENCHMARK_VIDEOS])
+    parser = argparse.ArgumentParser(
+        description="Benchmark local ASR transcription time and memory."
+    )
+    parser.add_argument(
+        "--video", action="append", choices=[video.bvid for video in BENCHMARK_VIDEOS]
+    )
     parser.add_argument("--provider", action="append", choices=DEFAULT_PROVIDERS)
     parser.add_argument("--output-dir", type=Path, default=RESULTS_DIR / "benchmark")
     parser.add_argument("--_case", type=Path, help=argparse.SUPPRESS)

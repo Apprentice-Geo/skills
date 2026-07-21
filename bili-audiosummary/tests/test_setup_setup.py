@@ -69,7 +69,10 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     bootstrap.run_setup(workspace_tmp_path)
 
     logger = logger_holder["logger"]
-    assert (["uv", "sync", "--python", "3.12", "--no-dev"], workspace_tmp_path) in logger.calls
+    assert (
+        ["uv", "sync", "--python", "3.12", "--no-dev"],
+        workspace_tmp_path,
+    ) in logger.calls
     assert checked_imports == [
         workspace_tmp_path.resolve() / ".venv" / "Scripts" / "python.exe"
     ]

@@ -11,7 +11,9 @@ from scripts.runtime_options import FetchOptions
 from scripts.utils import read_json, write_json
 
 
-def test_whisper_parallel_benchmark_cli_defaults_to_three_repetitions(monkeypatch) -> None:
+def test_whisper_parallel_benchmark_cli_defaults_to_three_repetitions(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
@@ -82,16 +84,18 @@ def test_chunk_limit_report_applies_hard_cut_gate_and_geometric_mean() -> None:
 
 
 def test_default_benchmark_matrix_covers_requested_videos_and_models() -> None:
-    assert [(video.bvid, video.duration_label) for video in benchmark.BENCHMARK_VIDEOS] == [
-         ("BV1W694BEE7F", "00:01:03"), 
-     ("BV1Nt4y1D7pW", "00:07:56"), 
-     ("BV1MN4y177PB", "00:11:27"),
-     ("BV1ks411e7W4", "00:19:45"),
-     ("BV1Fa411c7Vh", "00:30:23"),  
-     ("BV1rb4y1D7Gf", "00:39:51"),  
-     ("BV1jJ411r7EL", "01:02:23"), 
-     ("BV1e24y1D7qt", "01:47:01"), 
-     ("BV1mL411z7Kf", "02:59:43"),
+    assert [
+        (video.bvid, video.duration_label) for video in benchmark.BENCHMARK_VIDEOS
+    ] == [
+        ("BV1W694BEE7F", "00:01:03"),
+        ("BV1Nt4y1D7pW", "00:07:56"),
+        ("BV1MN4y177PB", "00:11:27"),
+        ("BV1ks411e7W4", "00:19:45"),
+        ("BV1Fa411c7Vh", "00:30:23"),
+        ("BV1rb4y1D7Gf", "00:39:51"),
+        ("BV1jJ411r7EL", "01:02:23"),
+        ("BV1e24y1D7qt", "01:47:01"),
+        ("BV1mL411z7Kf", "02:59:43"),
     ]
     assert benchmark.DEFAULT_PROVIDERS == ("whisper", "qwen3")
     assert whisper_parallel_benchmark.DEFAULT_VIDEO_IDS == (
@@ -131,7 +135,9 @@ def test_root_cookie_file_is_auto_detected(workspace_tmp_path: Path, mocker) -> 
     assert resolved == cookie_path
 
 
-def test_provider_preflight_happens_before_audio_fetch(mocker, workspace_tmp_path: Path) -> None:
+def test_provider_preflight_happens_before_audio_fetch(
+    mocker, workspace_tmp_path: Path
+) -> None:
     mocker.patch("scripts.benchmark.require_psutil")
     prefetch_audio = mocker.patch("scripts.benchmark.prefetch_audio")
     mocker.patch(
@@ -149,7 +155,9 @@ def test_provider_preflight_happens_before_audio_fetch(mocker, workspace_tmp_pat
     prefetch_audio.assert_not_called()
 
 
-def test_benchmark_records_failed_case_and_continues(workspace_tmp_path: Path, mocker) -> None:
+def test_benchmark_records_failed_case_and_continues(
+    workspace_tmp_path: Path, mocker
+) -> None:
     videos = benchmark.BENCHMARK_VIDEOS[:1]
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
@@ -157,7 +165,9 @@ def test_benchmark_records_failed_case_and_continues(workspace_tmp_path: Path, m
 
     mocker.patch("scripts.benchmark.require_psutil")
     mocker.patch("scripts.benchmark.require_provider_ready")
-    mocker.patch("scripts.benchmark.prefetch_audio", return_value={videos[0].bvid: audio_path})
+    mocker.patch(
+        "scripts.benchmark.prefetch_audio", return_value={videos[0].bvid: audio_path}
+    )
     mocker.patch("scripts.benchmark.create_run_dir", return_value=run_dir)
     mocker.patch("scripts.benchmark.probe_audio_duration", return_value=60.0)
     mocker.patch(

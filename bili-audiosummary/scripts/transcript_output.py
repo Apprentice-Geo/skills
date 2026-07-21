@@ -60,9 +60,7 @@ def normalize_segments_for_markdown(
         else:
             current["end"] = end
             current["text"] = separator.join(
-                part
-                for part in (str(current["text"]).strip(), text)
-                if part
+                part for part in (str(current["text"]).strip(), text) if part
             )
 
         duration = float(current["end"]) - float(current["start"])

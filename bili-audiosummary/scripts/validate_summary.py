@@ -46,7 +46,9 @@ def language_warning(text: str, expected_language: str) -> str | None:
         character_label = "English letters"
         language_label = "English"
 
-    ratio = matching_count / language_character_count if language_character_count else 0.0
+    ratio = (
+        matching_count / language_character_count if language_character_count else 0.0
+    )
     if ratio >= LANGUAGE_THRESHOLD:
         return None
 
@@ -84,8 +86,12 @@ def validate_summary(summary_path: Path) -> ValidationResult:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate a generated summary Markdown file.")
-    parser.add_argument("summary_path", type=Path, help="Path to the final summary Markdown file.")
+    parser = argparse.ArgumentParser(
+        description="Validate a generated summary Markdown file."
+    )
+    parser.add_argument(
+        "summary_path", type=Path, help="Path to the final summary Markdown file."
+    )
     return parser.parse_args(argv)
 
 

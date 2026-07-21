@@ -89,11 +89,7 @@ def load_valid_vad_result(
             or not isinstance(end, int)
         ):
             return None
-        if (
-            start < previous_end
-            or end < start
-            or end > source_audio.sample_count
-        ):
+        if start < previous_end or end < start or end > source_audio.sample_count:
             return None
         intervals.append((start, end))
         previous_end = end
@@ -113,7 +109,9 @@ def source_matches(plan: ParallelAsrPlan, source_audio: AsrSourceAudio) -> bool:
 
 
 def chunk_key(chunk: AsrChunkPlan | dict[str, Any]) -> str:
-    index = chunk.index if isinstance(chunk, AsrChunkPlan) else int(chunk["chunk_index"])
+    index = (
+        chunk.index if isinstance(chunk, AsrChunkPlan) else int(chunk["chunk_index"])
+    )
     return f"chunk_{index:03d}"
 
 
@@ -154,7 +152,9 @@ def load_progress(path: Path) -> dict[str, Any]:
         raise ValueError("Invalid ASR progress: chunks must be an object")
     for key, item in chunks.items():
         if not isinstance(item, dict):
-            raise ValueError(f"Invalid ASR progress chunk {key}: item must be an object")
+            raise ValueError(
+                f"Invalid ASR progress chunk {key}: item must be an object"
+            )
         status = item.get("status")
         if status not in PROGRESS_STATES:
             raise ValueError(f"Invalid ASR progress chunk {key} status: {status}")
@@ -268,7 +268,9 @@ def load_valid_chunk_results(
 def _write_json_atomic(path: Path, data: Any) -> None:
     ensure_dir(path.parent)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     os.replace(tmp_path, path)
 
 

@@ -43,7 +43,9 @@ def run_launcher(
     )
 
 
-def test_setup_launcher_prepares_python_and_runs_setup(workspace_tmp_path: Path) -> None:
+def test_setup_launcher_prepares_python_and_runs_setup(
+    workspace_tmp_path: Path,
+) -> None:
     command_dir = workspace_tmp_path / "bin"
     command_dir.mkdir()
     write_fake_command(command_dir / "uv.cmd", "uv")

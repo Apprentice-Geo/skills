@@ -17,14 +17,24 @@ def make_audio(seconds: int) -> NormalizedAudio:
 
 
 def make_result(text: str = "", start: float = 0.0, end: float = 0.0):
-    items = [] if not text else [types.SimpleNamespace(text=text, start_time=start, end_time=end)]
-    return types.SimpleNamespace(text=text, time_stamps=types.SimpleNamespace(items=items))
+    items = (
+        []
+        if not text
+        else [types.SimpleNamespace(text=text, start_time=start, end_time=end)]
+    )
+    return types.SimpleNamespace(
+        text=text, time_stamps=types.SimpleNamespace(items=items)
+    )
 
 
-def prepare(monkeypatch, audio: NormalizedAudio, model) -> tuple[list[Path], list[bool]]:
+def prepare(
+    monkeypatch, audio: NormalizedAudio, model
+) -> tuple[list[Path], list[bool]]:
     decoded: list[Path] = []
     loaded: list[bool] = []
-    monkeypatch.setattr(qwen3, "decode_normalized_audio", lambda path: decoded.append(path) or audio)
+    monkeypatch.setattr(
+        qwen3, "decode_normalized_audio", lambda path: decoded.append(path) or audio
+    )
     monkeypatch.setattr(qwen3, "detect_speech_samples", lambda *_args: [])
     monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: loaded.append(True) or model)
     return decoded, loaded
@@ -49,7 +59,9 @@ def test_qwen3_schema_two_full_cache_skips_decode_cuda_and_model(
             "segments": [],
         },
     )
-    monkeypatch.setattr(qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded"))
+    monkeypatch.setattr(
+        qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded")
+    )
     monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: pytest.fail("loaded"))
 
     info, segments = qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)
@@ -72,9 +84,13 @@ def test_qwen3_uses_constant_driven_full_batches_and_loads_model_once(
             return [make_result() for _ in inputs]
 
     decoded, loaded = prepare(monkeypatch, make_audio(900), Model())
-    info, segments = qwen3.transcribe_with_qwen3(audio_path, "zh", workspace_tmp_path / "asr_qwen3")
+    info, segments = qwen3.transcribe_with_qwen3(
+        audio_path, "zh", workspace_tmp_path / "asr_qwen3"
+    )
 
-    assert [size for size, _kwargs in calls] == [qwen3.QWEN3_MAX_INFERENCE_BATCH_SIZE] * 2
+    assert [size for size, _kwargs in calls] == [
+        qwen3.QWEN3_MAX_INFERENCE_BATCH_SIZE
+    ] * 2
     assert all(kwargs == {"return_time_stamps": True} for _size, kwargs in calls)
     assert len(decoded) == 1
     assert len(loaded) == 1
@@ -147,7 +163,9 @@ def test_qwen3_schema_one_plan_is_rejected_and_empty_chunks_are_cacheable(
     assert read_json(workspace / "asr_plan.json")["schema_version"] == 2
     assert len(decoded) == len(loaded) == 1
 
-    monkeypatch.setattr(qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded"))
+    monkeypatch.setattr(
+        qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded")
+    )
     monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: pytest.fail("loaded"))
     assert qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)[1] == []
 

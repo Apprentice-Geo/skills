@@ -51,7 +51,9 @@ def default_model_path() -> str:
 def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:
     audio_files = manifest.get("audio_files") or []
     if not audio_files:
-        raise ValueError("Manifest does not contain audio_files. Run fetch_audio.py first.")
+        raise ValueError(
+            "Manifest does not contain audio_files. Run fetch_audio.py first."
+        )
     return resolve_path(str(audio_files[0]))
 
 
@@ -90,7 +92,9 @@ def transcribe_whisper_audio(
         "device": options.device,
         "compute_type": options.compute_type,
         "beam_size": options.beam_size,
-        "text_normalization": "simplified-chinese" if is_chinese_language(options.language) else None,
+        "text_normalization": "simplified-chinese"
+        if is_chinese_language(options.language)
+        else None,
     }
     return info_data, segment_list, "faster-whisper"
 
@@ -104,16 +108,22 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         help="Path to fetch_manifest.json or an audio file. Defaults to --manifest/--audio if provided.",
     )
-    parser.add_argument("--manifest", type=Path, help="Path to resource/fetch_manifest.json.")
+    parser.add_argument(
+        "--manifest", type=Path, help="Path to resource/fetch_manifest.json."
+    )
     parser.add_argument("--audio", type=Path, help="Path to an audio file.")
-    parser.add_argument("--output-dir", type=Path, help="Result directory for transcript outputs.")
+    parser.add_argument(
+        "--output-dir", type=Path, help="Result directory for transcript outputs."
+    )
     parser.add_argument(
         "--asr-provider",
         choices=("whisper", "qwen3"),
         default=DEFAULT_ASR_PROVIDER,
         help="Strict ASR provider. qwen3 requires CUDA plus explicitly installed dependencies and models; failures do not fall back to whisper.",
     )
-    parser.add_argument("--model", help="Model name or local faster-whisper model directory.")
+    parser.add_argument(
+        "--model", help="Model name or local faster-whisper model directory."
+    )
     parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)

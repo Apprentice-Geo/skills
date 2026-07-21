@@ -118,7 +118,9 @@ def resolve_ffmpeg_binaries_location() -> Optional[str]:
 
     bin_dir = ffmpeg_path.parent if ffmpeg_path.is_file() else ffmpeg_path
     exe_suffix = ".exe" if os.name == "nt" else ""
-    if (bin_dir / f"ffmpeg{exe_suffix}").exists() and (bin_dir / f"ffprobe{exe_suffix}").exists():
+    if (bin_dir / f"ffmpeg{exe_suffix}").exists() and (
+        bin_dir / f"ffprobe{exe_suffix}"
+    ).exists():
         return path_to_posix(bin_dir)
 
     return None

@@ -76,7 +76,13 @@ def run_case(case_path: Path) -> int:
 
 def run_child(case_path: Path) -> dict[str, Any]:
     completed = subprocess.run(
-        [sys.executable, "-m", "scripts.benchmark_whisper_parallel", "--_case", str(case_path)]
+        [
+            sys.executable,
+            "-m",
+            "scripts.benchmark_whisper_parallel",
+            "--_case",
+            str(case_path),
+        ]
     )
     if completed.returncode:
         raise RuntimeError(f"Benchmark case failed: {case_path}")
@@ -111,9 +117,7 @@ def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     videos = sorted({item["bvid"] for item in medians})
     limits = sorted({item["max_chunk_seconds"] for item in medians})
-    by_key = {
-        (item["bvid"], item["max_chunk_seconds"]): item for item in medians
-    }
+    by_key = {(item["bvid"], item["max_chunk_seconds"]): item for item in medians}
     if 300 not in limits:
         raise ValueError("Chunk-limit comparison requires a 300-second reference.")
     minimum_hard_cuts = {
@@ -205,7 +209,12 @@ def run_benchmark(
     for repetition_index in range(repetitions):
         for video in videos:
             for limit in rotated_limits(limits, repetition_index):
-                case_dir = run_dir / video.bvid / f"round-{repetition_index + 1}" / f"max-{limit}"
+                case_dir = (
+                    run_dir
+                    / video.bvid
+                    / f"round-{repetition_index + 1}"
+                    / f"max-{limit}"
+                )
                 case_path = case_dir / "case.json"
                 write_json(
                     case_path,

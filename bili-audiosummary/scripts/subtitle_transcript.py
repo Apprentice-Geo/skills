@@ -39,7 +39,9 @@ def parse_srt_timestamp(value: str) -> float:
 
 
 def normalize_text(lines: list[str]) -> str:
-    return re.sub(r"\s+", " ", " ".join(line.strip() for line in lines if line.strip())).strip()
+    return re.sub(
+        r"\s+", " ", " ".join(line.strip() for line in lines if line.strip())
+    ).strip()
 
 
 def parse_srt(path: Path) -> list[dict[str, Any]]:
@@ -134,10 +136,19 @@ def subtitle_to_transcript(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Convert a subtitle file into the unified transcript outputs.")
+    parser = argparse.ArgumentParser(
+        description="Convert a subtitle file into the unified transcript outputs."
+    )
     parser.add_argument("subtitle", help="Path to a subtitle file.")
-    parser.add_argument("--manifest", type=Path, required=True, help="Path to resource/fetch_manifest.json.")
-    parser.add_argument("--output-dir", type=Path, help="Result directory for transcript outputs.")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="Path to resource/fetch_manifest.json.",
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, help="Result directory for transcript outputs."
+    )
     return parser.parse_args()
 
 

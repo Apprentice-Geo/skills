@@ -25,9 +25,12 @@ def test_normalize_bilibili_video_url_preserves_page_and_removes_tracking() -> N
     assert utils.normalize_bilibili_video_url(url) == (
         "https://www.bilibili.com/video/BV1W1JxzjEty/?p=2"
     )
-    assert utils.normalize_bilibili_video_url(
-        "https://www.bilibili.com/video/BV1W1JxzjEty/?p=1"
-    ) == "https://www.bilibili.com/video/BV1W1JxzjEty/?p=1"
+    assert (
+        utils.normalize_bilibili_video_url(
+            "https://www.bilibili.com/video/BV1W1JxzjEty/?p=1"
+        )
+        == "https://www.bilibili.com/video/BV1W1JxzjEty/?p=1"
+    )
 
 
 def make_ffmpeg_module(ffmpeg_path: Path) -> types.ModuleType:

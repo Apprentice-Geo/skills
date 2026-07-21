@@ -22,7 +22,6 @@
 - 先读取当前实现、测试和相关文档，再判断现有契约；不要仅凭旧说明推断行为。
 - 仓库当前的两条转写处理路径仍在开发。不要在本文件中把它们的选择、回退、并行、缓存或失败处理写成固定策略；涉及转写的改动应以当次需求、当前代码和对应测试为准。
 - 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 和 `references/` 中与该行为直接相关的内容。
-- 根目录的计划文件后续将删除。不要向其中写入规则、进度或长期设计决策，也不要把它们作为长期维护文档引用。
 - `.cache/`、`.venv/`、`models/`、`results/`、`tmp/`、cookie 文件、音频和本地模型均为本地或生成内容，不应纳入提交。
 - 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `python -m scripts.<module>` 形式运行。
 
@@ -38,6 +37,14 @@
 
 ```powershell
 uv sync --python 3.12
+```
+
+运行代码检查：
+
+```powershell
+uv run ruff check
+uv run pyright
+uv run ruff format --check .
 ```
 
 运行完整测试：

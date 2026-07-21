@@ -85,5 +85,7 @@ def test_qwen3_model_setup_reports_missing_extra_dependencies(
 ) -> None:
     patch_model_setup_environment(monkeypatch, workspace_tmp_path)
 
-    with pytest.raises(SetupError, match="uv sync --python 3.12 --no-dev --extra qwen3"):
+    with pytest.raises(
+        SetupError, match="uv sync --python 3.12 --no-dev --extra qwen3"
+    ):
         install_model.run_model_setup("qwen3", workspace_tmp_path)

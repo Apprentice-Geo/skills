@@ -18,7 +18,9 @@ from scripts.asr.chunking import (
 )
 
 
-def test_decode_normalizes_once_to_mono_float32(monkeypatch, workspace_tmp_path: Path) -> None:
+def test_decode_normalizes_once_to_mono_float32(
+    monkeypatch, workspace_tmp_path: Path
+) -> None:
     calls = []
 
     def fake_decode(path: str, *, sampling_rate: int):
@@ -28,7 +30,9 @@ def test_decode_normalizes_once_to_mono_float32(monkeypatch, workspace_tmp_path:
     monkeypatch.setattr("faster_whisper.decode_audio", fake_decode)
     audio = decode_normalized_audio(workspace_tmp_path / "input.m4a")
 
-    assert calls == [(str(workspace_tmp_path / "input.m4a").replace("\\", "/"), SAMPLE_RATE)]
+    assert calls == [
+        (str(workspace_tmp_path / "input.m4a").replace("\\", "/"), SAMPLE_RATE)
+    ]
     assert audio.samples.dtype == np.float32
     assert audio.samples.ndim == 1
     assert audio.sample_rate == SAMPLE_RATE
@@ -42,10 +46,15 @@ def test_layout_slices_are_zero_copy_and_cover_every_sample() -> None:
 
     assert chunks[0].start_sample == 0
     assert chunks[-1].end_sample == audio.sample_count
-    assert all(left.end_sample == right.start_sample for left, right in pairwise(chunks))
+    assert all(
+        left.end_sample == right.start_sample for left, right in pairwise(chunks)
+    )
     assert sum(item.size for item in slices) == audio.sample_count
     assert all(np.shares_memory(audio.samples, item) for item in slices)
-    assert max(chunk.end_sample - chunk.start_sample for chunk in chunks) <= MAX_CHUNK_SAMPLES
+    assert (
+        max(chunk.end_sample - chunk.start_sample for chunk in chunks)
+        <= MAX_CHUNK_SAMPLES
+    )
 
 
 @pytest.mark.parametrize(
@@ -53,16 +62,22 @@ def test_layout_slices_are_zero_copy_and_cover_every_sample() -> None:
     [(25, [1]), (60, [2]), (100, [3]), (119, [3]), (120, [4]), (180, [4])],
 )
 def test_full_policy_is_driven_by_group_size(seconds: int, expected: list[int]) -> None:
-    assert candidate_chunk_counts(
-        seconds * SAMPLE_RATE,
-        group_size=4,
-        count_strategy="full",
-    ) == expected
+    assert (
+        candidate_chunk_counts(
+            seconds * SAMPLE_RATE,
+            group_size=4,
+            count_strategy="full",
+        )
+        == expected
+    )
 
 
 def test_fixed_chunk_count_has_provider_independent_boundaries() -> None:
     sample_count = 357 * SAMPLE_RATE
-    speech = [(10 * SAMPLE_RATE, 90 * SAMPLE_RATE), (130 * SAMPLE_RATE, 340 * SAMPLE_RATE)]
+    speech = [
+        (10 * SAMPLE_RATE, 90 * SAMPLE_RATE),
+        (130 * SAMPLE_RATE, 340 * SAMPLE_RATE),
+    ]
 
     whisper = plan_chunks(
         sample_count,

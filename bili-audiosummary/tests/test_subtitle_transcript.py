@@ -48,8 +48,7 @@ def test_subtitle_to_transcript_writes_json_and_markdown(
     assert "source: subtitle" in markdown
     assert "[00:00:01 - 00:00:03] 第一句话。" in markdown
     assert (
-        "[00:00:01 - 00:00:03] 第一句话。\n"
-        "[00:00:04 - 00:00:07] 第二句话 换行继续。"
+        "[00:00:01 - 00:00:03] 第一句话。\n[00:00:04 - 00:00:07] 第二句话 换行继续。"
     ) in markdown
 
 

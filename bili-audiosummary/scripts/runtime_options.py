@@ -108,9 +108,7 @@ class PipelineOptions:
     skip_subtitles: bool = False
 
     @classmethod
-    def from_args(
-        cls, args: argparse.Namespace | PipelineOptions
-    ) -> PipelineOptions:
+    def from_args(cls, args: argparse.Namespace | PipelineOptions) -> PipelineOptions:
         if isinstance(args, cls):
             return args
         return cls(

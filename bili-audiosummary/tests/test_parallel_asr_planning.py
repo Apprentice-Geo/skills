@@ -200,8 +200,7 @@ def _oracle(duration, count, speech, minimum, maximum):
         hard = sum(any(a < point < b for a, b in speech) for point in internal)
         total = sum(loads)
         msre = (
-            sum((count * load - total) ** 2 for load in loads)
-            / (count * total * total)
+            sum((count * load - total) ** 2 for load in loads) / (count * total * total)
             if total
             else 0.0
         )

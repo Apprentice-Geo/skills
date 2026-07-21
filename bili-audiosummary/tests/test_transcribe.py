@@ -29,7 +29,9 @@ def make_args(manifest_path: Path, output_dir: Path) -> argparse.Namespace:
     )
 
 
-def test_resolve_inputs_uses_first_audio_from_manifest(workspace_tmp_path: Path) -> None:
+def test_resolve_inputs_uses_first_audio_from_manifest(
+    workspace_tmp_path: Path,
+) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     manifest_path = workspace_tmp_path / "fetch_manifest.json"
@@ -44,7 +46,9 @@ def test_resolve_inputs_uses_first_audio_from_manifest(workspace_tmp_path: Path)
     assert manifest["id"] == "BVTEST"
 
 
-def test_run_transcribe_writes_outputs_with_mocked_asr(workspace_tmp_path: Path, mocker) -> None:
+def test_run_transcribe_writes_outputs_with_mocked_asr(
+    workspace_tmp_path: Path, mocker
+) -> None:
     result_dir = workspace_tmp_path / "results" / "BVTEST"
     resource_dir = result_dir / "resource"
     resource_dir.mkdir(parents=True)
@@ -220,7 +224,9 @@ def test_default_model_path_requires_local_faster_whisper_model(
         workspace_tmp_path / "missing",
     )
 
-    with pytest.raises(RuntimeError, match=r"scripts\.setup\.install_model --model faster-whisper"):
+    with pytest.raises(
+        RuntimeError, match=r"scripts\.setup\.install_model --model faster-whisper"
+    ):
         transcribe.default_model_path()
 
 
@@ -307,7 +313,9 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
             ],
         ),
     )
-    parallel_mock = mocker.patch("scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe")
+    parallel_mock = mocker.patch(
+        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe"
+    )
 
     result = transcribe.run_transcribe(args)
 
