@@ -57,7 +57,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 - `scripts/asr/common.py`: shared ASR segment normalization helpers.
 - `scripts/asr/chunking/`: provider-neutral normalized audio, planning VAD, integer-sample layouts, legal chunk-count strategies, continuous-cover validation, and fixed-count boundary optimization.
-- `scripts/asr/qwen3.py`: owns the Qwen3 Schema 2 workspace, `full` scheduling, CUDA model/forced-aligner loading, isolated retry, global timestamp offsets, and sentence assembly.
+- `scripts/asr/qwen3.py`: owns the Qwen3 Schema 3 workspace, `full` scheduling, CUDA model/forced-aligner loading, isolated retry, global timestamp offsets, and sentence assembly.
 - `scripts/asr/parallel/`: faster-whisper Schema 6 package. `plan.py` owns Whisper identity and worker selection, and worker execution consumes ndarray slices. The package also contains caching, resume state, merge logic, metrics, logging, and orchestration.
 - `scripts/config.py`: owns repository paths, language priorities, model locations, ASR defaults, and summary template selection.
 - `scripts/manifest_io.py`: resolves manifest-relative paths, loads manifests and metadata, and infers result directories.
@@ -83,8 +83,9 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 ### Qwen3 Invariants
 
 - Qwen3 uses the same fixed-count optimizer as Whisper. With the same sample count, speech intervals, bounds, and fixed chunk count, both providers receive identical boundaries.
-- Its count strategy is always `full` with `group_size=QWEN3_MAX_INFERENCE_BATCH_SIZE`: use legal group-size multiples when available; otherwise use the greatest legal chunk count. Execution batches use the same constant and `max_new_tokens=1024`; `language` is not passed to the model.
-- Schema 2 plan, progress, per-chunk results, and merged `result.json` use exact source/request/layout identity and atomic writes. A complete merged cache returns before decode, dependency import, CUDA check, or model load. Partial recovery decodes and loads once.
+- Its count strategy is always `full` with `group_size=QWEN3_MAX_INFERENCE_BATCH_SIZE`: use legal group-size multiples when available; otherwise use the greatest legal chunk count. Execution batches use the same constant and `max_new_tokens=1024`. Pipeline language codes are mapped to Qwen3's canonical names (`zh` to `Chinese`, `en` to `English`) and passed to every batch and isolated retry.
+- Schema 3 plan, progress, per-chunk results, and merged `result.json` use exact source/request/layout identity and atomic writes. The request identity includes both the pipeline language code and mapped model language. A complete merged cache returns before decode, dependency import, CUDA check, or model load. Partial recovery decodes and loads once.
+- Each chunk's text is stripped before merge, and non-empty chunks are always joined with one ASCII space regardless of language.
 - A failed batch is retried once as individual single-chunk calls. Successful members are cached immediately; any remaining failure blocks merge, while the next invocation may retry only missing chunks. Empty chunk text and timestamps are cacheable; validation is limited to schema, identity, coordinate, and data-type safety.
 
 ### Setup Entry Points
@@ -151,7 +152,7 @@ results/<BVID>/
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
 - `asr_parallel/`: faster-whisper-only Schema 6 workspace with sample-coordinate plan/VAD/chunk results, progress, merged intermediate transcript, and metrics. It contains no normalized PCM or chunk WAV files.
-- `asr_qwen3/`: Qwen3-only Schema 2 workspace with plan, progress, sample-coordinate VAD, per-chunk raw text/timestamps, and merged `result.json`.
+- `asr_qwen3/`: Qwen3-only Schema 3 workspace with plan, progress, sample-coordinate VAD, per-chunk raw text/timestamps, and merged `result.json`.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
 - Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.
 - Final summary: preferably written by a fresh subagent that receives only the prompt path and summary task; when delegation is unavailable, the current Agent follows the same prompt.

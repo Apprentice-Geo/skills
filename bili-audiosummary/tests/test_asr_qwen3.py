@@ -40,7 +40,7 @@ def prepare(
     return decoded, loaded
 
 
-def test_qwen3_schema_two_full_cache_skips_decode_cuda_and_model(
+def test_qwen3_current_schema_full_cache_skips_decode_cuda_and_model(
     workspace_tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -52,7 +52,7 @@ def test_qwen3_schema_two_full_cache_skips_decode_cuda_and_model(
     write_json_atomic(
         workspace / "result.json",
         {
-            "schema_version": 2,
+            "schema_version": qwen3.QWEN3_CACHE_SCHEMA_VERSION,
             "plan": plan,
             "text": "",
             "word_timestamps": [],
@@ -91,7 +91,10 @@ def test_qwen3_uses_constant_driven_full_batches_and_loads_model_once(
     assert [size for size, _kwargs in calls] == [
         qwen3.QWEN3_MAX_INFERENCE_BATCH_SIZE
     ] * 2
-    assert all(kwargs == {"return_time_stamps": True} for _size, kwargs in calls)
+    assert all(
+        kwargs == {"language": "Chinese", "return_time_stamps": True}
+        for _size, kwargs in calls
+    )
     assert len(decoded) == 1
     assert len(loaded) == 1
     assert info["max_new_tokens"] == 1024
@@ -104,26 +107,26 @@ def test_qwen3_short_full_plan_submits_one_partial_batch(
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
-    batch_sizes = []
+    calls = []
 
     class Model:
-        def transcribe(self, inputs, **_kwargs):
-            batch_sizes.append(len(inputs))
+        def transcribe(self, inputs, **kwargs):
+            calls.append((len(inputs), kwargs))
             return [make_result() for _ in inputs]
 
     prepare(monkeypatch, make_audio(100), Model())
-    qwen3.transcribe_with_qwen3(audio_path, "zh", workspace_tmp_path / "asr_qwen3")
-    assert batch_sizes == [3]
+    qwen3.transcribe_with_qwen3(audio_path, "en", workspace_tmp_path / "asr_qwen3")
+    assert calls == [(3, {"language": "English", "return_time_stamps": True})]
 
 
 @pytest.mark.parametrize(
     ("language", "parts", "expected"),
     [
-        ("en", ["hello", "world", "again"], "hello world again"),
-        ("zh", ["你好", "世界", "重逢"], "你好世界重逢"),
+        ("en", [" hello ", "world", " again"], "hello world again"),
+        ("zh", [" 你好 ", "世界", " 重逢"], "你好 世界 重逢"),
     ],
 )
-def test_qwen3_chunk_text_merge_preserves_language_word_boundaries(
+def test_qwen3_chunk_text_merge_strips_parts_and_uses_single_spaces(
     workspace_tmp_path: Path,
     monkeypatch,
     language: str,
@@ -154,8 +157,8 @@ def test_qwen3_batch_failure_isolates_members_and_caches_successes(
     calls = []
 
     class Model:
-        def transcribe(self, inputs, **_kwargs):
-            calls.append(len(inputs))
+        def transcribe(self, inputs, **kwargs):
+            calls.append((len(inputs), kwargs))
             if len(inputs) > 1:
                 raise RuntimeError("batch")
             if len(calls) == 3:
@@ -167,20 +170,36 @@ def test_qwen3_batch_failure_isolates_members_and_caches_successes(
     with pytest.raises(RuntimeError, match="chunk_001"):
         qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)
 
-    assert calls == [4, 1, 1, 1, 1]
+    assert [size for size, _kwargs in calls] == [4, 1, 1, 1, 1]
+    assert all(
+        kwargs == {"language": "Chinese", "return_time_stamps": True}
+        for _size, kwargs in calls
+    )
     assert len(list((workspace / "chunk_results").glob("*.json"))) == 3
     progress = read_json(workspace / "progress.json")
     assert progress["chunks"]["chunk_001"]["status"] == "failed"
 
 
-def test_qwen3_schema_one_plan_is_rejected_and_empty_chunks_are_cacheable(
+def test_qwen3_previous_schema_plan_is_rejected_and_empty_chunks_are_cacheable(
     workspace_tmp_path: Path,
     monkeypatch,
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr_qwen3"
-    write_json_atomic(workspace / "asr_plan.json", {"schema_version": 1})
+    previous_plan = qwen3._qwen_build_plan(audio_path, "zh", 25 * SAMPLE_RATE, [])
+    previous_plan["schema_version"] = 2
+    write_json_atomic(workspace / "asr_plan.json", previous_plan)
+    write_json_atomic(
+        workspace / "result.json",
+        {
+            "schema_version": 2,
+            "plan": previous_plan,
+            "text": "stale cached text",
+            "word_timestamps": [],
+            "segments": [],
+        },
+    )
 
     class Model:
         def transcribe(self, inputs, **_kwargs):
@@ -189,7 +208,10 @@ def test_qwen3_schema_one_plan_is_rejected_and_empty_chunks_are_cacheable(
     decoded, loaded = prepare(monkeypatch, make_audio(25), Model())
     _info, segments = qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)
     assert segments == []
-    assert read_json(workspace / "asr_plan.json")["schema_version"] == 2
+    assert (
+        read_json(workspace / "asr_plan.json")["schema_version"]
+        == qwen3.QWEN3_CACHE_SCHEMA_VERSION
+    )
     assert len(decoded) == len(loaded) == 1
 
     monkeypatch.setattr(

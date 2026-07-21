@@ -19,7 +19,6 @@ from scripts.asr.chunking import (
     plan_chunks,
     validate_layouts,
 )
-from scripts.asr.common import is_chinese_language
 from scripts.asr.parallel.plan import DEFAULT_VAD_PARAMETERS
 from scripts.config import (
     DEFAULT_HF_ENDPOINT,
@@ -36,7 +35,11 @@ from scripts.utils import ensure_dir, path_to_posix, read_json, write_json_atomi
 STRONG_PUNCTUATION = set("。.!！？?")
 WEAK_PUNCTUATION = set("，,；;")
 MIN_SEGMENT_SECONDS = 3.0
-QWEN3_CACHE_SCHEMA_VERSION = 2
+QWEN3_CACHE_SCHEMA_VERSION = 3
+QWEN3_LANGUAGE_NAMES = {
+    "en": "English",
+    "zh": "Chinese",
+}
 logger = get_logger(__name__)
 
 
@@ -255,6 +258,7 @@ def build_sentence_segments(
 def _qwen_request_identity(language: str) -> dict[str, Any]:
     return {
         "language": language,
+        "model_language": _qwen_language_name(language),
         "model": path_to_posix(QWEN3_ASR_MODEL_DIR),
         "forced_aligner": path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
         "device": QWEN3_DEVICE_MAP,
@@ -263,6 +267,16 @@ def _qwen_request_identity(language: str) -> dict[str, Any]:
         "max_new_tokens": QWEN3_MAX_NEW_TOKENS,
         "count_strategy": "full",
     }
+
+
+def _qwen_language_name(language: str) -> str:
+    try:
+        return QWEN3_LANGUAGE_NAMES[language.lower()]
+    except KeyError as exc:
+        supported = ", ".join(sorted(QWEN3_LANGUAGE_NAMES))
+        raise ValueError(
+            f"Unsupported Qwen3 language: {language}. Supported: {supported}"
+        ) from exc
 
 
 def _qwen_source_identity(
@@ -567,7 +581,7 @@ def _qwen_merge(
     global_items = []
     for layout in plan["chunks"]:
         item = results[_qwen_chunk_key(layout["index"])]
-        text_parts.append(item["text"])
+        text_parts.append(item["text"].strip())
         offset = layout["start_sample"] / SAMPLE_RATE
         for word in _qwen_valid_alignment(item["word_timestamps"]) or []:
             global_items.append(
@@ -577,8 +591,7 @@ def _qwen_merge(
                     round(offset + word.end, 3),
                 )
             )
-    separator = "" if is_chinese_language(plan["request"]["language"]) else " "
-    text = separator.join(part for part in text_parts if part)
+    text = " ".join(part for part in text_parts if part)
     duration = plan["source"]["sample_count"] / SAMPLE_RATE
     return text, global_items, build_sentence_segments(text, global_items, duration)
 
@@ -588,6 +601,7 @@ def transcribe_with_qwen3(
     language: str,
     workspace_dir: Path,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    model_language = _qwen_language_name(language)
     paths = _qwen_workspace_paths(workspace_dir)
     cached_plan = _qwen_validate_plan(
         _qwen_load_json(paths["plan"]), audio_path, language
@@ -659,7 +673,11 @@ def transcribe_with_qwen3(
             for item in batch
         ]
         try:
-            batch_results = model.transcribe(inputs, return_time_stamps=True)
+            batch_results = model.transcribe(
+                inputs,
+                language=model_language,
+                return_time_stamps=True,
+            )
             if len(batch_results) != len(batch):
                 raise RuntimeError("Qwen3 returned an unexpected batch result count.")
             for layout, result in zip(batch, batch_results, strict=True):
@@ -669,7 +687,11 @@ def transcribe_with_qwen3(
             for layout, input_item in zip(batch, inputs, strict=True):
                 key = _qwen_chunk_key(layout["index"])
                 try:
-                    isolated = model.transcribe([input_item], return_time_stamps=True)
+                    isolated = model.transcribe(
+                        [input_item],
+                        language=model_language,
+                        return_time_stamps=True,
+                    )
                     if len(isolated) != 1:
                         raise RuntimeError(
                             "Qwen3 returned an unexpected isolated result count."
