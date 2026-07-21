@@ -116,6 +116,35 @@ def test_qwen3_short_full_plan_submits_one_partial_batch(
     assert batch_sizes == [3]
 
 
+@pytest.mark.parametrize(
+    ("language", "parts", "expected"),
+    [
+        ("en", ["hello", "world", "again"], "hello world again"),
+        ("zh", ["你好", "世界", "重逢"], "你好世界重逢"),
+    ],
+)
+def test_qwen3_chunk_text_merge_preserves_language_word_boundaries(
+    workspace_tmp_path: Path,
+    monkeypatch,
+    language: str,
+    parts: list[str],
+    expected: str,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+
+    class Model:
+        def transcribe(self, inputs, **_kwargs):
+            assert len(inputs) == len(parts)
+            return [make_result(text) for text in parts]
+
+    prepare(monkeypatch, make_audio(100), Model())
+    workspace = workspace_tmp_path / "asr_qwen3"
+    qwen3.transcribe_with_qwen3(audio_path, language, workspace)
+
+    assert read_json(workspace / "result.json")["text"] == expected
+
+
 def test_qwen3_batch_failure_isolates_members_and_caches_successes(
     workspace_tmp_path: Path,
     monkeypatch,

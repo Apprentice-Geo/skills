@@ -19,6 +19,7 @@ from scripts.asr.chunking import (
     plan_chunks,
     validate_layouts,
 )
+from scripts.asr.common import is_chinese_language
 from scripts.asr.parallel.plan import DEFAULT_VAD_PARAMETERS
 from scripts.config import (
     DEFAULT_HF_ENDPOINT,
@@ -576,7 +577,8 @@ def _qwen_merge(
                     round(offset + word.end, 3),
                 )
             )
-    text = "".join(text_parts)
+    separator = "" if is_chinese_language(plan["request"]["language"]) else " "
+    text = separator.join(part for part in text_parts if part)
     duration = plan["source"]["sample_count"] / SAMPLE_RATE
     return text, global_items, build_sentence_segments(text, global_items, duration)
 

@@ -99,6 +99,17 @@ def run_parallel_whisper_transcribe(
                 "[Transcribe] cache: complete; skipped audio decode and model load",
             )
             merged = merge_chunk_results(plan, cached)
+            if not paths["merged_transcript"].exists():
+                write_json_atomic(paths["merged_transcript"], {"segments": merged})
+            if not paths["metrics"].exists():
+                write_metrics(
+                    paths["metrics"],
+                    plan,
+                    time.perf_counter() - started_at,
+                    cached,
+                    len(merged),
+                    [],
+                )
             return _result(plan, merged)
 
     audio = decode_normalized_audio(audio_path)

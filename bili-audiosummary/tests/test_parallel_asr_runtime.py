@@ -71,7 +71,11 @@ def test_whisper_full_cache_skips_decode_vad_and_model(
             return iter([]), types.SimpleNamespace(language="zh")
 
     install_whisper(monkeypatch, Model)
-    runner.run_parallel_whisper_transcribe(audio_path, options, workspace)
+    _info, expected_segments, _source = runner.run_parallel_whisper_transcribe(
+        audio_path, options, workspace
+    )
+    (workspace / "merged_transcript.json").unlink()
+    (workspace / "metrics.json").unlink()
 
     monkeypatch.setattr(
         runner, "decode_normalized_audio", lambda *_args: pytest.fail("decoded")
@@ -87,7 +91,18 @@ def test_whisper_full_cache_skips_decode_vad_and_model(
             {"__init__": lambda *_args, **_kwargs: pytest.fail("model")},
         ),
     )
-    runner.run_parallel_whisper_transcribe(audio_path, options, workspace)
+    _info, resumed_segments, _source = runner.run_parallel_whisper_transcribe(
+        audio_path, options, workspace
+    )
+
+    assert resumed_segments == expected_segments
+    assert read_json(workspace / "merged_transcript.json") == {
+        "segments": expected_segments
+    }
+    metrics = read_json(workspace / "metrics.json")
+    assert metrics["chunk_count"] == 1
+    assert metrics["segment_count"] == len(expected_segments)
+    assert metrics["failed_chunks"] == []
 
 
 def test_whisper_partial_resume_decodes_once_and_uses_concurrent_ndarray_slices(
