@@ -2,9 +2,8 @@ import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit, urlunsplit
 from typing import Any, Optional
-
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 WINDOWS_RESERVED_NAMES = {
     "CON",

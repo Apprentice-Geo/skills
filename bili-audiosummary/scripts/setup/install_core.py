@@ -6,7 +6,6 @@ from typing import Mapping
 
 from scripts.process_logging import ProcessLogger, SetupError
 
-
 CORE_IMPORTS = ("yt_dlp", "faster_whisper", "ffmpeg_binaries")
 
 FFMPEG_RESOLVER = r"""

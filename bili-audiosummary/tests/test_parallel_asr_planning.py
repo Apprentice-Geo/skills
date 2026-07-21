@@ -1,17 +1,16 @@
 import math
 import sys
-from itertools import combinations
-from pathlib import Path
+from itertools import combinations, pairwise
 from time import perf_counter
 from types import ModuleType
 
-import pytest
 import numpy as np
+import pytest
 
 from scripts.asr import parallel as parallel_asr
 from scripts.asr.chunking import NormalizedAudio
-from scripts.asr.parallel import media
 from scripts.asr.chunking.optimizer import optimize_chunk_boundaries
+from scripts.asr.parallel import media
 from scripts.runtime_options import TranscribeOptions
 
 
@@ -194,10 +193,10 @@ def _oracle(duration, count, speech, minimum, maximum):
     candidates = []
     for internal in combinations(range(1, duration), count - 1):
         boundaries = (0, *internal, duration)
-        lengths = [b - a for a, b in zip(boundaries, boundaries[1:])]
+        lengths = [b - a for a, b in pairwise(boundaries)]
         if not all(minimum <= value <= maximum for value in lengths):
             continue
-        loads = [speech_at(b) - speech_at(a) for a, b in zip(boundaries, boundaries[1:])]
+        loads = [speech_at(b) - speech_at(a) for a, b in pairwise(boundaries)]
         hard = sum(any(a < point < b for a, b in speech) for point in internal)
         total = sum(loads)
         msre = (

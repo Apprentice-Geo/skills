@@ -4,7 +4,6 @@ from typing import Any
 from scripts.asr.common import is_chinese_language
 from scripts.utils import ensure_dir, read_json
 
-
 STRONG_PUNCTUATION = set("。.!！？?")
 WEAK_PUNCTUATION = set("，,；;")
 MIN_WEAK_PUNCTUATION_SECONDS = 3.0

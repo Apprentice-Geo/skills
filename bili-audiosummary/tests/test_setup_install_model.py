@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.process_logging import SetupError
 from scripts.setup import install_model
 from scripts.setup.environment import SetupPaths
-from scripts.process_logging import SetupError
 
 
 class RecordingLogger:

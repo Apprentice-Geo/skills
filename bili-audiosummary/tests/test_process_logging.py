@@ -1,6 +1,5 @@
 import io
 import logging
-import sys
 import warnings
 from pathlib import Path
 
@@ -98,7 +97,7 @@ def test_logging_session_captures_python_warnings_without_terminal_output(
     original_showwarning = warnings.showwarning
 
     with LoggingSession(log_path):
-        warnings.warn("audioread compatibility warning", FutureWarning)
+        warnings.warn("audioread compatibility warning", FutureWarning, stacklevel=1)
 
     terminal = capsys.readouterr()
     assert terminal.out == ""

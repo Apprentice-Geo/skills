@@ -3,7 +3,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 LANGUAGE_THRESHOLD = 0.8
 SUMMARY_LANGUAGE_PATTERN = re.compile(r"_summary_(zh|en)\.md$", re.IGNORECASE)
 CHINESE_CHARACTER_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")

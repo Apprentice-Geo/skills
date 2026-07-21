@@ -9,22 +9,6 @@ from scripts.asr.common import (
     normalize_segments_for_language,
 )
 from scripts.asr.qwen3 import transcribe_with_qwen3
-from scripts.manifest_io import (
-    infer_result_dir,
-    load_manifest,
-    load_metadata_from_manifest,
-    resolve_manifest_path,
-    resolve_path,
-)
-from scripts.runtime_options import TranscribeOptions
-from scripts.transcript_output import write_markdown_from_json
-from scripts.process_logging import (
-    LoggingSession,
-    create_timestamped_log_path,
-    get_logger,
-    terminal_info,
-)
-
 from scripts.config import (
     DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
@@ -34,8 +18,22 @@ from scripts.config import (
     DEFAULT_WHISPER_MODEL_DIR,
     SKILL_ROOT,
 )
+from scripts.manifest_io import (
+    infer_result_dir,
+    load_manifest,
+    load_metadata_from_manifest,
+    resolve_manifest_path,
+    resolve_path,
+)
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    get_logger,
+    terminal_info,
+)
+from scripts.runtime_options import TranscribeOptions
+from scripts.transcript_output import write_markdown_from_json
 from scripts.utils import ensure_dir, path_to_posix, write_json
-
 
 logger = get_logger(__name__)
 

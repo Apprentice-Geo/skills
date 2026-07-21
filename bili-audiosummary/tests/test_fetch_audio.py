@@ -1,8 +1,9 @@
 import argparse
 from pathlib import Path
 
-import scripts.fetch_audio as fetch_audio
 import pytest
+
+import scripts.fetch_audio as fetch_audio
 from scripts.process_logging import LoggingSession
 from scripts.utils import read_json
 

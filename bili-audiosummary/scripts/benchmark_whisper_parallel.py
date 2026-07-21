@@ -8,7 +8,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from scripts.asr.parallel import run_parallel_whisper_transcribe
 from scripts.benchmark import (
@@ -21,7 +21,6 @@ from scripts.benchmark import (
 from scripts.config import RESULTS_DIR
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import ensure_dir, read_json, write_json
-
 
 DEFAULT_MAX_CHUNK_SECONDS = (180, 300, 450)
 DEFAULT_VIDEO_IDS = (

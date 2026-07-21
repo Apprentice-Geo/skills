@@ -36,7 +36,7 @@ class FetchOptions:
     quiet: bool = False
 
     @classmethod
-    def from_args(cls, args: argparse.Namespace | "FetchOptions") -> "FetchOptions":
+    def from_args(cls, args: argparse.Namespace | FetchOptions) -> FetchOptions:
         if isinstance(args, cls):
             return args
         return cls(
@@ -77,8 +77,8 @@ class TranscribeOptions:
 
     @classmethod
     def from_args(
-        cls, args: argparse.Namespace | "TranscribeOptions"
-    ) -> "TranscribeOptions":
+        cls, args: argparse.Namespace | TranscribeOptions
+    ) -> TranscribeOptions:
         if isinstance(args, cls):
             return args
         return cls(
@@ -109,8 +109,8 @@ class PipelineOptions:
 
     @classmethod
     def from_args(
-        cls, args: argparse.Namespace | "PipelineOptions"
-    ) -> "PipelineOptions":
+        cls, args: argparse.Namespace | PipelineOptions
+    ) -> PipelineOptions:
         if isinstance(args, cls):
             return args
         return cls(

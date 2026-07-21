@@ -2,7 +2,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SETUP_BAT = REPO_ROOT / "scripts" / "setup" / "setup_windows.bat"
 DEFAULT_UV_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"

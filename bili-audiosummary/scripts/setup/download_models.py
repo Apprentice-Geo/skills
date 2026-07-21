@@ -5,7 +5,6 @@ from typing import Mapping, Sequence
 
 from scripts.process_logging import ProcessLogger, SetupError
 
-
 DOWNLOAD_SCRIPT = (
     "import sys; "
     "from huggingface_hub import snapshot_download; "

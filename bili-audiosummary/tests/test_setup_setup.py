@@ -1,8 +1,7 @@
 from pathlib import Path
 
 from scripts.process_logging import ProcessResult
-from scripts.setup import bootstrap
-from scripts.setup import environment, install_core
+from scripts.setup import bootstrap, environment, install_core
 
 
 class RecordingSetupLogger:

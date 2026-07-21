@@ -17,7 +17,6 @@ from scripts.asr.parallel.plan import (
 )
 from scripts.utils import ensure_dir, read_json, write_json_atomic
 
-
 MAX_CHUNK_RETRIES = 1
 PROGRESS_STATES = {"pending", "running", "succeeded", "failed"}
 VAD_RESULT_SCHEMA_VERSION = 2

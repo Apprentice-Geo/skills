@@ -3,14 +3,13 @@ from pathlib import Path
 
 import pytest
 
+from scripts.process_logging import SetupError
 from scripts.setup.environment import (
     SetupPaths,
     assert_python_312,
     configure_environment,
     create_log_path,
 )
-from scripts.process_logging import SetupError
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UV_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"

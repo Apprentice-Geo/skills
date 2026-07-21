@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import scripts.asr.qwen3 as qwen3
-from scripts.asr.chunking import NormalizedAudio, SAMPLE_RATE
+from scripts.asr.chunking import SAMPLE_RATE, NormalizedAudio
 from scripts.utils import read_json, write_json_atomic
 
 

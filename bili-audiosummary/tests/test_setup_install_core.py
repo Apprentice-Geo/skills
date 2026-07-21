@@ -2,12 +2,12 @@ import os
 import sys
 from pathlib import Path
 
+from scripts.process_logging import ProcessLogger, ProcessResult, SetupError
 from scripts.setup.install_core import (
     resolve_packaged_ffmpeg,
     verify_core_imports,
     verify_ffmpeg_executables,
 )
-from scripts.process_logging import ProcessLogger, ProcessResult, SetupError
 
 
 class RecordingLogger:

@@ -1,12 +1,12 @@
-from types import SimpleNamespace
-from pathlib import Path
 import sys
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-import scripts.fetch_audio as fetch_audio
 import scripts.benchmark as benchmark
 import scripts.benchmark_whisper_parallel as whisper_parallel_benchmark
+import scripts.fetch_audio as fetch_audio
 from scripts.runtime_options import FetchOptions
 from scripts.utils import read_json, write_json
 

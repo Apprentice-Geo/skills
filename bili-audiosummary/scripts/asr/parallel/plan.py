@@ -6,21 +6,24 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from scripts.asr.chunking import (
-    BOUNDARY_AUDIO_END,
+    BOUNDARY_AUDIO_END as BOUNDARY_AUDIO_END,
+)
+from scripts.asr.chunking import (
     BOUNDARY_HARD,
     BOUNDARY_SILENCE,
     MAX_CHUNK_SAMPLES,
     MIN_CHUNK_SAMPLES,
     SAMPLE_RATE,
     ChunkLayout,
-    PlanningParameters as SamplePlanningParameters,
     candidate_chunk_counts,
     plan_chunks,
     validate_layouts,
 )
+from scripts.asr.chunking import (
+    PlanningParameters as SamplePlanningParameters,
+)
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
-
 
 SCHEMA_VERSION = 6
 MIN_ASR_CHUNK_SECONDS = MIN_CHUNK_SAMPLES / SAMPLE_RATE

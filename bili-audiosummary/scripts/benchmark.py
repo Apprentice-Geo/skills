@@ -14,10 +14,10 @@ from typing import Any
 from scripts import fetch_audio, transcribe
 from scripts.asr.qwen3 import has_model_weights
 from scripts.config import (
-    DEFAULT_TRANSCRIBE_LANGUAGE,
-    DEFAULT_TRANSCRIBE_DEVICE,
-    DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
+    DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
+    DEFAULT_TRANSCRIBE_DEVICE,
+    DEFAULT_TRANSCRIBE_LANGUAGE,
     QWEN3_ALIGNER_MODEL_DIR,
     QWEN3_ASR_MODEL_DIR,
     RESULTS_DIR,
@@ -25,7 +25,6 @@ from scripts.config import (
 )
 from scripts.runtime_options import FetchOptions, TranscribeOptions
 from scripts.utils import ensure_dir, read_json, write_json
-
 
 POLL_INTERVAL_SECONDS = 0.1
 DEFAULT_PROVIDERS = ("whisper", "qwen3")

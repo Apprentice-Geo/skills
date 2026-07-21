@@ -11,7 +11,6 @@ from scripts.process_logging import (
     create_timestamped_log_path,
 )
 
-
 DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 PYTHON_VERSION = (3, 12)
 

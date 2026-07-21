@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from scripts.config import SKILL_ROOT
 from scripts.manifest_io import (
     infer_result_dir,
     load_manifest,
@@ -10,17 +11,15 @@ from scripts.manifest_io import (
     resolve_manifest_path,
     resolve_path,
 )
-from scripts.subtitle_utils import infer_subtitle_language
-from scripts.transcript_output import write_markdown_from_json
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     get_logger,
     terminal_info,
 )
-from scripts.config import SKILL_ROOT
+from scripts.subtitle_utils import infer_subtitle_language
+from scripts.transcript_output import write_markdown_from_json
 from scripts.utils import ensure_dir, path_to_posix, write_json
-
 
 SRT_TIME_PATTERN = re.compile(
     r"(?P<start>\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(?P<end>\d{2}:\d{2}:\d{2},\d{3})"

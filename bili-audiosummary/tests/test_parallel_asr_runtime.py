@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from scripts.asr import parallel as parallel_asr
-from scripts.asr.chunking import NormalizedAudio, SAMPLE_RATE
+from scripts.asr.chunking import SAMPLE_RATE, NormalizedAudio
 from scripts.asr.parallel import runner
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import read_json, write_json_atomic

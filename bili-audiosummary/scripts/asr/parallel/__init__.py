@@ -1,4 +1,4 @@
-from scripts.asr.parallel import media, runner, state, worker
+from scripts.asr.parallel import media, state, worker
 from scripts.asr.parallel.media import (
     decode_audio,
     detect_speech_intervals,
@@ -9,8 +9,8 @@ from scripts.asr.parallel.plan import (
     BOUNDARY_AUDIO_END,
     BOUNDARY_HARD,
     BOUNDARY_SILENCE,
-    DEFAULT_VAD_PARAMETERS,
     DEFAULT_PLANNING_PARAMETERS,
+    DEFAULT_VAD_PARAMETERS,
     MAX_ASR_CHUNK_SECONDS,
     MIN_ASR_CHUNK_SECONDS,
     SCHEMA_VERSION,
@@ -24,10 +24,10 @@ from scripts.asr.parallel.plan import (
     plan_from_dict,
     plan_matches_request,
     plan_to_dict,
-    resolve_worker_config,
     resolve_planning_parameters,
-    source_file_matches,
+    resolve_worker_config,
     source_audio_fingerprint,
+    source_file_matches,
 )
 from scripts.asr.parallel.runner import run_parallel_whisper_transcribe
 from scripts.asr.parallel.state import (
@@ -39,8 +39,8 @@ from scripts.asr.parallel.state import (
     initial_progress,
     load_plan,
     load_progress,
-    load_valid_vad_result,
     load_valid_chunk_results,
+    load_valid_vad_result,
     prepare_progress_for_resume,
     source_matches,
     workspace_paths,
@@ -50,7 +50,6 @@ from scripts.asr.parallel.state import (
     write_vad_result,
 )
 from scripts.asr.parallel.worker import transcribe_whisper_chunks
-
 
 __all__ = [
     "BOUNDARY_AUDIO_END",

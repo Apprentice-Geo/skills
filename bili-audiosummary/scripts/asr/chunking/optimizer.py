@@ -2,12 +2,11 @@ from __future__ import annotations
 
 # The optimizer uses unit-free integer coordinates. Legacy public names retain
 # their ``_ms`` suffix so completed experiments and external imports keep working.
-
 import math
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Iterable
-
 
 _EXHAUSTIVE_STATE_LIMIT = 50_000
 _EXHAUSTIVE_HARD_POINT_LIMIT = 1_000
@@ -253,7 +252,7 @@ def _minimum_window_allowed_ranges(
                 events.add(event)
     ordered = sorted(events)
     allowed: list[tuple[int, int]] = []
-    for lo, hi in zip(ordered, ordered[1:]):
+    for lo, hi in pairwise(ordered):
         load = timeline.speech_at(lo) - timeline.speech_at(lo - minimum)
         slope = 0
         if lo < hi:
@@ -588,7 +587,7 @@ def _result_from_boundaries(
 ) -> BoundaryOptimizationResult:
     loads = tuple(
         timeline.speech_at(end) - timeline.speech_at(start)
-        for start, end in zip(boundaries, boundaries[1:])
+        for start, end in pairwise(boundaries)
     )
     hard_cut_count = sum(timeline.is_hard(value) for value in boundaries[1:-1])
     total = timeline.total_speech

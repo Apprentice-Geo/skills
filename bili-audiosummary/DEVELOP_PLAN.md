@@ -69,12 +69,6 @@
 
 ### Task 8: 修改并行切分策略，使用 Silero VAD 预先切分音频（已完成）
 
-- faster-whisper 并行路径使用内置 Silero VAD 生成语音区间。规划 VAD 使用当前固定参数，完整静音窗口均可作为安全切点；chunk 内转写仍只传递 `vad_filter=True`，与规划 VAD 参数相互独立。
-- 正常 chunk 时长为 `30s-180s`，不足 30 秒的音频使用单 worker、单 chunk。自动 worker 数受必要 chunk 数和 CPU 线程预算约束，显式 worker/thread 参数保持优先并严格校验。
-- `plan.py` 枚举合法 chunk 数并比较批次数，`optimizer.py` 在整数毫秒时间线上优化硬切数、最大预计语音负载、语音负载 MSRE 和边界顺序。
-- Schema 5 记录规划参数和每个 chunk 的预计语音时长；缓存复用要求音频、ASR、VAD、规划参数及 worker 配置匹配，旧 schema 不复用。
-- 合并逻辑使用 chunk 全局起点还原时间戳，只合并真正重叠的 segment；metrics 记录 worker、chunk、batch、硬切数和预计语音负载等信息。相关测试和用户文档已同步。
-
 ### Task 9: 增加 Qwen3-ASR 的中间结果落盘（已完成）
 
 ---
@@ -111,14 +105,7 @@
 
 ---
 
-### Task 4: Add Lightweight Quality Gates
-
-**Problem:** 后续改动会涉及多个脚本和文档，需要最小化回归风险。
-
-**Success Criteria:**
-- 有一个本地质量检查命令。
-- 运行单测覆盖 validator、pipeline、fetch、transcribe、skill spec。
-- 不要求引入重型 CI，除非仓库外层已有统一 CI 约定。
+### Task 4: Add Lightweight Quality Gates（已完成）
 
 ## Verification Before Closing A Development Pass
 

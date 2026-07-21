@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-
 SAMPLE_RATE = 16_000
 MIN_CHUNK_SAMPLES = 30 * SAMPLE_RATE
 MAX_CHUNK_SAMPLES = 180 * SAMPLE_RATE

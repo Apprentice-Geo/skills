@@ -15,7 +15,6 @@ from scripts.setup.environment import (
     read_python_version,
 )
 
-
 WHISPER_MODEL_REPO = "Systran/faster-whisper-small"
 QWEN3_ASR_MODEL_REPO = "Qwen/Qwen3-ASR-0.6B"
 QWEN3_ALIGNER_MODEL_REPO = "Qwen/Qwen3-ForcedAligner-0.6B"

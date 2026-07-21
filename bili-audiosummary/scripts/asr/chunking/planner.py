@@ -15,7 +15,6 @@ from scripts.asr.chunking.types import (
     ChunkLayout,
 )
 
-
 CountStrategy = Literal["divisible", "full"]
 
 
@@ -139,9 +138,10 @@ def plan_fixed_chunk_count(
     layouts = []
     for index, (start, end, speech) in enumerate(
         zip(
-            optimized.boundaries_ms,
+            optimized.boundaries_ms[:-1],
             optimized.boundaries_ms[1:],
             optimized.speech_loads_ms,
+            strict=True,
         )
     ):
         boundary = BOUNDARY_AUDIO_END

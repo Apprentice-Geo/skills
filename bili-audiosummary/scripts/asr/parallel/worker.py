@@ -27,7 +27,6 @@ from scripts.process_logging import get_logger, terminal_info
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
 
-
 logger = get_logger(__name__)
 
 

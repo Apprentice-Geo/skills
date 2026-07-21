@@ -19,7 +19,6 @@ from scripts.asr.parallel.plan import (
     source_file_matches,
 )
 from scripts.asr.parallel.state import (
-    chunk_key,
     failed_chunks_blocking_merge,
     initial_progress,
     load_plan,
@@ -35,7 +34,6 @@ from scripts.asr.parallel.worker import _resolve_model_path, transcribe_whisper_
 from scripts.process_logging import get_logger, terminal_info
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import write_json_atomic
-
 
 logger = get_logger(__name__)
 

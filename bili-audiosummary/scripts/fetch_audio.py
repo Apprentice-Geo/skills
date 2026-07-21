@@ -1,12 +1,12 @@
 import argparse
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
-from scripts import subtitle_transcript
 from yt_dlp import YoutubeDL
 
+from scripts import subtitle_transcript
 from scripts.config import (
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
@@ -15,7 +15,6 @@ from scripts.config import (
     SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
 )
-from scripts.runtime_options import FetchOptions
 from scripts.process_logging import (
     LoggingSession,
     YtDlpLogger,
@@ -23,6 +22,7 @@ from scripts.process_logging import (
     get_logger,
     terminal_info,
 )
+from scripts.runtime_options import FetchOptions
 from scripts.subtitle_utils import infer_subtitle_language
 from scripts.utils import (
     ensure_dir,
@@ -95,13 +95,15 @@ def sort_subtitle_files(
     paths: list[Path], preferred_languages: list[str]
 ) -> list[Path]:
     order = {language: index for index, language in enumerate(preferred_languages)}
+
+    def sort_key(path: Path) -> tuple[int, float, str]:
+        language = infer_subtitle_language(path)
+        language_order = order.get(language, len(order)) if language is not None else len(order)
+        return language_order, -path.stat().st_mtime, path.name
+
     return sorted(
         paths,
-        key=lambda path: (
-            order.get(infer_subtitle_language(path), len(order)),
-            -path.stat().st_mtime,
-            path.name,
-        ),
+        key=sort_key,
     )
 
 
@@ -184,14 +186,19 @@ def extract_metadata(url: str, options: FetchOptions) -> dict[str, Any]:
         }
     )
 
-    with YoutubeDL(ydl_options) as ydl:
+    with YoutubeDL(cast(Any, ydl_options)) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
         except Exception as exc:
             if is_http_412_error(exc):
                 raise make_cookie_required_error() from exc
             raise
-        return ydl.sanitize_info(info)
+        if info is None:
+            raise RuntimeError("yt-dlp returned no metadata.")
+        sanitized = ydl.sanitize_info(info)
+        if sanitized is None:
+            raise RuntimeError("yt-dlp returned no usable metadata.")
+        return dict(sanitized)
 
 
 def get_video_id(info: dict[str, Any]) -> str:
@@ -280,7 +287,7 @@ def download_subtitles(
     )
 
     try:
-        with YoutubeDL(ydl_options) as ydl:
+        with YoutubeDL(cast(Any, ydl_options)) as ydl:
             ydl.download([url])
     except Exception as exc:
         if is_http_412_error(exc):
@@ -336,7 +343,7 @@ def download_audio(
     )
 
     try:
-        with YoutubeDL(ydl_options) as ydl:
+        with YoutubeDL(cast(Any, ydl_options)) as ydl:
             ydl.download([url])
     except Exception as exc:
         if is_http_412_error(exc):

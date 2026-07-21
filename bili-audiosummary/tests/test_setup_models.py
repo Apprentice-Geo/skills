@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.setup.download_models import download_model, model_has_weights
 from scripts.process_logging import ProcessResult, SetupError
+from scripts.setup.download_models import download_model, model_has_weights
 
 
 class ModelDownloadLogger:

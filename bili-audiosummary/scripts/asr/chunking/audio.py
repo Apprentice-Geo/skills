@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from scripts.asr.chunking.types import NormalizedAudio, SAMPLE_RATE
+from scripts.asr.chunking.types import SAMPLE_RATE, NormalizedAudio
 from scripts.utils import path_to_posix
 
 

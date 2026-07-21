@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +42,7 @@ def test_layout_slices_are_zero_copy_and_cover_every_sample() -> None:
 
     assert chunks[0].start_sample == 0
     assert chunks[-1].end_sample == audio.sample_count
-    assert all(left.end_sample == right.start_sample for left, right in zip(chunks, chunks[1:]))
+    assert all(left.end_sample == right.start_sample for left, right in pairwise(chunks))
     assert sum(item.size for item in slices) == audio.sample_count
     assert all(np.shares_memory(audio.samples, item) for item in slices)
     assert max(chunk.end_sample - chunk.start_sample for chunk in chunks) <= MAX_CHUNK_SAMPLES
