@@ -50,6 +50,8 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/transcribe.py`: transcribes a manifest or audio file and strictly dispatches the selected provider to its provider workspace.
 - `scripts/subtitle_transcript.py`: parses SRT subtitles and converts them to the same transcript JSON and Markdown contract used by ASR.
 - `scripts/validate_summary.py`: checks that the final summary exists, is valid UTF-8, and contains no template placeholders or comments.
+- `scripts/benchmark.py`: runs the fixed ASR provider benchmark matrix in isolated child processes and records transcription time, real-time factor, process-tree RSS, and Qwen3 CUDA memory.
+- `scripts/benchmark_whisper_parallel.py`: compares faster-whisper chunk upper limits across repeated runs and summarizes timing and planner-quality metrics. It is a development benchmark rather than part of the summary pipeline.
 
 ### Processing Helpers
 
@@ -74,6 +76,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - Explicit CLI values constrain the same planner. Two explicit values must satisfy `num_workers * cpu_threads <= B`; worker-only mode uses `floor(B / W)` threads per worker; thread-only mode chooses the largest feasible worker count. An impossible explicit configuration fails before decoding or model loading.
 - Schema 6 stores `start_sample`, `end_sample`, and `estimated_speech_samples`; Schema 5 plan, progress, VAD, and chunk results are rejected. The plan records source sample count/rate, ASR and VAD identities, sample bounds, count strategy, CPU budget, workers, threads, and layout.
 - One `WhisperModel` uses the resolved worker configuration for all pending ndarray slices. Chunk transcription passes `vad_filter=True` but no `vad_parameters`, keeping faster-whisper's internal defaults separate from planning VAD. No ffmpeg chunk WAV is generated.
+- Each chunk gets one retry after its first failure in a program invocation. A second failure prevents merge; a later invocation gives incomplete chunks a new retry budget while retaining valid compatible results.
 - Merge converts `chunk.start_sample` to seconds for every local segment timestamp and orders segments by chunk index and time. Adjacent segments whose time ranges truly intersect are combined; endpoint contact is kept separate. Chinese text is concatenated directly, other languages use one separating space, and no character-level deduplication is performed.
 - Metrics add hard-cut count, per-chunk estimated speech durations, maximum estimated speech duration, and speech-load MSRE to worker, chunk, batch, elapsed, and segment fields. Soft-duration metrics are not recorded.
 
@@ -96,6 +99,16 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/setup/install_core.py`: verifies core imports and resolves packaged ffmpeg binaries.
 - `scripts/setup/download_models.py`: downloads Hugging Face snapshots and verifies required model weights.
 - `scripts/setup/__init__.py`: marks the setup directory as a Python package.
+
+## Benchmark
+
+`python -m scripts.benchmark` uses the fixed `BENCHMARK_VIDEOS` list and runs both `whisper` and `qwen3` unless `--video` or `--provider` narrows the matrix. Provider readiness is checked before audio fetching. Audio is downloaded or reused under `.cache/benchmark/audio/`, outside the measured interval.
+
+Each provider case runs in a child process. The measured interval includes model loading, transcription, alignment, and transcript writing. It excludes audio fetching, dependency installation, and model downloads. Peak RSS is sampled across the child process tree; CUDA peak allocated and reserved memory are recorded only for Qwen3. A failed case remains in the report and causes the command to return a nonzero exit status after all selected cases finish.
+
+Each run writes `benchmark.json`, `benchmark.md`, per-case inputs, results, logs, and transcripts under a new timestamped directory in `results/benchmark/` by default. The report records platform and Python information but does not include cookie paths or contents.
+
+`python -m scripts.benchmark_whisper_parallel` is the focused faster-whisper planner benchmark. Its default matrix uses the configured short-video subset, three repetitions, and chunk upper limits of 180, 300, and 450 seconds. Limit order rotates between repetitions. It reports per-video medians, hard-cut quality, runtime ratios, and the selected winner under its encoded acceptance rules. Results default to timestamped directories under `results/benchmark/whisper-chunk-limits/`; an optional Schema 4 baseline directory is reference-only comparison input.
 
 ## Generated Artifacts
 
