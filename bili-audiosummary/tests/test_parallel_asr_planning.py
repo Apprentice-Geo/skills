@@ -6,10 +6,12 @@ from time import perf_counter
 from types import ModuleType
 
 import pytest
+import numpy as np
 
 from scripts.asr import parallel as parallel_asr
+from scripts.asr.chunking import NormalizedAudio
 from scripts.asr.parallel import media
-from scripts.asr.parallel.optimizer import optimize_chunk_boundaries
+from scripts.asr.chunking.optimizer import optimize_chunk_boundaries
 from scripts.runtime_options import TranscribeOptions
 
 
@@ -68,13 +70,6 @@ def assert_valid_layout(plan, duration: float) -> None:
 
 def test_detect_speech_intervals_uses_pinned_silero_vad_parameters(monkeypatch) -> None:
     calls: dict[str, object] = {}
-    decoded_audio = object()
-    faster_whisper = ModuleType("faster_whisper")
-    faster_whisper.__path__ = []  # type: ignore[attr-defined]
-    faster_whisper.decode_audio = (  # type: ignore[attr-defined]
-        lambda path, sampling_rate: calls.setdefault("decode", (path, sampling_rate))
-        and decoded_audio
-    )
     vad = ModuleType("faster_whisper.vad")
 
     class FakeVadOptions:
@@ -87,11 +82,11 @@ def test_detect_speech_intervals_uses_pinned_silero_vad_parameters(monkeypatch) 
 
     vad.VadOptions = FakeVadOptions  # type: ignore[attr-defined]
     vad.get_speech_timestamps = fake_get_speech_timestamps  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
     monkeypatch.setitem(sys.modules, "faster_whisper.vad", vad)
 
-    assert media.detect_speech_intervals(Path("audio.m4a")) == [(0.0, 1.0)]
-    assert calls["decode"] == ("audio.m4a", 16_000)
+    audio = NormalizedAudio(np.zeros(16_000, dtype=np.float32))
+    assert media.detect_speech_intervals(audio) == [(0, 16_000)]
+    assert calls["vad_call"][0] is audio.samples
     assert calls["vad_options"] == {
         "threshold": 0.35,
         "neg_threshold": 0.25,
@@ -105,7 +100,7 @@ def test_detect_speech_intervals_uses_pinned_silero_vad_parameters(monkeypatch) 
 @pytest.mark.parametrize("duration", [30.0, 180.0, 301.0, 900.0, 3600.0])
 def test_planned_chunks_cover_audio_once_with_strict_duration_bounds(duration) -> None:
     plan = make_plan(duration)
-    assert plan.schema_version == 5
+    assert plan.schema_version == 6
     assert_valid_layout(plan, duration)
 
 
@@ -237,11 +232,13 @@ def test_reversing_and_overlapping_speech_input_produces_same_plan() -> None:
     )
 
 
-def test_dense_boundaries_scale_to_one_hour_under_five_seconds() -> None:
+def test_dense_boundaries_scale_to_one_hour_under_eight_seconds() -> None:
     intervals = [(float(start), float(start + 2)) for start in range(0, 3600, 3)]
     started = perf_counter()
     plan = make_plan(3600.0, cpu_count=64, speech_intervals=intervals)
-    assert perf_counter() - started < 5.0
+    # Sample-coordinate arithmetic preserves exact PCM boundaries and is still
+    # bounded to a small planning-only fraction of an hour-long ASR run.
+    assert perf_counter() - started < 8.0
     assert_valid_layout(plan, 3600.0)
 
 

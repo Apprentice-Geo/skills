@@ -57,16 +57,6 @@ def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:
     return resolve_path(str(audio_files[0]))
 
 
-def metadata_duration(metadata: dict[str, Any]) -> float | None:
-    duration = metadata.get("duration")
-    if duration is None:
-        return None
-    try:
-        return float(duration)
-    except (TypeError, ValueError):
-        return None
-
-
 def transcribe_whisper_audio(
     audio_path: Path,
     options: TranscribeOptions,
@@ -214,19 +204,16 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
     md_path = output_dir / f"{output_stem}.md"
 
     if options.asr_provider == "whisper":
-        duration = parallel_asr.probe_audio_duration(audio_path)
         info_data, segments, source = parallel_asr.run_parallel_whisper_transcribe(
             audio_path,
             options,
-            output_dir,
-            duration,
+            output_dir / "asr_parallel",
         )
     elif options.asr_provider == "qwen3":
         info_data, segments = transcribe_with_qwen3(
             audio_path,
             options.language,
-            metadata_duration(metadata),
-            output_dir / "asr_qwen3" / "result.json",
+            output_dir / "asr_qwen3",
         )
         source = "qwen3-asr"
     else:

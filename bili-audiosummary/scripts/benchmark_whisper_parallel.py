@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from scripts.asr.parallel import probe_audio_duration, run_parallel_whisper_transcribe
+from scripts.asr.parallel import run_parallel_whisper_transcribe
 from scripts.benchmark import (
     BENCHMARK_AUDIO_CACHE_DIR,
     BENCHMARK_VIDEOS,
@@ -50,8 +50,7 @@ def run_case(case_path: Path) -> int:
     run_parallel_whisper_transcribe(
         audio_path,
         options,
-        output_dir,
-        probe_audio_duration(audio_path),
+        output_dir / "asr_parallel",
     )
     elapsed = round(time.perf_counter() - started_at, 3)
     metrics = read_json(output_dir / "asr_parallel" / "metrics.json")

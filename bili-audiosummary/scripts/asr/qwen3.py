@@ -4,7 +4,7 @@ import json
 import math
 import os
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +19,24 @@ from scripts.config import (
     QWEN3_MAX_INFERENCE_BATCH_SIZE,
     QWEN3_MAX_NEW_TOKENS,
 )
+from scripts.asr.chunking import (
+    DEFAULT_PLANNING_PARAMETERS as SAMPLE_PLANNING_PARAMETERS,
+    SAMPLE_RATE,
+    ChunkLayout,
+    decode_normalized_audio,
+    detect_speech_samples,
+    plan_chunks,
+    validate_layouts,
+)
+from scripts.asr.parallel.plan import DEFAULT_VAD_PARAMETERS
 from scripts.process_logging import LoggingSession, get_logger, terminal_info
-from scripts.utils import path_to_posix, read_json, write_json_atomic
+from scripts.utils import ensure_dir, path_to_posix, read_json, write_json_atomic
 
 
 STRONG_PUNCTUATION = set("。.!！？?")
 WEAK_PUNCTUATION = set("，,；;")
 MIN_SEGMENT_SECONDS = 3.0
-QWEN3_CACHE_SCHEMA_VERSION = 1
+QWEN3_CACHE_SCHEMA_VERSION = 2
 logger = get_logger(__name__)
 
 
@@ -479,3 +489,326 @@ def transcribe_with_qwen3(
         len(segments),
     )
     return _qwen_info(language, word_timestamps=bool(alignment_items)), segments
+
+
+# Schema 2 chunked runner.  The earlier Schema 1 helper functions above remain
+# importable only so older callers receive a clean schema mismatch; production
+# dispatch uses the workspace-based implementation below.
+def _qwen_request_identity(language: str) -> dict[str, Any]:
+    return {
+        "language": language,
+        "model": path_to_posix(QWEN3_ASR_MODEL_DIR),
+        "forced_aligner": path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
+        "device": QWEN3_DEVICE_MAP,
+        "compute_type": QWEN3_DTYPE,
+        "batch_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
+        "max_new_tokens": QWEN3_MAX_NEW_TOKENS,
+        "count_strategy": "full",
+    }
+
+
+def _qwen_source_identity(audio_path: Path, sample_count: int | None = None) -> dict[str, Any]:
+    stat = audio_path.stat()
+    source = {
+        "path": path_to_posix(audio_path),
+        "size": stat.st_size,
+        "mtime": stat.st_mtime,
+    }
+    if sample_count is not None:
+        source.update(sample_count=int(sample_count), sample_rate=SAMPLE_RATE)
+    return source
+
+
+def _qwen_workspace_paths(workspace_dir: Path) -> dict[str, Path]:
+    return {
+        "plan": workspace_dir / "asr_plan.json",
+        "progress": workspace_dir / "progress.json",
+        "results": workspace_dir / "chunk_results",
+        "merged": workspace_dir / "result.json",
+        "vad": workspace_dir / "vad_result.json",
+    }
+
+
+def _qwen_chunk_key(index: int) -> str:
+    return f"chunk_{index:03d}"
+
+
+def _qwen_load_json(path: Path) -> Any | None:
+    try:
+        return read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+
+
+def _qwen_validate_plan(
+    plan: Any,
+    audio_path: Path,
+    language: str,
+) -> dict[str, Any] | None:
+    if not isinstance(plan, dict) or plan.get("schema_version") != QWEN3_CACHE_SCHEMA_VERSION:
+        return None
+    source = plan.get("source")
+    if not isinstance(source, dict):
+        return None
+    current = _qwen_source_identity(audio_path)
+    if any(source.get(key) != value for key, value in current.items()):
+        return None
+    if source.get("sample_rate") != SAMPLE_RATE or not isinstance(source.get("sample_count"), int):
+        return None
+    if plan.get("request") != _qwen_request_identity(language):
+        return None
+    if plan.get("group_size") != QWEN3_MAX_INFERENCE_BATCH_SIZE or plan.get("count_strategy") != "full":
+        return None
+    raw_chunks = plan.get("chunks")
+    if not isinstance(raw_chunks, list):
+        return None
+    try:
+        layouts = [ChunkLayout(**item) for item in raw_chunks]
+        validate_layouts(layouts, source["sample_count"], SAMPLE_PLANNING_PARAMETERS)
+    except (TypeError, ValueError):
+        return None
+    return plan
+
+
+def _qwen_build_plan(
+    audio_path: Path,
+    language: str,
+    sample_count: int,
+    speech_intervals: list[tuple[int, int]],
+) -> dict[str, Any]:
+    layouts = plan_chunks(
+        sample_count,
+        speech_intervals,
+        group_size=QWEN3_MAX_INFERENCE_BATCH_SIZE,
+        count_strategy="full",
+        parameters=SAMPLE_PLANNING_PARAMETERS,
+    )
+    return {
+        "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+        "source": _qwen_source_identity(audio_path, sample_count),
+        "request": _qwen_request_identity(language),
+        "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
+        "planning_parameters": asdict(SAMPLE_PLANNING_PARAMETERS),
+        "count_strategy": "full",
+        "group_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
+        "chunks": [asdict(item) for item in layouts],
+    }
+
+
+def _qwen_valid_alignment(data: Any, max_sample_count: int | None = None) -> list[AlignmentItem] | None:
+    if not isinstance(data, list):
+        return None
+    items: list[AlignmentItem] = []
+    previous = 0.0
+    maximum = max_sample_count / SAMPLE_RATE if max_sample_count is not None else None
+    for raw in data:
+        if not isinstance(raw, dict) or not isinstance(raw.get("text"), str):
+            return None
+        start, end = raw.get("start"), raw.get("end")
+        if isinstance(start, bool) or not isinstance(start, (int, float)) or isinstance(end, bool) or not isinstance(end, (int, float)):
+            return None
+        start_value, end_value = float(start), float(end)
+        if not math.isfinite(start_value) or not math.isfinite(end_value) or start_value < previous or end_value < start_value:
+            return None
+        if maximum is not None and end_value > maximum + 0.001:
+            return None
+        items.append(AlignmentItem(str(raw["text"]), start_value, end_value))
+        previous = end_value
+    return items
+
+
+def _qwen_load_chunk_results(workspace_dir: Path, plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    results: dict[str, dict[str, Any]] = {}
+    plan_chunks_by_key = {_qwen_chunk_key(item["index"]): item for item in plan["chunks"]}
+    results_dir = _qwen_workspace_paths(workspace_dir)["results"]
+    if not results_dir.exists():
+        return results
+    for path in results_dir.glob("chunk_*.json"):
+        data = _qwen_load_json(path)
+        if not isinstance(data, dict) or data.get("schema_version") != QWEN3_CACHE_SCHEMA_VERSION or data.get("plan") != plan:
+            continue
+        index = data.get("chunk_index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        key = _qwen_chunk_key(index)
+        layout = plan_chunks_by_key.get(key)
+        if path.stem != key or layout is None:
+            continue
+        if data.get("start_sample") != layout["start_sample"] or data.get("end_sample") != layout["end_sample"] or not isinstance(data.get("text"), str):
+            continue
+        if _qwen_valid_alignment(data.get("word_timestamps"), layout["end_sample"] - layout["start_sample"]) is None:
+            continue
+        results[key] = data
+    return results
+
+
+def _qwen_progress(plan: dict[str, Any], results: dict[str, dict[str, Any]], failures: dict[str, str] | None = None) -> dict[str, Any]:
+    failures = failures or {}
+    return {
+        "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+        "plan": plan,
+        "chunks": {
+            (key := _qwen_chunk_key(item["index"])): {
+                "status": "succeeded" if key in results else ("failed" if key in failures else "pending"),
+                "error": failures.get(key),
+                "result_path": f"chunk_results/{key}.json",
+            }
+            for item in plan["chunks"]
+        },
+    }
+
+
+def _qwen_load_merged(path: Path, plan: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    data = _qwen_load_json(path)
+    if not isinstance(data, dict) or data.get("schema_version") != QWEN3_CACHE_SCHEMA_VERSION or data.get("plan") != plan:
+        return None
+    segments = data.get("segments")
+    if not isinstance(data.get("text"), str) or not isinstance(segments, list):
+        return None
+    if _qwen_valid_alignment(data.get("word_timestamps"), plan["source"]["sample_count"]) is None:
+        return None
+    for segment in segments:
+        if not isinstance(segment, dict) or not isinstance(segment.get("id"), int) or isinstance(segment.get("id"), bool) or not isinstance(segment.get("text"), str):
+            return None
+        start, end = segment.get("start"), segment.get("end")
+        if isinstance(start, bool) or not isinstance(start, (int, float)) or isinstance(end, bool) or not isinstance(end, (int, float)) or not 0 <= float(start) <= float(end):
+            return None
+    return _qwen_info(plan["request"]["language"], bool(data["word_timestamps"])), segments
+
+
+def _load_qwen_model() -> Any:
+    try:
+        import torch
+        from transformers import GenerationConfig
+        from qwen_asr import Qwen3ASRModel
+    except ImportError as exc:
+        raise RuntimeError(
+            "Qwen3 ASR dependencies are not installed. Run "
+            r"uv sync --python 3.12 --no-dev --extra qwen3, then "
+            r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
+        ) from exc
+    if not torch.cuda.is_available():
+        raise RuntimeError("Qwen3 ASR requires an available CUDA GPU. Use the default whisper provider on CPU.")
+    if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(QWEN3_ALIGNER_MODEL_DIR):
+        raise RuntimeError(
+            "Qwen3 local models are missing. Run "
+            r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
+        )
+    os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
+    asr_model = path_to_posix(QWEN3_ASR_MODEL_DIR)
+    dtype = getattr(torch, QWEN3_DTYPE)
+    generation_config = GenerationConfig.from_pretrained(asr_model, temperature=None)
+    return Qwen3ASRModel.from_pretrained(
+        asr_model,
+        forced_aligner=path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
+        forced_aligner_kwargs={"dtype": dtype, "device_map": QWEN3_DEVICE_MAP},
+        dtype=dtype,
+        device_map=QWEN3_DEVICE_MAP,
+        max_inference_batch_size=QWEN3_MAX_INFERENCE_BATCH_SIZE,
+        max_new_tokens=QWEN3_MAX_NEW_TOKENS,
+        generation_config=generation_config,
+    )
+
+
+def _qwen_result_payload(result: Any, plan: dict[str, Any], layout: dict[str, Any]) -> dict[str, Any]:
+    timestamp_data = getattr(result, "time_stamps", None)
+    alignment = normalize_alignment_items(list(getattr(timestamp_data, "items", []) or []))
+    return {
+        "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+        "plan": plan,
+        "chunk_index": layout["index"],
+        "start_sample": layout["start_sample"],
+        "end_sample": layout["end_sample"],
+        "text": str(getattr(result, "text", "") or "").strip(),
+        "word_timestamps": [asdict(item) for item in alignment],
+    }
+
+
+def _qwen_merge(plan: dict[str, Any], results: dict[str, dict[str, Any]]) -> tuple[str, list[AlignmentItem], list[dict[str, Any]]]:
+    text_parts = []
+    global_items = []
+    for layout in plan["chunks"]:
+        item = results[_qwen_chunk_key(layout["index"])]
+        text_parts.append(item["text"])
+        offset = layout["start_sample"] / SAMPLE_RATE
+        for word in _qwen_valid_alignment(item["word_timestamps"]) or []:
+            global_items.append(AlignmentItem(word.text, round(offset + word.start, 3), round(offset + word.end, 3)))
+    text = "".join(text_parts)
+    duration = plan["source"]["sample_count"] / SAMPLE_RATE
+    return text, global_items, build_sentence_segments(text, global_items, duration)
+
+
+def transcribe_with_qwen3(
+    audio_path: Path,
+    language: str,
+    workspace_dir: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    paths = _qwen_workspace_paths(workspace_dir)
+    cached_plan = _qwen_validate_plan(_qwen_load_json(paths["plan"]), audio_path, language)
+    if cached_plan is not None:
+        merged = _qwen_load_merged(paths["merged"], cached_plan)
+        if merged is not None:
+            terminal_info(logger, "[Transcribe] Qwen3 cache: complete; skipped audio decode, CUDA check, and model load")
+            return merged
+
+    audio = decode_normalized_audio(audio_path)
+    if cached_plan is None or cached_plan["source"]["sample_count"] != audio.sample_count:
+        speech = detect_speech_samples(audio, DEFAULT_VAD_PARAMETERS)
+        plan = _qwen_build_plan(audio_path, language, audio.sample_count, speech)
+        ensure_dir(workspace_dir)
+        write_json_atomic(paths["plan"], plan)
+        write_json_atomic(
+            paths["vad"],
+            {
+                "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+                "source": plan["source"],
+                "parameters": asdict(DEFAULT_VAD_PARAMETERS),
+                "speech_intervals": [{"start_sample": start, "end_sample": end} for start, end in speech],
+            },
+        )
+    else:
+        plan = cached_plan
+    results = _qwen_load_chunk_results(workspace_dir, plan)
+    pending = [item for item in plan["chunks"] if _qwen_chunk_key(item["index"]) not in results]
+    if not pending:
+        text, alignment, segments = _qwen_merge(plan, results)
+        write_json_atomic(paths["merged"], {"schema_version": QWEN3_CACHE_SCHEMA_VERSION, "plan": plan, "text": text, "word_timestamps": [asdict(item) for item in alignment], "segments": segments})
+        return _qwen_info(language, bool(alignment)), segments
+
+    model = _load_qwen_model()
+    failures: dict[str, str] = {}
+
+    def cache(layout: dict[str, Any], result: Any) -> None:
+        payload = _qwen_result_payload(result, plan, layout)
+        key = _qwen_chunk_key(layout["index"])
+        write_json_atomic(paths["results"] / f"{key}.json", payload)
+        results[key] = payload
+        write_json_atomic(paths["progress"], _qwen_progress(plan, results, failures))
+
+    write_json_atomic(paths["progress"], _qwen_progress(plan, results))
+    for offset in range(0, len(pending), QWEN3_MAX_INFERENCE_BATCH_SIZE):
+        batch = pending[offset : offset + QWEN3_MAX_INFERENCE_BATCH_SIZE]
+        inputs = [(audio.samples[item["start_sample"] : item["end_sample"]], SAMPLE_RATE) for item in batch]
+        try:
+            batch_results = model.transcribe(inputs, return_time_stamps=True)
+            if len(batch_results) != len(batch):
+                raise RuntimeError("Qwen3 returned an unexpected batch result count.")
+            for layout, result in zip(batch, batch_results):
+                cache(layout, result)
+        except Exception:
+            logger.warning("Qwen3 batch failed; isolating each chunk", exc_info=True)
+            for layout, input_item in zip(batch, inputs):
+                key = _qwen_chunk_key(layout["index"])
+                try:
+                    isolated = model.transcribe([input_item], return_time_stamps=True)
+                    if len(isolated) != 1:
+                        raise RuntimeError("Qwen3 returned an unexpected isolated result count.")
+                    cache(layout, isolated[0])
+                except Exception as exc:
+                    failures[key] = str(exc)
+                    write_json_atomic(paths["progress"], _qwen_progress(plan, results, failures))
+    if failures:
+        raise RuntimeError(f"Qwen3 chunks failed after isolation: {', '.join(sorted(failures))}")
+    text, alignment, segments = _qwen_merge(plan, results)
+    write_json_atomic(paths["merged"], {"schema_version": QWEN3_CACHE_SCHEMA_VERSION, "plan": plan, "text": text, "word_timestamps": [asdict(item) for item in alignment], "segments": segments})
+    return _qwen_info(language, bool(alignment)), segments

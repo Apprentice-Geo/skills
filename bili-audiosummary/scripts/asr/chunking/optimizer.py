@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# The optimizer uses unit-free integer coordinates. Legacy public names retain
+# their ``_ms`` suffix so completed experiments and external imports keep working.
+
 import math
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass

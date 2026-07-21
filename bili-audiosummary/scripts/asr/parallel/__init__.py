@@ -1,8 +1,7 @@
 from scripts.asr.parallel import media, runner, state, worker
 from scripts.asr.parallel.media import (
+    decode_audio,
     detect_speech_intervals,
-    probe_audio_duration,
-    split_asr_chunks,
 )
 from scripts.asr.parallel.merge import merge_chunk_results
 from scripts.asr.parallel.metrics import write_metrics
@@ -27,6 +26,7 @@ from scripts.asr.parallel.plan import (
     plan_to_dict,
     resolve_worker_config,
     resolve_planning_parameters,
+    source_file_matches,
     source_audio_fingerprint,
 )
 from scripts.asr.parallel.runner import run_parallel_whisper_transcribe
@@ -72,6 +72,7 @@ __all__ = [
     "build_parallel_asr_plan",
     "chunk_key",
     "chunk_result_path",
+    "decode_audio",
     "detect_speech_intervals",
     "failed_chunks_blocking_merge",
     "initial_progress",
@@ -85,13 +86,12 @@ __all__ = [
     "plan_matches_request",
     "plan_to_dict",
     "prepare_progress_for_resume",
-    "probe_audio_duration",
     "resolve_worker_config",
     "resolve_planning_parameters",
     "run_parallel_whisper_transcribe",
     "source_audio_fingerprint",
+    "source_file_matches",
     "source_matches",
-    "split_asr_chunks",
     "state",
     "transcribe_whisper_chunks",
     "worker",

@@ -63,7 +63,6 @@ def test_run_transcribe_writes_outputs_with_mocked_asr(workspace_tmp_path: Path,
             "audio_files": [audio_path.as_posix()],
         },
     )
-    mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
     mocker.patch(
         "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
@@ -240,7 +239,6 @@ def test_run_transcribe_only_emits_stage(
         manifest_path,
         {"id": "BVTEST", "audio_files": [audio_path.as_posix()]},
     )
-    mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration", return_value=1.0)
     mocker.patch(
         "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
@@ -267,7 +265,6 @@ def test_run_transcribe_uses_parallel_asr_for_whisper(
     audio_path.write_bytes(b"audio")
     manifest_path = resource_dir / "fetch_manifest.json"
     write_json(manifest_path, {"id": "BVTEST", "audio_files": [audio_path.as_posix()]})
-    mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration", return_value=9.0)
     parallel_mock = mocker.patch(
         "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
         return_value=(
@@ -311,18 +308,15 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
         ),
     )
     parallel_mock = mocker.patch("scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe")
-    probe_mock = mocker.patch("scripts.transcribe.parallel_asr.probe_audio_duration")
 
     result = transcribe.run_transcribe(args)
 
     qwen3_mock.assert_called_once_with(
         audio_path,
         "zh",
-        None,
-        result_dir / "asr_qwen3" / "result.json",
+        result_dir / "asr_qwen3",
     )
     parallel_mock.assert_not_called()
-    probe_mock.assert_not_called()
     assert result["payload"]["source"] == "qwen3-asr"
     assert len(read_json(result["json_path"])["segments"]) == 2
     assert "[00:00:00 - 00:00:10] 第一段文本，第二段文本" in result[

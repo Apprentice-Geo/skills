@@ -82,13 +82,13 @@ uv run --no-sync python -m scripts.transcribe --audio "<audio-path>" --output-di
 
 CPU 线程预算为 `B = max(1, floor(cpu_count * 0.75))`。自动模式只考虑不超过必要块数、能整除 `B` 且存在合法切片方案的 worker 数，并选择最大的可行值。只指定 `--num-workers` 时，每个 worker 使用 `floor(B / W)` 个线程；只指定 `--cpu-threads` 时，在预算内选择最大的可行 worker 数；同时指定时保留两个显式值，但要求乘积不超过 `B`。显式值不会被静默降低，非正数、预算超限或无法生成合法切片计划都会在写入切片和加载模型前直接失败。
 
-faster-whisper 并行路径复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不需要额外安装 `silero-vad`、PyTorch 或 torchaudio。音频先解码为 16kHz 单声道，规划 VAD 固定使用 `threshold=0.35`、`neg_threshold=0.25`、最短语音 `0ms`、最短静音 `300ms`、不限制最长语音、`speech_pad_ms=0` 和 `sampling_rate=16000`。VAD 语音区间会先裁剪、排序并合并，完整静音窗口内的任意整数毫秒位置都可以安全切分；只有严格落在语音区间内部的边界才记为硬切。
+两种 ASR 路径都把源音频一次解码为 16kHz 单声道 float32 PCM；规划 VAD、边界规划和模型推理共享这份内存样本，不持久化 normalized PCM。faster-whisper 路径复用固定版本 `faster-whisper==1.2.1` 内置的 ONNX Silero VAD，不需要额外安装 `silero-vad`、PyTorch 或 torchaudio。规划 VAD 固定使用 `threshold=0.35`、`neg_threshold=0.25`、最短语音 `0ms`、最短静音 `300ms`、不限制最长语音、`speech_pad_ms=0` 和 `sampling_rate=16000`。VAD 区间、切点和 chunk 身份统一使用整数样本坐标；只有严格落在语音区间内部的边界才记为硬切。
 
 正常切片连续覆盖完整音频、互不重叠，时长为 `30s-180s`；完整音频不足 30 秒时只允许单 worker、单切片例外。切片数 `N` 必须是 worker 数 `W` 的整数倍，批次数严格为 `N / W`。自动 worker 数不超过 `ceil(D / 180)`，并继续遵守 CPU 预算与等线程分配；显式 worker/thread 参数仍优先，但必须能产生合法切片。规划器对所有候选依次最小化硬切数、批次数、最大预计 VAD 语音负载、语音负载 MSRE 和边界顺序。chunk 内 faster-whisper 仍只接收 `vad_filter=True`，不接收这组外部规划 VAD 参数。
 
 ### faster-whisper 并行产物与缓存
 
-Schema 5 使用平铺的 chunk 布局，不再生成分组目录：
+Schema 6 使用平铺的样本坐标 chunk 布局，不生成 chunk WAV：
 
 ```text
 asr_parallel/
@@ -97,15 +97,13 @@ asr_parallel/
 ├─ metrics.json
 ├─ vad_result.json
 ├─ merged_transcript.json
-├─ chunks/
-│  └─ chunk_<index>.wav
 └─ chunk_results/
    └─ chunk_<index>.json
 ```
 
-只有音频指纹、ASR 参数、VAD 参数、规划参数、worker 配置和最终切片布局全部匹配时，Schema 5 计划与有效 chunk result 才会复用。Schema 4 plan、progress 和 chunk result 均不复用；VAD 参数身份变化也会使旧 VAD 缓存自动失效。配置变化时会重建 plan 和 progress，但不会预先删除不兼容的旧结果；同名 chunk 成功后，新结果会通过原子替换覆盖旧文件，其他旧文件继续保留在磁盘上但不会被复用。
+只有音频指纹、ASR 参数、VAD 参数、规划参数、worker 配置和最终样本布局全部匹配时，Schema 6 计划与有效 chunk result 才会复用。Schema 5 及旧结果均不复用。完整缓存命中会在音频解码、VAD 和模型加载前返回；部分恢复只解码一次，并让同一个 `WhisperModel` 并发消费缺失 chunk 的 ndarray 视图。配置变化时会重建 plan 和 progress；同名 chunk 成功后，新结果通过原子替换覆盖旧文件。
 
-`vad_result.json` 使用独立的 Schema 1，只按音频指纹与 VAD 参数校验，空语音区间也是合法结果。完整 plan 命中时会直接跳过 VAD；plan 因 worker 或 ASR 参数变化而重建时，仍可复用合法的 VAD 结果。终端会明确报告 VAD 是随 plan 跳过、从文件复用，还是因缺失或无效而重新生成。
+`vad_result.json` 使用样本坐标 Schema 2，只按音频指纹与 VAD 参数校验，空语音区间也是合法结果。完整 plan 命中时直接跳过 VAD；旧秒坐标 VAD 缓存不会复用。
 
 合并时，chunk 内时间戳直接加上该 chunk 的全局开始时间。segment 按 chunk index 和时间排序；只有时间范围真正相交时才合并，端点仅相接时保持分离。中文文本直接拼接，其他语言以一个空格连接，不执行字符级去重。`metrics.json` 记录 worker、chunk、batch、硬切数、逐 chunk 预计语音时长、最大预计语音负载、语音负载 MSRE、各切片耗时和最终 segment 数，不再记录软时长指标。
 
@@ -122,7 +120,9 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider qwen3
 ```
 
-该选项只运行 Qwen3-ASR。依赖、模型、CUDA、模型加载、推理或对齐失败都会终止本次转写；如需使用 faster-whisper，请显式选择 `--asr-provider whisper` 或省略 provider 参数后重新运行。Qwen3 返回的原始文本和词级时间戳会写入 `results/<BVID>/asr_qwen3/result.json`。该 Schema 1 缓存同时校验音频指纹、时长、语言和完整模型请求参数；只有非空文本与合法词级时间戳都存在时才复用。命中后不再检查 CUDA、依赖或模型，终端会明确提示复用；旧格式、损坏或不匹配的文件会重新生成。模型未返回的字段仍不会写入文件，因此这类不完整结果不会被后续运行复用。
+该选项只运行 Qwen3-ASR。依赖、模型、CUDA、模型加载、推理或对齐失败都会终止本次转写；如需使用 faster-whisper，请显式选择 `--asr-provider whisper` 或省略 provider 参数后重新运行。Qwen3 固定使用 `full` 数量策略：分片数存在 `QWEN3_MAX_INFERENCE_BATCH_SIZE` 的合法倍数时只比较这些倍数；不足一组时选择最多合法分片，25/60/100/119/120–180 秒分别产生 1/2/3/3/4 个分片。每批最多提交该常量数量的 ndarray slice，不向模型传 `language`，`max_new_tokens=1024`。
+
+`results/<BVID>/asr_qwen3/` 使用 Schema 2 保存 plan、progress、逐 chunk result 和合并后的 `result.json`。完整缓存命中不解码、不检查 CUDA且不加载模型；部分恢复只解码一次、加载模型一次。batch 失败时，该批成员分别获得一次单 chunk 隔离尝试，成功项立即原子缓存，仍失败的 chunk 阻止合并并可在下次运行重新尝试。空文本和空时间戳是合法的 chunk 缓存内容；缓存只做身份、schema 和数据类型安全校验，不额外判断文本内容质量。
 
 ## ASR Benchmark
 

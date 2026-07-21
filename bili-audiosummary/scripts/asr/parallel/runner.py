@@ -4,12 +4,9 @@ import os
 import time
 from pathlib import Path
 
+from scripts.asr.chunking import decode_normalized_audio
 from scripts.asr.common import is_chinese_language
-from scripts.asr.parallel.media import (
-    detect_speech_intervals,
-    probe_audio_duration,
-    split_asr_chunks,
-)
+from scripts.asr.parallel.media import detect_speech_intervals
 from scripts.asr.parallel.merge import merge_chunk_results
 from scripts.asr.parallel.metrics import write_metrics
 from scripts.asr.parallel.plan import (
@@ -19,6 +16,7 @@ from scripts.asr.parallel.plan import (
     plan_matches_request,
     resolve_worker_config,
     source_audio_fingerprint,
+    source_file_matches,
 )
 from scripts.asr.parallel.state import (
     chunk_key,
@@ -26,8 +24,8 @@ from scripts.asr.parallel.state import (
     initial_progress,
     load_plan,
     load_progress,
-    load_valid_vad_result,
     load_valid_chunk_results,
+    load_valid_vad_result,
     workspace_paths,
     write_plan,
     write_progress,
@@ -36,7 +34,7 @@ from scripts.asr.parallel.state import (
 from scripts.asr.parallel.worker import _resolve_model_path, transcribe_whisper_chunks
 from scripts.process_logging import get_logger, terminal_info
 from scripts.runtime_options import TranscribeOptions
-from scripts.utils import write_json
+from scripts.utils import write_json_atomic
 
 
 logger = get_logger(__name__)
@@ -45,177 +43,121 @@ logger = get_logger(__name__)
 def _log_plan(plan: ParallelAsrPlan, status: str) -> None:
     terminal_info(
         logger,
-        "[Transcribe] plan: status=%s, chunks=%d, num_workers=%d, "
-        "cpu_threads=%d, cpu_budget=%d, batches=%d",
+        "[Transcribe] plan: status=%s, chunks=%d, num_workers=%d, cpu_threads=%d, cpu_budget=%d, batches=%d",
         status,
         len(plan.chunks),
         plan.num_workers,
         plan.cpu_threads,
         plan.cpu_budget,
-        len(plan.chunks) // plan.num_workers,
+        plan.batch_count,
     )
+
+
+def _options_with_model(options: TranscribeOptions, model: str) -> TranscribeOptions:
+    return TranscribeOptions(**{**options.__dict__, "model": model})
 
 
 def _load_matching_plan(
     plan_path: Path,
-    source_audio,
+    audio_path: Path,
     options: TranscribeOptions,
-    worker_config,
-) -> ParallelAsrPlan | None:
+) -> tuple[ParallelAsrPlan, TranscribeOptions] | None:
     if not plan_path.exists():
         return None
     try:
         plan = load_plan(plan_path)
+        if not source_file_matches(plan.source_audio, audio_path):
+            return None
+        if options.model is not None and options.model != plan.model:
+            return None
+        plan_options = _options_with_model(options, str(plan.model))
+        workers = resolve_worker_config(plan.source_audio.sample_count, os.cpu_count(), plan_options)
+        if not plan_matches_request(plan, plan.source_audio, plan_options, workers):
+            return None
+        return plan, plan_options
     except (OSError, KeyError, TypeError, ValueError) as exc:
         logger.warning("Invalid cached ASR plan; rebuilding: %s", exc)
         return None
-    if plan_matches_request(
-        plan,
-        source_audio,
-        options,
-        worker_config,
-        DEFAULT_VAD_PARAMETERS,
-    ):
-        return plan
-    return None
 
 
 def run_parallel_whisper_transcribe(
     audio_path: Path,
     options: TranscribeOptions,
-    output_dir: Path,
-    duration_seconds: float | None = None,
+    workspace_dir: Path,
 ) -> tuple[dict[str, object], list[dict[str, object]], str]:
     started_at = time.perf_counter()
-    duration = (
-        duration_seconds
-        if duration_seconds is not None
-        else probe_audio_duration(audio_path)
-    )
-    source_audio = source_audio_fingerprint(audio_path, duration)
-    cpu_count = os.cpu_count()
-    worker_config = resolve_worker_config(duration, cpu_count, options)
-    model_path = _resolve_model_path(options.model)
-    plan_options = TranscribeOptions(
-        **{
-            **options.__dict__,
-            "model": model_path,
-        }
-    )
-    workspace_dir = output_dir / "asr_parallel"
     paths = workspace_paths(workspace_dir)
+    matched = _load_matching_plan(paths["plan"], audio_path, options)
+    plan = matched[0] if matched else None
+    plan_options = matched[1] if matched else None
 
-    plan_existed = paths["plan"].exists()
-    plan = _load_matching_plan(
-        paths["plan"],
-        source_audio,
-        plan_options,
-        worker_config,
-    )
+    if plan is not None:
+        cached = load_valid_chunk_results(workspace_dir, plan)
+        if len(cached) == len(plan.chunks):
+            terminal_info(logger, "[Transcribe] cache: complete; skipped audio decode and model load")
+            merged = merge_chunk_results(plan, cached)
+            return _result(plan, merged)
+
+    audio = decode_normalized_audio(audio_path)
+    source = source_audio_fingerprint(audio_path, audio.sample_count, audio.sample_rate)
+    if plan is not None and plan.source_audio != source:
+        plan = None
+        plan_options = None
     if plan is None:
-        vad_result_existed = paths["vad_result"].exists()
-        speech_intervals = (
-            load_valid_vad_result(
-                paths["vad_result"],
-                source_audio,
-                DEFAULT_VAD_PARAMETERS,
-            )
-            if vad_result_existed
-            else None
-        )
-        if speech_intervals is None:
-            terminal_info(
-                logger,
-                "[Transcribe] VAD cache: %s; %s vad_result.json",
-                "invalid" if vad_result_existed else "missing",
-                "regenerating" if vad_result_existed else "generating",
-            )
-            speech_intervals = detect_speech_intervals(
-                audio_path,
-                DEFAULT_VAD_PARAMETERS,
-            )
-            write_vad_result(
-                paths["vad_result"],
-                source_audio,
-                DEFAULT_VAD_PARAMETERS,
-                speech_intervals,
-            )
-        else:
-            terminal_info(
-                logger,
-                "[Transcribe] VAD cache: reused vad_result.json",
-            )
+        model_path = _resolve_model_path(options.model)
+        plan_options = _options_with_model(options, model_path)
+        workers = resolve_worker_config(audio.sample_count, os.cpu_count(), plan_options)
+        vad_existed = paths["vad_result"].exists()
+        speech = load_valid_vad_result(paths["vad_result"], source, DEFAULT_VAD_PARAMETERS) if vad_existed else None
+        if speech is None:
+            speech = detect_speech_intervals(audio, DEFAULT_VAD_PARAMETERS)
+            write_vad_result(paths["vad_result"], source, DEFAULT_VAD_PARAMETERS, speech)
         plan = build_parallel_asr_plan(
-            duration_seconds=duration,
-            cpu_count=cpu_count,
-            source_audio=source_audio,
+            sample_count=audio.sample_count,
+            cpu_count=os.cpu_count(),
+            source_audio=source,
             options=plan_options,
-            speech_intervals=speech_intervals,
-            vad_parameters=DEFAULT_VAD_PARAMETERS,
-            worker_config=worker_config,
+            speech_intervals=speech,
+            worker_config=workers,
         )
         write_plan(paths["plan"], plan)
-        plan_status = "rebuilt" if plan_existed else "created"
-    else:
-        plan_status = "reused"
-        terminal_info(
-            logger,
-            "[Transcribe] VAD: skipped; reused matching ASR plan",
-        )
-
-    if plan_status == "rebuilt":
-        terminal_info(logger, "[Transcribe] cached plan incompatible; rebuilding")
-    _log_plan(plan, plan_status)
-    if plan_status != "reused" or not paths["progress"].exists():
         write_progress(paths["progress"], initial_progress(plan))
-
-    valid_results = load_valid_chunk_results(workspace_dir, plan)
-    pending_chunks = [
-        chunk for chunk in plan.chunks if chunk_key(chunk) not in valid_results
-    ]
-    terminal_info(
-        logger,
-        "[Transcribe] preparing %d audio chunks",
-        len(pending_chunks),
-    )
-    if pending_chunks:
-        split_asr_chunks(
-            audio_path,
-            plan,
-            workspace_dir,
-            chunks=pending_chunks,
-        )
-    terminal_info(logger, "[Transcribe] audio chunks ready")
-    chunk_results = transcribe_whisper_chunks(plan, plan_options, workspace_dir)
-    merged_segments = merge_chunk_results(plan, chunk_results)
-    terminal_info(
-        logger,
-        "[Transcribe] merge succeeded: chunks=%d, segments=%d",
-        len(chunk_results),
-        len(merged_segments),
-    )
-    write_json(paths["merged_transcript"], {"segments": merged_segments})
+        status = "created"
+    else:
+        status = "reused"
+    _log_plan(plan, status)
+    assert plan_options is not None
+    chunk_results = transcribe_whisper_chunks(plan, plan_options, workspace_dir, audio)
+    merged = merge_chunk_results(plan, chunk_results)
+    write_json_atomic(paths["merged_transcript"], {"segments": merged})
     progress = load_progress(paths["progress"])
-    failed_chunks = failed_chunks_blocking_merge(progress)
     write_metrics(
         paths["metrics"],
         plan,
         time.perf_counter() - started_at,
         chunk_results,
-        len(merged_segments),
-        failed_chunks,
+        len(merged),
+        failed_chunks_blocking_merge(progress),
     )
-    info_data = {
-        "language": plan.language,
-        "language_probability": None,
-        "duration": duration,
-        "duration_after_vad": None,
-        "model": model_path,
-        "device": plan.device,
-        "compute_type": plan.compute_type,
-        "beam_size": plan.beam_size,
-        "text_normalization": (
-            "simplified-chinese" if is_chinese_language(plan.language) else None
-        ),
-    }
-    return info_data, merged_segments, "faster-whisper"
+    return _result(plan, merged)
+
+
+def _result(
+    plan: ParallelAsrPlan,
+    segments: list[dict[str, object]],
+) -> tuple[dict[str, object], list[dict[str, object]], str]:
+    return (
+        {
+            "language": plan.language,
+            "language_probability": None,
+            "duration": plan.source_audio.duration,
+            "duration_after_vad": None,
+            "model": plan.model,
+            "device": plan.device,
+            "compute_type": plan.compute_type,
+            "beam_size": plan.beam_size,
+            "text_normalization": "simplified-chinese" if is_chinese_language(plan.language) else None,
+        },
+        segments,
+        "faster-whisper",
+    )

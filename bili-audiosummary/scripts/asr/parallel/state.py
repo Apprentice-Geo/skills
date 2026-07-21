@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -21,7 +20,7 @@ from scripts.utils import ensure_dir, read_json, write_json_atomic
 
 MAX_CHUNK_RETRIES = 1
 PROGRESS_STATES = {"pending", "running", "succeeded", "failed"}
-VAD_RESULT_SCHEMA_VERSION = 1
+VAD_RESULT_SCHEMA_VERSION = 2
 
 
 def workspace_paths(workspace_dir: Path) -> dict[str, Path]:
@@ -30,7 +29,6 @@ def workspace_paths(workspace_dir: Path) -> dict[str, Path]:
         "plan": workspace_dir / "asr_plan.json",
         "progress": workspace_dir / "progress.json",
         "metrics": workspace_dir / "metrics.json",
-        "chunks": workspace_dir / "chunks",
         "chunk_results": workspace_dir / "chunk_results",
         "vad_result": workspace_dir / "vad_result.json",
         "merged_transcript": workspace_dir / "merged_transcript.json",
@@ -41,7 +39,7 @@ def write_vad_result(
     path: Path,
     source_audio: AsrSourceAudio,
     vad_parameters: VadParameters,
-    speech_intervals: list[tuple[float, float]],
+    speech_intervals: list[tuple[int, int]],
 ) -> None:
     write_json_atomic(
         path,
@@ -50,7 +48,7 @@ def write_vad_result(
             "source": asdict(source_audio),
             "parameters": asdict(vad_parameters),
             "speech_intervals": [
-                {"start": round(start, 3), "end": round(end, 3)}
+                {"start_sample": start, "end_sample": end}
                 for start, end in speech_intervals
             ],
         },
@@ -61,7 +59,7 @@ def load_valid_vad_result(
     path: Path,
     source_audio: AsrSourceAudio,
     vad_parameters: VadParameters,
-) -> list[tuple[float, float]] | None:
+) -> list[tuple[int, int]] | None:
     try:
         data = read_json(path)
     except (OSError, UnicodeError, json.JSONDecodeError):
@@ -78,32 +76,28 @@ def load_valid_vad_result(
     if not isinstance(raw_intervals, list):
         return None
 
-    intervals: list[tuple[float, float]] = []
-    previous_end = 0.0
+    intervals: list[tuple[int, int]] = []
+    previous_end = 0
     for item in raw_intervals:
         if not isinstance(item, dict):
             return None
-        start = item.get("start")
-        end = item.get("end")
+        start = item.get("start_sample")
+        end = item.get("end_sample")
         if (
             isinstance(start, bool)
-            or not isinstance(start, (int, float))
+            or not isinstance(start, int)
             or isinstance(end, bool)
-            or not isinstance(end, (int, float))
+            or not isinstance(end, int)
         ):
             return None
-        start_value = float(start)
-        end_value = float(end)
         if (
-            not math.isfinite(start_value)
-            or not math.isfinite(end_value)
-            or start_value < previous_end
-            or end_value < start_value
-            or end_value > source_audio.duration
+            start < previous_end
+            or end < start
+            or end > source_audio.sample_count
         ):
             return None
-        intervals.append((start_value, end_value))
-        previous_end = end_value
+        intervals.append((start, end))
+        previous_end = end
     return intervals
 
 
@@ -208,8 +202,8 @@ def _valid_chunk_result(data: Any, plan: ParallelAsrPlan) -> bool:
     required = {
         "schema_version",
         "chunk_index",
-        "start",
-        "duration",
+        "start_sample",
+        "end_sample",
         "end_boundary",
         "source",
         "plan",
@@ -242,8 +236,8 @@ def _valid_chunk_result(data: Any, plan: ParallelAsrPlan) -> bool:
         "num_workers": plan.num_workers,
     }
     return (
-        data["start"] == chunk.start
-        and data["duration"] == chunk.duration
+        data["start_sample"] == chunk.start_sample
+        and data["end_sample"] == chunk.end_sample
         and data["end_boundary"] == chunk.end_boundary
         and data["model"] == expected_model
         and isinstance(data["elapsed_seconds"], (int, float))

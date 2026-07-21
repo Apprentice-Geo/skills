@@ -66,22 +66,22 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 - If faster-whisper fails, verify that the audio path in `fetch_manifest.json` exists and that packaged ffmpeg and `models/faster-whisper-small/` are available.
 - Check the transcript command log for model-loading, audio-decoding, memory, or language-normalization errors.
 - For Chinese transcription failures involving OpenCC, rerun core setup to restore `opencc-python-reimplemented`.
-- Standalone `--num-workers` and `--cpu-threads` overrides are strict. Values must be positive, their product must not exceed `B = max(1, floor(cpu_count * 0.75))`, and the resolved worker count must admit a `30s-180s` chunk count divisible by that worker count. The command does not lower explicit values or switch back to automatic planning; an impossible configuration fails before chunk files are written or the model is loaded.
+- Standalone `--num-workers` and `--cpu-threads` overrides are strict. Values must be positive, their product must not exceed `B = max(1, floor(cpu_count * 0.75))`, and the resolved worker count must admit a `30s-180s` chunk count divisible by that worker count. The command does not lower explicit values or switch back to automatic planning; an impossible configuration fails before model loading.
 - Planning VAD runs on 16kHz mono audio with `threshold=0.35`, `neg_threshold=0.25`, `min_speech_duration_ms=0`, `min_silence_duration_ms=300`, unlimited maximum speech duration, and `speech_pad_ms=0`. No speech uses arbitrary safe silence positions; long continuous speech uses the fewest necessary hard boundaries. Audio decode or VAD execution errors stop before chunk transcription.
-- VAD decodes the complete audio and uses temporary sample arrays; allow roughly 0.5 GB of working memory per audio hour during planning. For multi-hour inputs, close memory-heavy programs or process the source on a machine with sufficient RAM.
+- Each incomplete ASR run keeps one complete 16kHz mono float32 PCM array in memory and passes zero-copy slices to VAD and inference; allow roughly 230 MiB per audio hour for that array plus provider/model working memory. Complete cache hits do not decode the source.
 - Merge rejects a segment whose end precedes its start. Genuine time-range intersections are combined, while endpoint contact remains separate; text similarity is never used to delete characters or words.
 - Do not claim a transcript or summary was produced when ASR terminated before writing transcript outputs.
 
 ## Parallel faster-whisper Cache and Resume
 
-- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. The normalized VAD output uses `vad_result.json`, chunk audio uses `chunks/chunk_<index>.wav`, and cached transcription results use `chunk_results/chunk_<index>.json`.
-- `vad_result.json` uses Schema 1 and is reusable when its source fingerprint and VAD parameters match. An empty interval list is valid. If the complete plan matches, VAD is skipped with a terminal message; if the plan must be rebuilt, a valid VAD result is reused independently. Missing, malformed, incompatible, overlapping, or out-of-range VAD intervals trigger regeneration.
-- A cached Schema 5 plan is reused only when the source-audio fingerprint, ASR parameters, VAD parameters, planning parameters, CPU budget, worker configuration, and flat chunk layout all match. Schema 4 plan, progress, and chunk results are incompatible; the changed VAD identity also invalidates old VAD cache entries.
+- faster-whisper stores its workspace under `results/<BVID>/asr_parallel/`. Sample-coordinate VAD output uses `vad_result.json`, and cached transcription results use `chunk_results/chunk_<index>.json`; there is no `chunks/` directory or chunk WAV.
+- `vad_result.json` uses Schema 2 sample coordinates. An empty interval list is valid. A complete matching plan skips decode and VAD; missing, malformed, incompatible, overlapping, or out-of-range sample intervals trigger regeneration during a decoded run.
+- A cached Schema 6 plan is reused only when the source-audio fingerprint, sample count/rate, ASR parameters, VAD parameters, planning parameters, CPU budget, worker configuration, count strategy, and flat sample layout all match. Schema 5 and older plan, progress, VAD, and chunk results are incompatible.
 - If the cached plan is unreadable, structurally invalid, or incompatible, the current plan atomically replaces it and the progress state is rebuilt. Incompatible or unreadable chunk-result files are not deleted up front: a successful same-index chunk atomically replaces its stale file, while other stale files remain on disk, are counted as `ignored`, and are not reused.
-- `[Transcribe] cache: reused=<n>, ignored=<n>, pending=<n>, total=<n>` reports the cache decision. Reused results and resumed chunks are also reported individually.
+- Complete cache reuse occurs before audio decode and model load. Partial recovery decodes once, loads one model, and submits only missing ndarray slices.
 - Plan, progress, VAD, and chunk-result JSON files are written through a same-directory temporary file followed by `os.replace()`, so the target is always the previous or new complete JSON document.
 - A valid chunk result is the source of truth and takes precedence over missing, stale, unreadable, or structurally invalid progress. Invalid progress is rebuilt from the current plan, then valid results are marked succeeded without loading a model for fully cached work.
-- Every program invocation gives chunks without a valid result a fresh state: `pending`, `retry_count=0`, and no prior error. Within that invocation, the first failure is retried once and the second failure stops merging. Rerunning gives that failed chunk a new one-retry budget while preserving other valid chunk results.
+- Every program invocation gives chunks without a valid result a fresh state. Within that invocation, the first Whisper failure is retried once and the second failure stops merging. Rerunning gives that failed chunk a new one-retry budget while preserving other valid chunk results.
 
 ## Strict Qwen3 Provider
 
@@ -96,7 +96,8 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 
 - Missing dependencies, models, or CUDA, and model loading, inference, or alignment errors propagate as the transcription failure. No fallback transcript is written and summary-prompt generation does not continue.
 - A successful explicit Qwen3 transcript has `source: qwen3-asr`. To use faster-whisper after a Qwen3 failure, start a separate run with `--asr-provider whisper` or omit the provider option.
-- `results/<BVID>/asr_qwen3/result.json` is reused only when its Schema 1 source/request identity matches and it contains both non-empty text and structurally valid word timestamps. Cache validation runs before Qwen3 dependency, CUDA, model, and inference checks. Missing or invalid files are reported in the terminal and regenerated; incomplete model output may be written without invented fields but is not reusable.
+- `results/<BVID>/asr_qwen3/` uses Schema 2 plan, progress, per-chunk results, and merged `result.json`. Exact merged-cache reuse runs before decode, dependency import, CUDA check, and model loading; partial recovery decodes once and loads once.
+- Qwen3 always uses the `QWEN3_MAX_INFERENCE_BATCH_SIZE`-driven `full` chunk-count strategy and `max_new_tokens=1024`. A failed batch is isolated into one single-chunk call per member. Successful members are cached immediately; remaining failures stop merge but are eligible again on the next invocation. Empty chunk output is reusable. Cache validation deliberately checks schema, identity, coordinates, and data types only; it does not judge transcript completeness or content quality.
 
 ## Logs
 

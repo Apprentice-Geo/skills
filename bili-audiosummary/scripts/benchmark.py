@@ -121,8 +121,9 @@ def prefetch_audio(videos: tuple[BenchmarkVideo, ...], cache_dir: Path) -> dict[
 
 def probe_audio_duration(audio_path: Path) -> float | None:
     try:
-        return float(transcribe.parallel_asr.probe_audio_duration(audio_path))
-    except Exception:
+        metadata = read_json(audio_path.parent / "metadata.json")
+        return float(metadata["duration"])
+    except (KeyError, OSError, TypeError, ValueError):
         return None
 
 

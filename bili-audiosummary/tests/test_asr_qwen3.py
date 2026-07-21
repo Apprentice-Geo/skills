@@ -1,278 +1,200 @@
-import json
-import sys
+from __future__ import annotations
+
 import types
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-import scripts.asr.qwen3 as asr_qwen3
-from scripts.process_logging import LoggingSession
-from scripts.utils import read_json, write_json
+import scripts.asr.qwen3 as qwen3
+from scripts.asr.chunking import NormalizedAudio, SAMPLE_RATE
+from scripts.utils import read_json, write_json_atomic
 
 
-def test_qwen3_disables_temperature_for_greedy_generation(
+def make_audio(seconds: int) -> NormalizedAudio:
+    samples = np.broadcast_to(np.zeros(1, dtype=np.float32), seconds * SAMPLE_RATE)
+    return NormalizedAudio(samples)
+
+
+def make_result(text: str = "", start: float = 0.0, end: float = 0.0):
+    items = [] if not text else [types.SimpleNamespace(text=text, start_time=start, end_time=end)]
+    return types.SimpleNamespace(text=text, time_stamps=types.SimpleNamespace(items=items))
+
+
+def prepare(monkeypatch, audio: NormalizedAudio, model) -> tuple[list[Path], list[bool]]:
+    decoded: list[Path] = []
+    loaded: list[bool] = []
+    monkeypatch.setattr(qwen3, "decode_normalized_audio", lambda path: decoded.append(path) or audio)
+    monkeypatch.setattr(qwen3, "detect_speech_samples", lambda *_args: [])
+    monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: loaded.append(True) or model)
+    return decoded, loaded
+
+
+def test_qwen3_schema_two_full_cache_skips_decode_cuda_and_model(
     workspace_tmp_path: Path,
     monkeypatch,
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
-    asr_model_dir = workspace_tmp_path / "qwen3-asr"
-    aligner_model_dir = workspace_tmp_path / "qwen3-aligner"
-    for model_dir in (asr_model_dir, aligner_model_dir):
-        model_dir.mkdir()
-        (model_dir / "model.safetensors").write_bytes(b"weights")
-    (asr_model_dir / "generation_config.json").write_text(
-        json.dumps(
-            {
-                "eos_token_id": [151643, 151645],
-                "pad_token_id": 151643,
-                "do_sample": False,
-                "temperature": 0.000001,
-            }
-        ),
-        encoding="utf-8",
+    workspace = workspace_tmp_path / "asr_qwen3"
+    plan = qwen3._qwen_build_plan(audio_path, "zh", 25 * SAMPLE_RATE, [])
+    write_json_atomic(workspace / "asr_plan.json", plan)
+    write_json_atomic(
+        workspace / "result.json",
+        {
+            "schema_version": 2,
+            "plan": plan,
+            "text": "",
+            "word_timestamps": [],
+            "segments": [],
+        },
     )
+    monkeypatch.setattr(qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded"))
+    monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: pytest.fail("loaded"))
 
-    received_kwargs = {}
+    info, segments = qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)
 
-    class FakeQwen3ASRModel:
+    assert info["max_new_tokens"] == 1024
+    assert segments == []
+
+
+def test_qwen3_uses_constant_driven_full_batches_and_loads_model_once(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    calls = []
+
+    class Model:
+        def transcribe(self, inputs, **kwargs):
+            calls.append((len(inputs), kwargs))
+            return [make_result() for _ in inputs]
+
+    decoded, loaded = prepare(monkeypatch, make_audio(900), Model())
+    info, segments = qwen3.transcribe_with_qwen3(audio_path, "zh", workspace_tmp_path / "asr_qwen3")
+
+    assert [size for size, _kwargs in calls] == [qwen3.QWEN3_MAX_INFERENCE_BATCH_SIZE] * 2
+    assert all(kwargs == {"return_time_stamps": True} for _size, kwargs in calls)
+    assert len(decoded) == 1
+    assert len(loaded) == 1
+    assert info["max_new_tokens"] == 1024
+    assert segments == []
+
+
+def test_qwen3_short_full_plan_submits_one_partial_batch(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    batch_sizes = []
+
+    class Model:
+        def transcribe(self, inputs, **_kwargs):
+            batch_sizes.append(len(inputs))
+            return [make_result() for _ in inputs]
+
+    prepare(monkeypatch, make_audio(100), Model())
+    qwen3.transcribe_with_qwen3(audio_path, "zh", workspace_tmp_path / "asr_qwen3")
+    assert batch_sizes == [3]
+
+
+def test_qwen3_batch_failure_isolates_members_and_caches_successes(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    calls = []
+
+    class Model:
+        def transcribe(self, inputs, **_kwargs):
+            calls.append(len(inputs))
+            if len(inputs) > 1:
+                raise RuntimeError("batch")
+            if len(calls) == 3:
+                raise RuntimeError("isolated")
+            return [make_result()]
+
+    prepare(monkeypatch, make_audio(120), Model())
+    workspace = workspace_tmp_path / "asr_qwen3"
+    with pytest.raises(RuntimeError, match="chunk_001"):
+        qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)
+
+    assert calls == [4, 1, 1, 1, 1]
+    assert len(list((workspace / "chunk_results").glob("*.json"))) == 3
+    progress = read_json(workspace / "progress.json")
+    assert progress["chunks"]["chunk_001"]["status"] == "failed"
+
+
+def test_qwen3_schema_one_plan_is_rejected_and_empty_chunks_are_cacheable(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr_qwen3"
+    write_json_atomic(workspace / "asr_plan.json", {"schema_version": 1})
+
+    class Model:
+        def transcribe(self, inputs, **_kwargs):
+            return [make_result() for _ in inputs]
+
+    decoded, loaded = prepare(monkeypatch, make_audio(25), Model())
+    _info, segments = qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)
+    assert segments == []
+    assert read_json(workspace / "asr_plan.json")["schema_version"] == 2
+    assert len(decoded) == len(loaded) == 1
+
+    monkeypatch.setattr(qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded"))
+    monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: pytest.fail("loaded"))
+    assert qwen3.transcribe_with_qwen3(audio_path, "zh", workspace)[1] == []
+
+
+def test_qwen3_production_max_new_tokens_is_1024() -> None:
+    assert qwen3.QWEN3_MAX_NEW_TOKENS == 1024
+
+
+def test_qwen3_model_loader_keeps_forced_aligner_and_greedy_generation(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_dir = workspace_tmp_path / "model"
+    aligner_dir = workspace_tmp_path / "aligner"
+    for path in (model_dir, aligner_dir):
+        path.mkdir()
+        (path / "model.safetensors").write_bytes(b"weights")
+    received = {}
+
+    class QwenModel:
         @classmethod
-        def from_pretrained(cls, _model_path, **kwargs):
-            received_kwargs.update(kwargs)
+        def from_pretrained(cls, path, **kwargs):
+            received.update(path=path, **kwargs)
             return cls()
 
-        def transcribe(self, _audio_path, return_time_stamps):
-            assert return_time_stamps is True
-            timestamps = types.SimpleNamespace(
-                items=[
-                    types.SimpleNamespace(
-                        text="test",
-                        start_time=0.0,
-                        end_time=0.4,
-                    ),
-                    types.SimpleNamespace(
-                        text=" transcript",
-                        start_time=0.4,
-                        end_time=1.0,
-                    ),
-                ]
-            )
-            return [types.SimpleNamespace(text="test transcript", time_stamps=timestamps)]
-
-    class FakeGenerationConfig:
-        def __init__(self, temperature):
-            self.temperature = temperature
-
+    class GenerationConfig:
         @classmethod
-        def from_pretrained(cls, _model_path, **kwargs):
-            return cls(temperature=kwargs.get("temperature"))
+        def from_pretrained(cls, _path, **kwargs):
+            received["generation_temperature"] = kwargs.get("temperature")
+            return cls()
 
     torch = types.ModuleType("torch")
     torch.cuda = types.SimpleNamespace(is_available=lambda: True)
-    torch.float16 = object()
     torch.bfloat16 = object()
+    qwen_module = types.ModuleType("qwen_asr")
+    qwen_module.Qwen3ASRModel = QwenModel
     transformers = types.ModuleType("transformers")
-    transformers.GenerationConfig = FakeGenerationConfig
-    qwen_asr = types.ModuleType("qwen_asr")
-    qwen_asr.Qwen3ASRModel = FakeQwen3ASRModel
-    monkeypatch.setitem(sys.modules, "torch", torch)
-    monkeypatch.setitem(sys.modules, "transformers", transformers)
-    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_asr)
-    monkeypatch.setattr(asr_qwen3, "QWEN3_ASR_MODEL_DIR", asr_model_dir)
-    monkeypatch.setattr(asr_qwen3, "QWEN3_ALIGNER_MODEL_DIR", aligner_model_dir)
+    transformers.GenerationConfig = GenerationConfig
+    monkeypatch.setitem(__import__("sys").modules, "torch", torch)
+    monkeypatch.setitem(__import__("sys").modules, "qwen_asr", qwen_module)
+    monkeypatch.setitem(__import__("sys").modules, "transformers", transformers)
+    monkeypatch.setattr(qwen3, "QWEN3_ASR_MODEL_DIR", model_dir)
+    monkeypatch.setattr(qwen3, "QWEN3_ALIGNER_MODEL_DIR", aligner_dir)
 
-    log_path = workspace_tmp_path / "qwen3.log"
-    intermediate_path = workspace_tmp_path / "asr_qwen3" / "result.json"
-    with LoggingSession(log_path):
-        info, _segments = asr_qwen3.transcribe_with_qwen3(
-            audio_path,
-            "en",
-            duration=1.0,
-            intermediate_path=intermediate_path,
-        )
+    qwen3._load_qwen_model()
 
-    generation_config = received_kwargs["generation_config"]
-    assert generation_config.temperature is None
-    assert info["word_timestamps"] is True
-    assert "generation flags are not valid" not in log_path.read_text(encoding="utf-8")
-    payload = json.loads(intermediate_path.read_text(encoding="utf-8"))
-    assert payload == {
-        "schema_version": 1,
-        "source": {
-            "path": audio_path.as_posix(),
-            "size": 5,
-            "mtime": audio_path.stat().st_mtime,
-            "duration": 1.0,
-        },
-        "request": {
-            "language": "en",
-            "model": asr_model_dir.as_posix(),
-            "forced_aligner": aligner_model_dir.as_posix(),
-            "device": asr_qwen3.QWEN3_DEVICE_MAP,
-            "compute_type": asr_qwen3.QWEN3_DTYPE,
-            "batch_size": asr_qwen3.QWEN3_MAX_INFERENCE_BATCH_SIZE,
-            "max_new_tokens": asr_qwen3.QWEN3_MAX_NEW_TOKENS,
-        },
-        "text": "test transcript",
-        "word_timestamps": [
-            {"text": "test", "start": 0.0, "end": 0.4},
-            {"text": " transcript", "start": 0.4, "end": 1.0},
-        ],
-    }
-
-
-def test_qwen3_reuses_valid_intermediate_result_without_loading_model(
-    workspace_tmp_path: Path,
-    capsys,
-) -> None:
-    audio_path = workspace_tmp_path / "audio.m4a"
-    audio_path.write_bytes(b"audio")
-    intermediate_path = workspace_tmp_path / "asr_qwen3" / "result.json"
-    asr_qwen3.write_intermediate_result(
-        intermediate_path,
-        audio_path,
-        "en",
-        1.0,
-        "ab.",
-        [
-            asr_qwen3.AlignmentItem("a", 0.0, 0.5),
-            asr_qwen3.AlignmentItem("b", 0.5, 1.0),
-        ],
-    )
-
-    with LoggingSession(workspace_tmp_path / "qwen3-cache.log"):
-        info, segments = asr_qwen3.transcribe_with_qwen3(
-            audio_path,
-            "en",
-            duration=1.0,
-            intermediate_path=intermediate_path,
-        )
-
-    assert info["word_timestamps"] is True
-    assert segments == [{"id": 0, "start": 0.0, "end": 1.0, "text": "ab."}]
-    assert "[Transcribe] Qwen3 cache: reused asr_qwen3/result.json" in capsys.readouterr().out
-
-
-def test_qwen3_cache_rejects_missing_timestamp_content(
-    workspace_tmp_path: Path,
-) -> None:
-    audio_path = workspace_tmp_path / "audio.m4a"
-    audio_path.write_bytes(b"audio")
-    intermediate_path = workspace_tmp_path / "result.json"
-    identity = asr_qwen3.build_cache_identity(audio_path, "zh", 1.0)
-    intermediate_path.write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                **identity,
-                "text": "测试",
-                "word_timestamps": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert (
-        asr_qwen3.load_cached_intermediate_result(
-            intermediate_path,
-            audio_path,
-            "zh",
-            1.0,
-        )
-        is None
-    )
-
-
-@pytest.mark.parametrize(
-    "mismatch",
-    [
-        "schema",
-        "source",
-        "request",
-        "text",
-        "timestamp_number",
-        "timestamp_order",
-    ],
-)
-def test_qwen3_cache_rejects_invalid_identity_or_content(
-    workspace_tmp_path: Path,
-    mismatch: str,
-) -> None:
-    audio_path = workspace_tmp_path / "audio.m4a"
-    audio_path.write_bytes(b"audio")
-    path = workspace_tmp_path / "result.json"
-    asr_qwen3.write_intermediate_result(
-        path,
-        audio_path,
-        "en",
-        1.0,
-        "ab",
-        [
-            asr_qwen3.AlignmentItem("a", 0.0, 0.5),
-            asr_qwen3.AlignmentItem("b", 0.5, 1.0),
-        ],
-    )
-    data = read_json(path)
-    if mismatch == "schema":
-        data["schema_version"] = 0
-    elif mismatch == "source":
-        data["source"]["size"] += 1
-    elif mismatch == "request":
-        data["request"]["language"] = "zh"
-    elif mismatch == "text":
-        data["text"] = ""
-    elif mismatch == "timestamp_number":
-        data["word_timestamps"][0]["start"] = "zero"
-    else:
-        data["word_timestamps"][0]["start"] = 0.1
-        data["word_timestamps"][1]["start"] = 0.0
-    write_json(path, data)
-
-    assert (
-        asr_qwen3.load_cached_intermediate_result(
-            path,
-            audio_path,
-            "en",
-            1.0,
-        )
-        is None
-    )
-
-
-def test_qwen3_cache_rejects_corrupt_json(workspace_tmp_path: Path) -> None:
-    audio_path = workspace_tmp_path / "audio.m4a"
-    audio_path.write_bytes(b"audio")
-    path = workspace_tmp_path / "result.json"
-    path.write_text("{", encoding="utf-8")
-
-    assert (
-        asr_qwen3.load_cached_intermediate_result(
-            path,
-            audio_path,
-            "en",
-            1.0,
-        )
-        is None
-    )
-
-
-def test_qwen3_intermediate_result_omits_unavailable_content(
-    workspace_tmp_path: Path,
-) -> None:
-    assert asr_qwen3.build_intermediate_payload("transcript", []) == {
-        "text": "transcript"
-    }
-    intermediate_path = workspace_tmp_path / "asr_qwen3" / "result.json"
-    intermediate_path.parent.mkdir()
-    intermediate_path.write_text('{"text": "stale"}', encoding="utf-8")
-
-    asr_qwen3.write_intermediate_result(
-        intermediate_path,
-        workspace_tmp_path / "audio.m4a",
-        "en",
-        None,
-        "",
-        [],
-    )
-
-    assert not intermediate_path.exists()
+    assert received["forced_aligner"] == aligner_dir.as_posix()
+    assert received["max_inference_batch_size"] == qwen3.QWEN3_MAX_INFERENCE_BATCH_SIZE
+    assert received["max_new_tokens"] == 1024
+    assert received["generation_temperature"] is None
