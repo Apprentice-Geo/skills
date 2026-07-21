@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
+import math
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from scripts.asr.chunking import SAMPLE_RATE
 from scripts.asr.parallel.plan import (
     SCHEMA_VERSION,
     AsrChunkPlan,
@@ -15,7 +16,7 @@ from scripts.asr.parallel.plan import (
     plan_from_dict,
     plan_to_dict,
 )
-from scripts.utils import ensure_dir, read_json, write_json_atomic
+from scripts.utils import read_json, write_json_atomic
 
 MAX_CHUNK_RETRIES = 1
 PROGRESS_STATES = {"pending", "running", "succeeded", "failed"}
@@ -97,7 +98,7 @@ def load_valid_vad_result(
 
 
 def write_plan(path: Path, plan: ParallelAsrPlan) -> None:
-    _write_json_atomic(path, plan_to_dict(plan))
+    write_json_atomic(path, plan_to_dict(plan))
 
 
 def load_plan(path: Path) -> ParallelAsrPlan:
@@ -135,7 +136,7 @@ def initial_progress(plan: ParallelAsrPlan) -> dict[str, Any]:
 
 
 def write_progress(path: Path, progress: dict[str, Any]) -> None:
-    _write_json_atomic(path, progress)
+    write_json_atomic(path, progress)
 
 
 def load_progress(path: Path) -> dict[str, Any]:
@@ -241,8 +242,42 @@ def _valid_chunk_result(data: Any, plan: ParallelAsrPlan) -> bool:
         and data["model"] == expected_model
         and isinstance(data["elapsed_seconds"], (int, float))
         and not isinstance(data["elapsed_seconds"], bool)
-        and isinstance(data["segments"], list)
+        and _valid_chunk_segments(data["segments"], chunk)
     )
+
+
+def _valid_chunk_segments(segments: Any, chunk: AsrChunkPlan) -> bool:
+    if not isinstance(segments, list):
+        return False
+
+    duration = (chunk.end_sample - chunk.start_sample) / SAMPLE_RATE
+    previous_position = (-math.inf, -math.inf)
+    for segment in segments:
+        if not isinstance(segment, dict) or not isinstance(segment.get("text"), str):
+            return False
+        start = segment.get("start")
+        end = segment.get("end")
+        if (
+            isinstance(start, bool)
+            or not isinstance(start, (int, float))
+            or isinstance(end, bool)
+            or not isinstance(end, (int, float))
+        ):
+            return False
+        start_value = float(start)
+        end_value = float(end)
+        position = (start_value, end_value)
+        if (
+            not math.isfinite(start_value)
+            or not math.isfinite(end_value)
+            or start_value < 0
+            or end_value < start_value
+            or end_value > duration
+            or position < previous_position
+        ):
+            return False
+        previous_position = position
+    return True
 
 
 def load_valid_chunk_results(
@@ -265,14 +300,5 @@ def load_valid_chunk_results(
     return results
 
 
-def _write_json_atomic(path: Path, data: Any) -> None:
-    ensure_dir(path.parent)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    os.replace(tmp_path, path)
-
-
 def write_chunk_result_atomic(path: Path, data: dict[str, Any]) -> None:
-    _write_json_atomic(path, data)
+    write_json_atomic(path, data)

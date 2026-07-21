@@ -7,10 +7,6 @@ dependencies = [
     "faster-whisper==1.2.1",
     "ffmpeg-binaries-compat",
     "opencc-python-reimplemented",
-    "typer",
-    "rich",
-    "requests",
-    "pyyaml",
     "psutil",
 ]
 

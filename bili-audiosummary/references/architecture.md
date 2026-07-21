@@ -56,8 +56,11 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 ### Processing Helpers
 
 - `scripts/asr/common.py`: shared ASR segment normalization helpers.
-- `scripts/asr/chunking/`: provider-neutral normalized audio, planning VAD, integer-sample layouts, legal chunk-count strategies, continuous-cover validation, and fixed-count boundary optimization.
-- `scripts/asr/qwen3.py`: owns the Qwen3 Schema 3 workspace, `full` scheduling, CUDA model/forced-aligner loading, isolated retry, global timestamp offsets, and sentence assembly.
+- `scripts/asr/chunking/`: provider-neutral normalized audio, shared planning-VAD identity, integer-sample layouts, legal chunk-count strategies, continuous-cover validation, and fixed-count boundary optimization.
+- `scripts/asr/qwen3.py`: preserves the Qwen3 import surface and owns CUDA model/forced-aligner loading plus transcription orchestration and isolated retry.
+- `scripts/asr/qwen3_plan.py`: owns Qwen3 language/source/request identity, planning VAD parameters, Schema 3 plan construction, and complete plan-identity validation.
+- `scripts/asr/qwen3_workspace.py`: owns Qwen3 workspace paths and cached plan/result/progress validation; `scripts/asr/qwen3_merge.py` applies global timestamp offsets and merges chunk output.
+- `scripts/asr/qwen3_alignment.py`: owns the existing character-to-timestamp consumption and sentence assembly behavior.
 - `scripts/asr/parallel/`: faster-whisper Schema 6 package. `plan.py` owns Whisper identity and worker selection, and worker execution consumes ndarray slices. The package also contains caching, resume state, merge logic, metrics, logging, and orchestration.
 - `scripts/config.py`: owns repository paths, language priorities, model locations, ASR defaults, and summary template selection.
 - `scripts/manifest_io.py`: resolves manifest-relative paths, loads manifests and metadata, and infers result directories.
@@ -77,6 +80,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - Schema 6 stores `start_sample`, `end_sample`, and `estimated_speech_samples`; Schema 5 plan, progress, VAD, and chunk results are rejected. The plan records source sample count/rate, ASR and VAD identities, sample bounds, count strategy, CPU budget, workers, threads, and layout.
 - One `WhisperModel` uses the resolved worker configuration for all pending ndarray slices. Chunk transcription passes `vad_filter=True` but no `vad_parameters`, keeping faster-whisper's internal defaults separate from planning VAD. No ffmpeg chunk WAV is generated.
 - Each chunk gets one retry after its first failure in a program invocation. A second failure prevents merge; a later invocation gives incomplete chunks a new retry budget while retaining valid compatible results.
+- Cached chunk segments must contain string text and finite, non-negative local `start`/`end` timestamps in chronological order, with `start <= end` and `end` no later than the chunk duration. A chunk whose cached segments violate this boundary is pending and is retranscribed.
 - Merge converts `chunk.start_sample` to seconds for every local segment timestamp and orders segments by chunk index and time. Adjacent segments whose time ranges truly intersect are combined; endpoint contact is kept separate. Chinese text is concatenated directly, other languages use one separating space, and no character-level deduplication is performed.
 - Metrics add hard-cut count, per-chunk estimated speech durations, maximum estimated speech duration, and speech-load MSRE to worker, chunk, batch, elapsed, and segment fields. Soft-duration metrics are not recorded.
 
@@ -84,7 +88,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 - Qwen3 uses the same fixed-count optimizer as Whisper. With the same sample count, speech intervals, bounds, and fixed chunk count, both providers receive identical boundaries.
 - Its count strategy is always `full` with `group_size=QWEN3_MAX_INFERENCE_BATCH_SIZE`: use legal group-size multiples when available; otherwise use the greatest legal chunk count. Execution batches use the same constant and `max_new_tokens=1024`. Pipeline language codes are mapped to Qwen3's canonical names (`zh` to `Chinese`, `en` to `English`) and passed to every batch and isolated retry.
-- Schema 3 plan, progress, per-chunk results, and merged `result.json` use exact source/request/layout identity and atomic writes. The request identity includes both the pipeline language code and mapped model language. A complete merged cache returns before decode, dependency import, CUDA check, or model load. Partial recovery decodes and loads once.
+- Schema 3 plan, progress, per-chunk results, and merged `result.json` use exact source/request/layout identity and atomic writes. Plan reuse also requires every recorded planning-VAD and chunk-planning parameter to equal the current configuration. The request identity includes both the pipeline language code and mapped model language. A complete merged cache returns before decode, dependency import, CUDA check, or model load. Partial recovery decodes and loads once.
 - Each chunk's text is stripped before merge, and non-empty chunks are always joined with one ASCII space regardless of language.
 - A failed batch is retried once as individual single-chunk calls. Successful members are cached immediately; any remaining failure blocks merge, while the next invocation may retry only missing chunks. Empty chunk text and timestamps are cacheable; validation is limited to schema, identity, coordinate, and data-type safety.
 

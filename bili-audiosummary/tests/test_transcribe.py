@@ -2,7 +2,6 @@ import argparse
 import sys
 import types
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -82,48 +81,6 @@ def test_run_transcribe_writes_outputs_with_mocked_asr(
     assert result["markdown_path"].exists()
     assert result["payload"]["source"] == "faster-whisper"
     assert result["payload"]["segments"][0]["text"] == "测试文本"
-
-
-def test_transcribe_whisper_audio_returns_model_segments_with_simplified_chinese(
-    workspace_tmp_path: Path,
-    monkeypatch,
-) -> None:
-    audio_path = workspace_tmp_path / "audio.m4a"
-    audio_path.write_bytes(b"audio")
-    model_segments = [
-        SimpleNamespace(id=1, start=0.0, end=4.0, text="第一段繁體。"),
-        SimpleNamespace(id=2, start=4.0, end=9.0, text="第二段內容。"),
-    ]
-    transcribe_calls = []
-
-    class FakeWhisperModel:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def transcribe(self, *_args, **kwargs):
-            transcribe_calls.append(kwargs)
-            return iter(model_segments), SimpleNamespace(
-                language="zh",
-                language_probability=1.0,
-                duration=9.0,
-                duration_after_vad=9.0,
-            )
-
-    faster_whisper = types.ModuleType("faster_whisper")
-    faster_whisper.WhisperModel = FakeWhisperModel
-    monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
-
-    _info, segments, source = transcribe.transcribe_whisper_audio(
-        audio_path,
-        TranscribeOptions(language="zh", model="small"),
-    )
-
-    assert source == "faster-whisper"
-    assert segments == [
-        {"id": 1, "start": 0.0, "end": 4.0, "text": "第一段繁体。"},
-        {"id": 2, "start": 4.0, "end": 9.0, "text": "第二段内容。"},
-    ]
-    assert "initial_prompt" not in transcribe_calls[0]
 
 
 @pytest.mark.parametrize(

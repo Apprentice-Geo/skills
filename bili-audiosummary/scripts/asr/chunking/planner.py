@@ -139,18 +139,18 @@ def plan_fixed_chunk_count(
         raise ValueError("Chunk count is outside the legal range.")
     intervals = _normalize_speech_samples(sample_count, speech_intervals)
     optimized = optimize_chunk_boundaries(
-        duration_ms=sample_count,
+        duration_samples=sample_count,
         chunk_count=chunk_count,
-        speech_intervals_ms=intervals,
-        min_chunk_ms=min(sample_count, parameters.min_chunk_samples),
-        max_chunk_ms=parameters.max_chunk_samples,
+        speech_intervals=intervals,
+        min_chunk_samples=min(sample_count, parameters.min_chunk_samples),
+        max_chunk_samples=parameters.max_chunk_samples,
     )
     layouts = []
     for index, (start, end, speech) in enumerate(
         zip(
-            optimized.boundaries_ms[:-1],
-            optimized.boundaries_ms[1:],
-            optimized.speech_loads_ms,
+            optimized.boundaries[:-1],
+            optimized.boundaries[1:],
+            optimized.speech_loads,
             strict=True,
         )
     ):

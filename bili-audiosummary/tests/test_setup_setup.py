@@ -29,10 +29,18 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     workspace_tmp_path: Path,
     monkeypatch,
 ) -> None:
+    events: list[str] = []
     logger_holder: dict[str, RecordingSetupLogger] = {}
 
     def make_logger(log_path: Path) -> RecordingSetupLogger:
         logger = RecordingSetupLogger(log_path)
+        original_run = logger.run
+
+        def record_run(*args, **kwargs):
+            events.append("sync")
+            return original_run(*args, **kwargs)
+
+        logger.run = record_run
         logger_holder["logger"] = logger
         return logger
 
@@ -48,7 +56,10 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     monkeypatch.setattr(
         install_core,
         "verify_core_imports",
-        lambda python, *_args, **_kwargs: checked_imports.append(python),
+        lambda python, *_args, **_kwargs: (
+            events.append("verify_imports"),
+            checked_imports.append(python),
+        ),
     )
     monkeypatch.setattr(
         install_core,
@@ -61,8 +72,9 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     monkeypatch.setattr(
         install_core,
         "verify_ffmpeg_executables",
-        lambda ffmpeg, ffprobe, *_args, **_kwargs: checked_ffmpeg.append(
-            (ffmpeg, ffprobe)
+        lambda ffmpeg, ffprobe, *_args, **_kwargs: (
+            events.append("verify_ffmpeg"),
+            checked_ffmpeg.append((ffmpeg, ffprobe)),
         ),
     )
 
@@ -79,3 +91,4 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     assert checked_ffmpeg == [
         (workspace_tmp_path / "ffmpeg.exe", workspace_tmp_path / "ffprobe.exe")
     ]
+    assert events == ["sync", "verify_imports", "verify_ffmpeg"]

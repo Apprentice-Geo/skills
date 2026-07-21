@@ -12,12 +12,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence
 
-if __name__ == "process_logging":
-    sys.modules.setdefault("scripts.process_logging", sys.modules[__name__])
-elif __name__ == "scripts.process_logging":
-    sys.modules.setdefault("process_logging", sys.modules[__name__])
-
-
 LOGGER_NAME = "bili_audiosummary"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import types
+from dataclasses import fields
 from pathlib import Path
 
 import numpy as np
@@ -68,6 +70,34 @@ def test_qwen3_current_schema_full_cache_skips_decode_cuda_and_model(
 
     assert info["max_new_tokens"] == 1024
     assert segments == []
+
+
+@pytest.mark.parametrize(
+    ("identity_name", "field_name"),
+    [
+        (identity_name, field.name)
+        for identity_name, parameters in (
+            ("vad_parameters", qwen3.DEFAULT_VAD_PARAMETERS),
+            ("planning_parameters", qwen3.SAMPLE_PLANNING_PARAMETERS),
+        )
+        for field in fields(parameters)
+    ],
+)
+def test_qwen3_plan_rejects_each_changed_planning_identity_field(
+    workspace_tmp_path: Path,
+    identity_name: str,
+    field_name: str,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    plan = qwen3._qwen_build_plan(audio_path, "zh", 25 * SAMPLE_RATE, [])
+    changed_plan = copy.deepcopy(plan)
+    current_value = changed_plan[identity_name][field_name]
+    changed_plan[identity_name][field_name] = (
+        "changed" if current_value is None else current_value + 1
+    )
+
+    assert qwen3._qwen_validate_plan(changed_plan, audio_path, "zh") is None
 
 
 def test_qwen3_uses_constant_driven_full_batches_and_loads_model_once(

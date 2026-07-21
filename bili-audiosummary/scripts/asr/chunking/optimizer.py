@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-# The optimizer uses unit-free integer coordinates. Legacy public names retain
-# their ``_ms`` suffix so completed experiments and external imports keep working.
+# The optimizer uses integer sample coordinates.
 import math
-from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import Iterable
+
+from scripts.asr.chunking.timeline import Timeline
 
 _EXHAUSTIVE_STATE_LIMIT = 50_000
 _EXHAUSTIVE_HARD_POINT_LIMIT = 1_000
@@ -14,110 +14,11 @@ _EXHAUSTIVE_HARD_POINT_LIMIT = 1_000
 
 @dataclass(frozen=True)
 class BoundaryOptimizationResult:
-    boundaries_ms: tuple[int, ...]
-    speech_loads_ms: tuple[int, ...]
+    boundaries: tuple[int, ...]
+    speech_loads: tuple[int, ...]
     hard_cut_count: int
-    max_speech_load_ms: int
+    max_speech_load: int
     speech_load_msre: float
-
-
-@dataclass(frozen=True)
-class _Timeline:
-    duration: int
-    speech_intervals: tuple[tuple[int, int], ...]
-    starts: tuple[int, ...]
-    ends: tuple[int, ...]
-    prefix_speech: tuple[int, ...]
-    cumulative_ends: tuple[int, ...]
-    safe_ranges: tuple[tuple[int, int], ...]
-    hard_ranges: tuple[tuple[int, int], ...]
-    total_speech: int
-
-    @classmethod
-    def build(
-        cls,
-        duration: int,
-        speech_intervals: Iterable[tuple[int, int]],
-    ) -> _Timeline:
-        normalized = _normalize_speech_intervals(duration, speech_intervals)
-        starts = tuple(start for start, _end in normalized)
-        ends = tuple(end for _start, end in normalized)
-        prefix: list[int] = []
-        cumulative_ends: list[int] = []
-        total = 0
-        for start, end in normalized:
-            prefix.append(total)
-            total += end - start
-            cumulative_ends.append(total)
-
-        safe: list[tuple[int, int]] = []
-        hard: list[tuple[int, int]] = []
-        previous_end = 0
-        for start, end in normalized:
-            safe.append((previous_end, start))
-            if start + 1 <= end - 1:
-                hard.append((start + 1, end - 1))
-            previous_end = end
-        safe.append((previous_end, duration))
-        return cls(
-            duration=duration,
-            speech_intervals=normalized,
-            starts=starts,
-            ends=ends,
-            prefix_speech=tuple(prefix),
-            cumulative_ends=tuple(cumulative_ends),
-            safe_ranges=tuple(safe),
-            hard_ranges=tuple(hard),
-            total_speech=total,
-        )
-
-    def speech_at(self, time_ms: int) -> int:
-        # [0, time_ms] 内累计语音时长
-        if not self.starts or time_ms <= 0:
-            return 0
-        if time_ms >= self.duration:
-            return self.total_speech
-        index = bisect_right(self.starts, time_ms) - 1
-        if index < 0:
-            return 0
-        start = self.starts[index]
-        end = self.ends[index]
-        return self.prefix_speech[index] + max(0, min(time_ms, end) - start)
-
-    def is_hard(self, time_ms: int) -> bool:
-        index = bisect_right(self.starts, time_ms) - 1
-        return index >= 0 and self.starts[index] < time_ms < self.ends[index]
-
-    def earliest_time_with_speech_at_least(self, speech_ms: int) -> int:
-        if speech_ms <= 0:
-            return 0
-        if speech_ms > self.total_speech:
-            return self.duration + 1
-        index = bisect_left(self.cumulative_ends, speech_ms)
-        start, _end = self.speech_intervals[index]
-        return start + speech_ms - self.prefix_speech[index]
-
-    def latest_time_with_speech_at_most(self, speech_ms: int) -> int:
-        if speech_ms < 0:
-            return -1
-        if speech_ms >= self.total_speech:
-            return self.duration
-        index = bisect_right(self.cumulative_ends, speech_ms)
-        start, _end = self.speech_intervals[index]
-        return start + speech_ms - self.prefix_speech[index]
-
-    def hard_time_at_cumulative(self, speech_ms: int) -> int | None:
-        if speech_ms <= 0 or speech_ms >= self.total_speech:
-            return None
-        index = bisect_right(self.cumulative_ends, speech_ms)
-        if index >= len(self.speech_intervals):
-            return None
-        start, end = self.speech_intervals[index]
-        prefix = self.prefix_speech[index]
-        time_ms = start + speech_ms - prefix
-        if start < time_ms < end:
-            return time_ms
-        return None
 
 
 @dataclass(frozen=True)
@@ -138,33 +39,6 @@ class _PathLabel:
     square_sum: int
     path: tuple[_BoundaryNode, ...]
     path_key: tuple[tuple[int, int, int], ...]
-
-
-def _normalize_speech_intervals(
-    duration: int,
-    speech_intervals: Iterable[tuple[int, int]],
-) -> tuple[tuple[int, int], ...]:
-    normalized: list[tuple[int, int]] = []
-    for raw_start, raw_end in speech_intervals:
-        if isinstance(raw_start, bool) or isinstance(raw_end, bool):
-            raise ValueError(f"Invalid speech interval: {(raw_start, raw_end)!r}.")
-        start = int(raw_start)
-        end = int(raw_end)
-        if start != raw_start or end != raw_end or end < start:
-            raise ValueError(f"Invalid speech interval: {(raw_start, raw_end)!r}.")
-        start = max(0, min(duration, start))
-        end = max(0, min(duration, end))
-        if end > start:
-            normalized.append((start, end))
-    normalized.sort()
-
-    merged: list[list[int]] = []
-    for start, end in normalized:
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
-        else:
-            merged.append([start, end])
-    return tuple((start, end) for start, end in merged)
 
 
 def _merge_ranges(ranges: Iterable[tuple[int, int]]) -> list[tuple[int, int]]:
@@ -236,7 +110,7 @@ def _stage_window(
 
 
 def _minimum_window_allowed_ranges(
-    timeline: _Timeline,
+    timeline: Timeline,
     minimum: int,
     maximum_load: int,
 ) -> list[tuple[int, int]]:
@@ -284,7 +158,7 @@ def _minimum_window_allowed_ranges(
 
 def _advance_reachable(
     reachable: list[tuple[int, int]],
-    timeline: _Timeline,
+    timeline: Timeline,
     minimum: int,
     maximum: int,
     maximum_load: int | None,
@@ -314,7 +188,7 @@ def _advance_reachable(
         target_hi = min(
             timeline.duration,
             hi + maximum,
-            timeline.latest_time_with_speech_at_most(
+            timeline.latest_coordinate_with_speech_at_most(
                 timeline.speech_at(hi) + maximum_load
             ),
         )
@@ -324,7 +198,7 @@ def _advance_reachable(
 
 
 def _reachable_layers(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -396,7 +270,7 @@ def _reachable_layers(
 
 
 def _minimum_hard_cut_count(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -420,7 +294,7 @@ def _minimum_hard_cut_count(
 
 
 def _minimum_maximum_load(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -469,7 +343,7 @@ def _minimum_maximum_load(
 
 def _backtrack_reachable_boundaries(
     layers: list[dict[int, list[tuple[int, int]]]],
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -477,21 +351,21 @@ def _backtrack_reachable_boundaries(
     maximum_load: int | None,
 ) -> tuple[int, ...]:
     boundaries = [timeline.duration]
-    time_ms = timeline.duration
+    coordinate = timeline.duration
     hard_used = hard_cut_count
     for stage in range(chunk_count, 0, -1):
-        cut_cost = int(stage < chunk_count and timeline.is_hard(time_ms))
+        cut_cost = int(stage < chunk_count and timeline.is_hard(coordinate))
         previous_hard = hard_used - cut_cost
         if previous_hard < 0:
             raise RuntimeError("Invalid hard-cut predecessor while backtracking.")
         ranges = layers[stage - 1].get(previous_hard, [])
-        lower = time_ms - maximum
-        upper = time_ms - minimum
+        lower = coordinate - maximum
+        upper = coordinate - minimum
         if maximum_load is not None:
             lower = max(
                 lower,
-                timeline.earliest_time_with_speech_at_least(
-                    timeline.speech_at(time_ms) - maximum_load
+                timeline.earliest_coordinate_with_speech_at_least(
+                    timeline.speech_at(coordinate) - maximum_load
                 ),
             )
         predecessor: int | None = None
@@ -504,7 +378,7 @@ def _backtrack_reachable_boundaries(
         if predecessor is None:
             raise RuntimeError("ASR optimizer predecessor is missing.")
         boundaries.append(predecessor)
-        time_ms = predecessor
+        coordinate = predecessor
         hard_used = previous_hard
     boundaries.reverse()
     return tuple(boundaries)
@@ -512,14 +386,14 @@ def _backtrack_reachable_boundaries(
 
 def _hard_feasible_ranges_by_stage(
     forward_layers: list[dict[int, list[tuple[int, int]]]],
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
     hard_cut_count: int,
     maximum_load: int,
 ) -> list[list[tuple[int, int]]]:
-    reverse_timeline = _Timeline.build(
+    reverse_timeline = Timeline.build(
         timeline.duration,
         (
             (timeline.duration - end, timeline.duration - start)
@@ -578,7 +452,7 @@ def _earliest_legal_boundaries(
 
 
 def _result_from_boundaries(
-    timeline: _Timeline,
+    timeline: Timeline,
     boundaries: tuple[int, ...],
 ) -> BoundaryOptimizationResult:
     loads = tuple(
@@ -595,10 +469,10 @@ def _result_from_boundaries(
     else:
         msre = 0.0
     return BoundaryOptimizationResult(
-        boundaries_ms=boundaries,
-        speech_loads_ms=loads,
+        boundaries=boundaries,
+        speech_loads=loads,
         hard_cut_count=hard_cut_count,
-        max_speech_load_ms=max(loads, default=0),
+        max_speech_load=max(loads, default=0),
         speech_load_msre=msre,
     )
 
@@ -635,7 +509,7 @@ def _pareto_insert(
 
 
 def _optimize_exhaustively(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -685,7 +559,7 @@ def _optimize_exhaustively(
 
 
 def _safe_nodes_by_stage(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -815,7 +689,7 @@ def _reconstruct_earliest_boundaries(
 
 def _add_hard_candidate(
     candidates: list[set[int]],
-    timeline: _Timeline,
+    timeline: Timeline,
     stage: int,
     value: int | None,
     chunk_count: int,
@@ -836,7 +710,7 @@ def _add_hard_candidate(
 
 
 def _hard_candidates_by_stage(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -908,7 +782,7 @@ def _hard_candidates_by_stage(
                 candidates,
                 timeline,
                 stage,
-                timeline.hard_time_at_cumulative(speech),
+                timeline.hard_coordinate_at_cumulative(speech),
                 chunk_count,
                 minimum,
                 maximum,
@@ -964,7 +838,7 @@ def _hard_candidates_by_stage(
                                 candidates,
                                 timeline,
                                 stage,
-                                timeline.hard_time_at_cumulative(speech),
+                                timeline.hard_coordinate_at_cumulative(speech),
                                 chunk_count,
                                 minimum,
                                 maximum,
@@ -997,7 +871,7 @@ def _hard_candidates_by_stage(
                             candidates,
                             timeline,
                             target_stage,
-                            timeline.hard_time_at_cumulative(speech),
+                            timeline.hard_coordinate_at_cumulative(speech),
                             chunk_count,
                             minimum,
                             maximum,
@@ -1024,7 +898,7 @@ def _hard_candidates_by_stage(
 
 
 def _optimize_over_event_nodes(
-    timeline: _Timeline,
+    timeline: Timeline,
     chunk_count: int,
     minimum: int,
     maximum: int,
@@ -1117,94 +991,106 @@ def _optimize_over_event_nodes(
 
 def optimize_chunk_boundaries(
     *,
-    duration_ms: int,
+    duration_samples: int,
     chunk_count: int,
-    speech_intervals_ms: Iterable[tuple[int, int]],
-    min_chunk_ms: int = 60_000,
-    max_chunk_ms: int = 300_000,
+    speech_intervals: Iterable[tuple[int, int]],
+    min_chunk_samples: int = 60_000,
+    max_chunk_samples: int = 300_000,
 ) -> BoundaryOptimizationResult:
     if (
-        isinstance(duration_ms, bool)
+        isinstance(duration_samples, bool)
         or isinstance(chunk_count, bool)
-        or isinstance(min_chunk_ms, bool)
-        or isinstance(max_chunk_ms, bool)
+        or isinstance(min_chunk_samples, bool)
+        or isinstance(max_chunk_samples, bool)
         or not all(
             isinstance(value, int)
-            for value in (duration_ms, chunk_count, min_chunk_ms, max_chunk_ms)
+            for value in (
+                duration_samples,
+                chunk_count,
+                min_chunk_samples,
+                max_chunk_samples,
+            )
         )
     ):
-        raise ValueError("Boundary optimizer inputs must use integer milliseconds.")
-    if duration_ms <= 0 or chunk_count <= 0:
+        raise ValueError("Boundary optimizer inputs must use integer samples.")
+    if duration_samples <= 0 or chunk_count <= 0:
         raise ValueError("Duration and chunk count must be positive.")
-    if min_chunk_ms <= 0 or max_chunk_ms < min_chunk_ms:
+    if min_chunk_samples <= 0 or max_chunk_samples < min_chunk_samples:
         raise ValueError("Invalid chunk duration bounds.")
-    if not chunk_count * min_chunk_ms <= duration_ms <= chunk_count * max_chunk_ms:
+    if not (
+        chunk_count * min_chunk_samples
+        <= duration_samples
+        <= chunk_count * max_chunk_samples
+    ):
         raise ValueError("Chunk count cannot satisfy the requested duration bounds.")
 
-    timeline = _Timeline.build(duration_ms, speech_intervals_ms)
+    timeline = Timeline.build(duration_samples, speech_intervals)
     if chunk_count == 1:
-        return _result_from_boundaries(timeline, (0, duration_ms))
+        return _result_from_boundaries(timeline, (0, duration_samples))
     if timeline.total_speech == 0:
         boundaries = _earliest_legal_boundaries(
-            duration_ms, chunk_count, min_chunk_ms, max_chunk_ms
+            duration_samples,
+            chunk_count,
+            min_chunk_samples,
+            max_chunk_samples,
         )
         return _result_from_boundaries(timeline, boundaries)
 
-    state_estimate = duration_ms * chunk_count
+    state_estimate = duration_samples * chunk_count
     if state_estimate <= _EXHAUSTIVE_STATE_LIMIT:
         return _optimize_exhaustively(
             timeline,
             chunk_count,
-            min_chunk_ms,
-            max_chunk_ms,
+            min_chunk_samples,
+            max_chunk_samples,
         )
 
-    if timeline.total_speech == duration_ms:
-        boundaries = _balanced_boundaries(duration_ms, chunk_count)
+    if timeline.total_speech == duration_samples:
+        boundaries = _balanced_boundaries(duration_samples, chunk_count)
         return _result_from_boundaries(timeline, boundaries)
 
     hard_cut_count, _hard_layers = _minimum_hard_cut_count(
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
     )
     maximum_load, load_layers = _minimum_maximum_load(
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
         hard_cut_count,
     )
     feasible_boundaries = _backtrack_reachable_boundaries(
         load_layers,
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
         hard_cut_count,
         maximum_load,
     )
     safe_nodes = _safe_nodes_by_stage(
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
     )
     feasible_hard_ranges = _hard_feasible_ranges_by_stage(
         load_layers,
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
         hard_cut_count,
         maximum_load,
     )
     hard_candidates = _hard_candidates_by_stage(
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
         hard_cut_count,
         maximum_load,
         safe_nodes,
@@ -1214,8 +1100,8 @@ def optimize_chunk_boundaries(
     optimized = _optimize_over_event_nodes(
         timeline,
         chunk_count,
-        min_chunk_ms,
-        max_chunk_ms,
+        min_chunk_samples,
+        max_chunk_samples,
         hard_cut_count,
         maximum_load,
         safe_nodes,
@@ -1225,7 +1111,7 @@ def optimize_chunk_boundaries(
         return _result_from_boundaries(timeline, feasible_boundaries)
     if (
         optimized.hard_cut_count != hard_cut_count
-        or optimized.max_speech_load_ms != maximum_load
+        or optimized.max_speech_load != maximum_load
     ):
         raise RuntimeError("Event optimizer violated the fixed lexicographic costs.")
     return optimized

@@ -75,6 +75,88 @@ def test_make_base_options_requires_packaged_ffmpeg(mocker) -> None:
         fetch_audio.make_base_options(make_args(Path(".")))
 
 
+class Http412YoutubeDL:
+    def __init__(self, _options) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args) -> None:
+        pass
+
+    def extract_info(self, *_args, **_kwargs):
+        raise RuntimeError("HTTP Error 412: Precondition Failed")
+
+    def download(self, *_args, **_kwargs):
+        raise RuntimeError("HTTP Error 412: Precondition Failed")
+
+
+def test_extract_metadata_turns_http_412_into_cookie_required_error(mocker) -> None:
+    mocker.patch("scripts.fetch_audio.make_base_options", return_value={})
+    mocker.patch("scripts.fetch_audio.YoutubeDL", Http412YoutubeDL)
+
+    with pytest.raises(
+        fetch_audio.CookieRequiredError,
+        match="ask the user to provide.*cookies.txt",
+    ):
+        fetch_audio.extract_metadata(
+            "https://www.bilibili.com/video/BVTEST/",
+            make_args(Path(".")),
+        )
+
+
+def test_download_subtitles_turns_http_412_into_cookie_required_error(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    mocker.patch("scripts.fetch_audio.make_base_options", return_value={})
+    mocker.patch("scripts.fetch_audio.YoutubeDL", Http412YoutubeDL)
+
+    with pytest.raises(fetch_audio.CookieRequiredError):
+        fetch_audio.download_subtitles(
+            "https://www.bilibili.com/video/BVTEST/",
+            workspace_tmp_path / "subtitle",
+            "BVTEST",
+            make_args(workspace_tmp_path),
+        )
+
+
+def test_download_audio_turns_http_412_into_cookie_required_error(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    mocker.patch("scripts.fetch_audio.make_base_options", return_value={})
+    mocker.patch("scripts.fetch_audio.YoutubeDL", Http412YoutubeDL)
+
+    with pytest.raises(fetch_audio.CookieRequiredError):
+        fetch_audio.download_audio(
+            "https://www.bilibili.com/video/BVTEST/",
+            workspace_tmp_path / "audio",
+            "BVTEST",
+            make_args(workspace_tmp_path),
+        )
+
+
+def test_main_returns_exit_code_two_for_cookie_required_error(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    mocker.patch(
+        "scripts.fetch_audio.parse_args", return_value=make_args(workspace_tmp_path)
+    )
+    mocker.patch(
+        "scripts.fetch_audio.create_timestamped_log_path",
+        return_value=workspace_tmp_path / "fetch.log",
+    )
+    mocker.patch(
+        "scripts.fetch_audio.run_fetch",
+        side_effect=fetch_audio.CookieRequiredError("cookie required"),
+    )
+
+    assert fetch_audio.main() == 2
+
+
 def test_run_fetch_skip_subtitles_does_not_download_subtitles(
     workspace_tmp_path: Path, mocker
 ) -> None:

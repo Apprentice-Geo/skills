@@ -92,10 +92,6 @@ dependencies = [
     { name = "ffmpeg-binaries-compat" },
     { name = "opencc-python-reimplemented" },
     { name = "psutil" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "rich" },
-    { name = "typer" },
     { name = "yt-dlp" },
 ]
 
@@ -131,15 +127,11 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'qwen3'" },
     { name = "opencc-python-reimplemented" },
     { name = "psutil" },
-    { name = "pyyaml" },
     { name = "qwen-asr", marker = "extra == 'qwen3'" },
-    { name = "requests" },
-    { name = "rich" },
     { name = "soundfile", marker = "extra == 'qwen3'" },
     { name = "torch", marker = "extra == 'qwen3'", index = "https://download.pytorch.org/whl/cu126" },
     { name = "torchaudio", marker = "extra == 'qwen3'", index = "https://download.pytorch.org/whl/cu126" },
     { name = "transformers", marker = "extra == 'qwen3'" },
-    { name = "typer" },
     { name = "yt-dlp", specifier = "==2026.3.17" },
 ]
 provides-extras = ["qwen3"]

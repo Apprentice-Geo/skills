@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
-from dataclasses import fields
+from dataclasses import asdict, fields
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +11,11 @@ import pytest
 from scripts.asr import parallel as parallel_asr
 from scripts.asr.chunking import SAMPLE_RATE, NormalizedAudio
 from scripts.asr.parallel import runner
+from scripts.asr.parallel.state import (
+    initial_progress,
+    load_valid_chunk_results,
+    prepare_progress_for_resume,
+)
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import read_json, write_json_atomic
 
@@ -178,3 +183,94 @@ def test_whisper_chunk_result_uses_sample_identity(
     assert result["schema_version"] == 6
     assert {"start_sample", "end_sample"} <= result.keys()
     assert "chunk_audio_path" not in result
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        [{"end": 1.0, "text": "missing start"}],
+        [{"start": 0.0, "end": 1.0}],
+        [{"start": 0.0, "text": "missing end"}],
+        [{"start": "0", "end": 1.0, "text": "non-numeric"}],
+        [{"start": False, "end": 1.0, "text": "boolean"}],
+        [{"start": 0.0, "end": 1.0, "text": 1}],
+        [{"start": float("nan"), "end": 1.0, "text": "nan"}],
+        [{"start": 0.0, "end": float("inf"), "text": "infinity"}],
+        [{"start": -0.1, "end": 1.0, "text": "negative"}],
+        [{"start": 0.0, "end": 26.0, "text": "past chunk"}],
+        [{"start": 2.0, "end": 1.0, "text": "reversed"}],
+        [
+            {"start": 2.0, "end": 3.0, "text": "later"},
+            {"start": 1.0, "end": 2.0, "text": "earlier"},
+        ],
+    ],
+)
+def test_invalid_whisper_chunk_segments_are_pending_for_retranscription(
+    workspace_tmp_path: Path,
+    segments: list[dict[str, object]],
+) -> None:
+    workspace = workspace_tmp_path / "asr_parallel"
+    chunk = parallel_asr.AsrChunkPlan(
+        index=0,
+        start_sample=0,
+        end_sample=25 * SAMPLE_RATE,
+        end_boundary="audio_end",
+        estimated_speech_samples=0,
+    )
+    plan = parallel_asr.ParallelAsrPlan(
+        schema_version=parallel_asr.SCHEMA_VERSION,
+        source_audio=parallel_asr.AsrSourceAudio(
+            path="audio.m4a",
+            size=5,
+            mtime=1.0,
+            sample_count=25 * SAMPLE_RATE,
+        ),
+        provider="whisper",
+        model="model-dir",
+        language="zh",
+        beam_size=5,
+        device="cpu",
+        compute_type="float32",
+        vad_parameters=parallel_asr.DEFAULT_VAD_PARAMETERS,
+        planning_parameters=parallel_asr.DEFAULT_PLANNING_PARAMETERS,
+        count_strategy="divisible",
+        group_size=1,
+        cpu_budget=3,
+        num_workers=1,
+        cpu_threads=1,
+        chunks=[chunk],
+    )
+    result_path = workspace / "chunk_results" / "chunk_000.json"
+    write_json_atomic(
+        result_path,
+        {
+            "schema_version": parallel_asr.SCHEMA_VERSION,
+            "chunk_index": 0,
+            "start_sample": chunk.start_sample,
+            "end_sample": chunk.end_sample,
+            "end_boundary": chunk.end_boundary,
+            "source": asdict(plan.source_audio),
+            "plan": parallel_asr.plan_to_dict(plan),
+            "model": {
+                "path": plan.model,
+                "language": plan.language,
+                "beam_size": plan.beam_size,
+                "device": plan.device,
+                "compute_type": plan.compute_type,
+                "cpu_threads": plan.cpu_threads,
+                "num_workers": plan.num_workers,
+            },
+            "elapsed_seconds": 0.1,
+            "segments": segments,
+        },
+    )
+
+    valid_results = load_valid_chunk_results(workspace, plan)
+    progress = prepare_progress_for_resume(
+        plan,
+        initial_progress(plan),
+        set(valid_results),
+    )
+
+    assert valid_results == {}
+    assert progress["chunks"]["chunk_000"]["status"] == "pending"

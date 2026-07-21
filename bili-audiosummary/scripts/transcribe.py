@@ -3,11 +3,6 @@ from pathlib import Path
 from typing import Any
 
 from scripts.asr import parallel as parallel_asr
-from scripts.asr.common import (
-    is_chinese_language,
-    make_segment,
-    normalize_segments_for_language,
-)
 from scripts.asr.qwen3 import transcribe_with_qwen3
 from scripts.config import (
     DEFAULT_ASR_PROVIDER,
@@ -55,48 +50,6 @@ def first_audio_from_manifest(manifest: dict[str, Any]) -> Path:
             "Manifest does not contain audio_files. Run fetch_audio.py first."
         )
     return resolve_path(str(audio_files[0]))
-
-
-def transcribe_whisper_audio(
-    audio_path: Path,
-    options: TranscribeOptions,
-) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
-    from faster_whisper import WhisperModel
-
-    model_path = options.model or default_model_path()
-    model = WhisperModel(
-        model_path,
-        device=options.device,
-        compute_type=options.compute_type,
-        cpu_threads=options.cpu_threads if options.cpu_threads is not None else 0,
-        num_workers=options.num_workers if options.num_workers is not None else 1,
-    )
-
-    segments, info = model.transcribe(
-        path_to_posix(audio_path),
-        language=options.language,
-        beam_size=options.beam_size,
-        vad_filter=True,
-    )
-
-    segment_list = normalize_segments_for_language(
-        [make_segment(segment) for segment in segments],
-        options.language,
-    )
-    info_data = {
-        "language": getattr(info, "language", None),
-        "language_probability": getattr(info, "language_probability", None),
-        "duration": getattr(info, "duration", None),
-        "duration_after_vad": getattr(info, "duration_after_vad", None),
-        "model": model_path,
-        "device": options.device,
-        "compute_type": options.compute_type,
-        "beam_size": options.beam_size,
-        "text_normalization": "simplified-chinese"
-        if is_chinese_language(options.language)
-        else None,
-    }
-    return info_data, segment_list, "faster-whisper"
 
 
 def parse_args() -> argparse.Namespace:

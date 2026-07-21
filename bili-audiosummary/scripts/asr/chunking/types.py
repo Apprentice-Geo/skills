@@ -15,6 +15,20 @@ BOUNDARY_TYPES = {BOUNDARY_SILENCE, BOUNDARY_HARD, BOUNDARY_AUDIO_END}
 
 
 @dataclass(frozen=True)
+class VadParameters:
+    threshold: float = 0.35
+    neg_threshold: float = 0.25
+    min_speech_duration_ms: int = 0
+    min_silence_duration_ms: int = 300
+    max_speech_duration_s: float | None = None
+    speech_pad_ms: int = 0
+    sampling_rate: int = SAMPLE_RATE
+
+
+DEFAULT_VAD_PARAMETERS = VadParameters()
+
+
+@dataclass(frozen=True)
 class ChunkLayout:
     index: int
     start_sample: int

@@ -55,7 +55,9 @@ def test_logging_session_keeps_original_log_when_move_fails(
 ) -> None:
     original_path = workspace_tmp_path / ".cache" / "logs" / "pipeline.log"
     result_dir = workspace_tmp_path / "results" / "BVTEST"
-    mocker.patch("process_logging.shutil.move", side_effect=OSError("move denied"))
+    mocker.patch(
+        "scripts.process_logging.shutil.move", side_effect=OSError("move denied")
+    )
 
     with LoggingSession(original_path) as session:
         moved_path = session.move_to(result_dir)

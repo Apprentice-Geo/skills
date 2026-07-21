@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from scripts.asr import parallel as parallel_asr
-from scripts.asr.chunking import NormalizedAudio
+from scripts.asr.chunking import NormalizedAudio, optimizer
 from scripts.asr.chunking.optimizer import optimize_chunk_boundaries
 from scripts.asr.parallel import media
 from scripts.runtime_options import TranscribeOptions
@@ -214,13 +214,69 @@ def _oracle(duration, count, speech, minimum, maximum):
 )
 def test_optimizer_matches_exhaustive_lexicographic_oracle(speech) -> None:
     result = optimize_chunk_boundaries(
-        duration_ms=12,
+        duration_samples=12,
         chunk_count=3,
-        speech_intervals_ms=speech,
-        min_chunk_ms=3,
-        max_chunk_ms=6,
+        speech_intervals=speech,
+        min_chunk_samples=3,
+        max_chunk_samples=6,
     )
-    assert result.boundaries_ms == _oracle(12, 3, speech, 3, 6)
+    assert result.boundaries == _oracle(12, 3, speech, 3, 6)
+
+
+def _intervals_from_mask(mask: int, duration: int) -> tuple[tuple[int, int], ...]:
+    intervals = []
+    start = None
+    for coordinate in range(duration + 1):
+        is_speech = coordinate < duration and mask & (1 << coordinate)
+        if is_speech and start is None:
+            start = coordinate
+        elif not is_speech and start is not None:
+            intervals.append((start, coordinate))
+            start = None
+    return tuple(intervals)
+
+
+def test_event_optimizer_matches_exhaustive_oracle(monkeypatch) -> None:
+    monkeypatch.setattr(optimizer, "_EXHAUSTIVE_STATE_LIMIT", 0)
+
+    for mask in range(1, 2**12 - 1, 37):
+        speech = _intervals_from_mask(mask, 12)
+        result = optimize_chunk_boundaries(
+            duration_samples=12,
+            chunk_count=3,
+            speech_intervals=speech,
+            min_chunk_samples=3,
+            max_chunk_samples=6,
+        )
+
+        assert result.boundaries == _oracle(12, 3, speech, 3, 6), hex(mask)
+
+
+def test_event_optimizer_is_invariant_under_coordinate_scaling(monkeypatch) -> None:
+    monkeypatch.setattr(optimizer, "_EXHAUSTIVE_STATE_LIMIT", 0)
+    speech = ((0, 3), (5, 7), (9, 12))
+    baseline = optimize_chunk_boundaries(
+        duration_samples=12,
+        chunk_count=3,
+        speech_intervals=speech,
+        min_chunk_samples=3,
+        max_chunk_samples=6,
+    )
+    scale = 100
+    scaled = optimize_chunk_boundaries(
+        duration_samples=12 * scale,
+        chunk_count=3,
+        speech_intervals=tuple((start * scale, end * scale) for start, end in speech),
+        min_chunk_samples=3 * scale,
+        max_chunk_samples=6 * scale,
+    )
+
+    assert scaled.boundaries == tuple(value * scale for value in baseline.boundaries)
+    assert scaled.speech_loads == tuple(
+        value * scale for value in baseline.speech_loads
+    )
+    assert scaled.hard_cut_count == baseline.hard_cut_count
+    assert scaled.speech_load_msre == pytest.approx(baseline.speech_load_msre)
 
 
 def test_reversing_and_overlapping_speech_input_produces_same_plan() -> None:

@@ -10,14 +10,18 @@ from scripts.asr.chunking import (
 )
 from scripts.asr.chunking import (
     BOUNDARY_HARD,
-    BOUNDARY_SILENCE,
+    DEFAULT_VAD_PARAMETERS,
     MAX_CHUNK_SAMPLES,
     MIN_CHUNK_SAMPLES,
     SAMPLE_RATE,
     ChunkLayout,
+    VadParameters,
     candidate_chunk_counts,
     plan_chunks,
     validate_layouts,
+)
+from scripts.asr.chunking import (
+    BOUNDARY_SILENCE as BOUNDARY_SILENCE,
 )
 from scripts.asr.chunking import (
     PlanningParameters as SamplePlanningParameters,
@@ -28,13 +32,6 @@ from scripts.utils import path_to_posix
 SCHEMA_VERSION = 6
 MIN_ASR_CHUNK_SECONDS = MIN_CHUNK_SAMPLES / SAMPLE_RATE
 MAX_ASR_CHUNK_SECONDS = MAX_CHUNK_SAMPLES / SAMPLE_RATE
-VAD_THRESHOLD = 0.35
-VAD_NEG_THRESHOLD = 0.25
-VAD_MIN_SPEECH_DURATION_MS = 0
-VAD_MIN_SILENCE_DURATION_MS = 300
-VAD_MAX_SPEECH_DURATION_S: float | None = None
-VAD_SPEECH_PAD_MS = 0
-VAD_SAMPLING_RATE = SAMPLE_RATE
 
 
 @dataclass(frozen=True, init=False)
@@ -69,17 +66,6 @@ class AsrSourceAudio:
         return self.sample_count / self.sample_rate
 
 
-@dataclass(frozen=True)
-class VadParameters:
-    threshold: float = VAD_THRESHOLD
-    neg_threshold: float = VAD_NEG_THRESHOLD
-    min_speech_duration_ms: int = VAD_MIN_SPEECH_DURATION_MS
-    min_silence_duration_ms: int = VAD_MIN_SILENCE_DURATION_MS
-    max_speech_duration_s: float | None = VAD_MAX_SPEECH_DURATION_S
-    speech_pad_ms: int = VAD_SPEECH_PAD_MS
-    sampling_rate: int = VAD_SAMPLING_RATE
-
-
 @dataclass(frozen=True, init=False)
 class PlanningParameters:
     min_chunk_samples: int
@@ -111,7 +97,6 @@ class PlanningParameters:
         return SamplePlanningParameters(self.min_chunk_samples, self.max_chunk_samples)
 
 
-DEFAULT_VAD_PARAMETERS = VadParameters()
 DEFAULT_PLANNING_PARAMETERS = PlanningParameters()
 
 
@@ -122,45 +107,13 @@ class WorkerConfig:
     cpu_threads: int
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class AsrChunkPlan:
     index: int
     start_sample: int
     end_sample: int
     end_boundary: str
     estimated_speech_samples: int
-
-    def __init__(
-        self,
-        index: int,
-        start_sample: int | None = None,
-        end_sample: int | None = None,
-        end_boundary: str = BOUNDARY_SILENCE,
-        estimated_speech_samples: int | None = None,
-        *,
-        start: float | None = None,
-        duration: float | None = None,
-        path: str | None = None,
-        estimated_speech_duration: float | None = None,
-    ) -> None:
-        del path
-        if start_sample is None:
-            start_sample = round(float(start or 0.0) * SAMPLE_RATE)
-        if end_sample is None:
-            if duration is None:
-                raise TypeError("end_sample is required")
-            end_sample = start_sample + round(float(duration) * SAMPLE_RATE)
-        if estimated_speech_samples is None:
-            estimated_speech_samples = round(
-                float(estimated_speech_duration or 0.0) * SAMPLE_RATE
-            )
-        object.__setattr__(self, "index", int(index))
-        object.__setattr__(self, "start_sample", int(start_sample))
-        object.__setattr__(self, "end_sample", int(end_sample))
-        object.__setattr__(self, "end_boundary", str(end_boundary))
-        object.__setattr__(
-            self, "estimated_speech_samples", int(estimated_speech_samples)
-        )
 
     @property
     def start(self) -> float:
@@ -169,10 +122,6 @@ class AsrChunkPlan:
     @property
     def duration(self) -> float:
         return (self.end_sample - self.start_sample) / SAMPLE_RATE
-
-    @property
-    def path(self) -> str:
-        return f"chunks/chunk_{self.index:03d}.wav"
 
     @property
     def estimated_speech_duration(self) -> float:

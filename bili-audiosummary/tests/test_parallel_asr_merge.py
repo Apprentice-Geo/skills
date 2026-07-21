@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from scripts.asr.chunking import SAMPLE_RATE
 from scripts.asr.parallel.merge import merge_chunk_results
 from scripts.asr.parallel.metrics import write_metrics
 from scripts.asr.parallel.plan import AsrChunkPlan
@@ -16,11 +17,10 @@ def make_chunk(
 ) -> AsrChunkPlan:
     return AsrChunkPlan(
         index=index,
-        start=start,
-        duration=duration,
-        path=f"chunks/chunk_{index:03d}.wav",
+        start_sample=round(start * SAMPLE_RATE),
+        end_sample=round((start + duration) * SAMPLE_RATE),
         end_boundary=end_boundary,
-        estimated_speech_duration=duration / 2,
+        estimated_speech_samples=round(duration / 2 * SAMPLE_RATE),
     )
 
 

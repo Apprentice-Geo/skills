@@ -13,11 +13,13 @@ from scripts.asr.chunking.types import (
     BOUNDARY_AUDIO_END,
     BOUNDARY_HARD,
     BOUNDARY_SILENCE,
+    DEFAULT_VAD_PARAMETERS,
     MAX_CHUNK_SAMPLES,
     MIN_CHUNK_SAMPLES,
     SAMPLE_RATE,
     ChunkLayout,
     NormalizedAudio,
+    VadParameters,
 )
 
 __all__ = [
@@ -25,6 +27,7 @@ __all__ = [
     "BOUNDARY_HARD",
     "BOUNDARY_SILENCE",
     "DEFAULT_PLANNING_PARAMETERS",
+    "DEFAULT_VAD_PARAMETERS",
     "MAX_CHUNK_SAMPLES",
     "MIN_CHUNK_SAMPLES",
     "SAMPLE_RATE",
@@ -32,6 +35,7 @@ __all__ = [
     "CountStrategy",
     "NormalizedAudio",
     "PlanningParameters",
+    "VadParameters",
     "candidate_chunk_counts",
     "decode_normalized_audio",
     "detect_speech_samples",
