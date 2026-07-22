@@ -43,6 +43,8 @@ def load_matching_plan(
     audio_path: Path,
     provider_request: dict[str, Any],
     execution_identity_factory: Any,
+    vad_parameters: Any,
+    planning_parameters: Any,
 ) -> AsrPipelinePlan | None:
     data = load_json_or_none(path)
     try:
@@ -54,6 +56,8 @@ def load_matching_plan(
         not plan.source.file_matches(audio_path)
         or plan.provider_request != provider_request
         or plan.execution_policy != expected_execution
+        or plan.vad_parameters != vad_parameters
+        or plan.planning_parameters != planning_parameters
     ):
         return None
     return plan

@@ -141,7 +141,12 @@ def run_asr_pipeline(
     paths = workspace_paths(workspace_dir)
     request = provider.request_identity()
     plan = load_matching_plan(
-        paths["plan"], audio_path, request, policy.execution_identity
+        paths["plan"],
+        audio_path,
+        request,
+        policy.execution_identity,
+        DEFAULT_VAD_PARAMETERS,
+        policy.planning_parameters,
     )
     results = load_chunk_results(workspace_dir, plan) if plan is not None else {}
     if plan is not None and len(results) == len(plan.chunks):

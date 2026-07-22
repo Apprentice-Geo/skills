@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,6 +10,7 @@ from scripts.asr.alignment import AlignmentContractError
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
 from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
 from scripts.asr.providers import Qwen3Provider, WhisperProvider
+from scripts.asr.providers.qwen3 import has_model_weights
 from scripts.runtime_options import TranscribeOptions
 
 
@@ -71,6 +73,16 @@ def test_qwen_provider_parses_probability_as_none() -> None:
     identity = provider.request_identity()
     assert identity["max_new_tokens"] > 0
     assert identity["return_time_stamps"] is True
+
+
+def test_qwen_model_weights_accept_sharded_safetensors(
+    workspace_tmp_path: Path,
+) -> None:
+    model_dir = workspace_tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model-00001-of-00002.safetensors").write_bytes(b"weights")
+
+    assert has_model_weights(model_dir)
 
 
 def test_qwen_provider_clips_small_last_word_end_overrun() -> None:

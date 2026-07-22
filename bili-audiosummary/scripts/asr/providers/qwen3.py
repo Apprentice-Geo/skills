@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 def has_model_weights(model_dir: Any) -> bool:
-    return (model_dir / "model.safetensors").exists()
+    return (
+        model_dir.is_dir()
+        and next(model_dir.glob("model*.safetensors"), None) is not None
+    )
 
 
 class Qwen3Provider:

@@ -8,7 +8,12 @@ import numpy as np
 import pytest
 
 from scripts.asr.alignment import TranscriptWord
-from scripts.asr.chunking import ChunkLayout, NormalizedAudio, PlanningParameters
+from scripts.asr.chunking import (
+    ChunkLayout,
+    NormalizedAudio,
+    PlanningParameters,
+    VadParameters,
+)
 from scripts.asr.pipeline import run_asr_pipeline
 from scripts.asr.pipeline_types import ChunkTranscript
 from scripts.utils import read_json, write_json
@@ -59,11 +64,15 @@ class FakeProvider:
 
 
 class FakePolicy:
-    planning_parameters = PlanningParameters(1, 2)
-
-    def __init__(self, version: int = 1, fail_index: int | None = None) -> None:
+    def __init__(
+        self,
+        version: int = 1,
+        fail_index: int | None = None,
+        planning_parameters: PlanningParameters | None = None,
+    ) -> None:
         self.version = version
         self.fail_index = fail_index
+        self.planning_parameters = planning_parameters or PlanningParameters(1, 2)
 
     def execution_identity(self, sample_count: int) -> dict[str, Any]:
         return {"policy": "fake", "version": self.version, "sample_count": sample_count}
@@ -146,9 +155,9 @@ def test_pipeline_writes_unified_artifacts_and_replays_without_decode(
     assert provider.prepare_calls == 1
 
 
-@pytest.mark.parametrize("change", ["request", "execution"])
+@pytest.mark.parametrize("change", ["request", "execution", "planning", "vad"])
 def test_identity_change_invalidates_cache(
-    workspace_tmp_path: Path, fake_audio, change: str
+    workspace_tmp_path: Path, fake_audio, monkeypatch, change: str
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
@@ -156,7 +165,17 @@ def test_identity_change_invalidates_cache(
     run_asr_pipeline(audio_path, workspace, FakeProvider(), FakePolicy())
 
     provider = FakeProvider(2 if change == "request" else 1)
-    policy = FakePolicy(2 if change == "execution" else 1)
+    policy = FakePolicy(
+        2 if change == "execution" else 1,
+        planning_parameters=(
+            PlanningParameters(1, 3) if change == "planning" else None
+        ),
+    )
+    if change == "vad":
+        monkeypatch.setattr(
+            "scripts.asr.pipeline.DEFAULT_VAD_PARAMETERS",
+            VadParameters(threshold=0.5),
+        )
     run_asr_pipeline(audio_path, workspace, provider, policy)
 
     assert fake_audio.calls == 2
