@@ -1,14 +1,24 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from scripts.asr.chunking import SAMPLE_RATE
-from scripts.asr.qwen3_alignment import AlignmentItem
+from scripts.asr.qwen3_alignment import (
+    AlignmentContractError,
+    AlignmentItem,
+    build_sentence_segments,
+    validate_alignment_contract,
+)
 from scripts.asr.qwen3_plan import QWEN3_CACHE_SCHEMA_VERSION
-from scripts.utils import read_json
+from scripts.utils import read_json, write_json_atomic
+
+QWEN3_SEGMENTATION_VERSION = 2
+logger = logging.getLogger(__name__)
 
 
 def _qwen_workspace_paths(workspace_dir: Path) -> dict[str, Path]:
@@ -33,7 +43,12 @@ def _qwen_load_json(path: Path) -> Any | None:
 
 
 def _qwen_valid_alignment(
-    data: Any, max_sample_count: int | None = None
+    data: Any,
+    max_sample_count: int | None = None,
+    *,
+    text: str | None = None,
+    chunk_index: int | str = "cache",
+    language: str = "unknown",
 ) -> list[AlignmentItem] | None:
     if not isinstance(data, list):
         return None
@@ -52,17 +67,30 @@ def _qwen_valid_alignment(
         ):
             return None
         start_value, end_value = float(start), float(end)
-        if (
-            not math.isfinite(start_value)
-            or not math.isfinite(end_value)
-            or start_value < previous
-            or end_value < start_value
-        ):
-            return None
-        if maximum is not None and end_value > maximum + 0.001:
-            return None
+        if text is None:
+            if (
+                not math.isfinite(start_value)
+                or not math.isfinite(end_value)
+                or start_value < previous
+                or end_value < start_value
+            ):
+                return None
+            if maximum is not None and end_value > maximum + 0.001:
+                return None
         items.append(AlignmentItem(str(raw["text"]), start_value, end_value))
         previous = end_value
+    if text is not None:
+        try:
+            validate_alignment_contract(
+                text,
+                items,
+                maximum if maximum is not None else previous,
+                chunk_index=chunk_index,
+                language=language,
+            )
+        except AlignmentContractError as exc:
+            logger.warning("Ignoring invalid Qwen3 alignment cache: %s", exc)
+            return None
     return items
 
 
@@ -101,6 +129,9 @@ def _qwen_load_chunk_results(
             _qwen_valid_alignment(
                 data.get("word_timestamps"),
                 layout["end_sample"] - layout["start_sample"],
+                text=data["text"],
+                chunk_index=index,
+                language=plan["request"]["language"],
             )
             is None
         ):
@@ -146,32 +177,71 @@ def _qwen_load_merged(
     ):
         return None
     segments = data.get("segments")
-    if not isinstance(data.get("text"), str) or not isinstance(segments, list):
+    if not isinstance(data.get("text"), str):
         return None
-    if (
-        _qwen_valid_alignment(
-            data.get("word_timestamps"), plan["source"]["sample_count"]
-        )
-        is None
+    alignment = _qwen_valid_alignment(
+        data.get("word_timestamps"),
+        plan["source"]["sample_count"],
+        text=data["text"],
+        chunk_index="merged",
+        language=plan["request"]["language"],
+    )
+    if alignment is None:
+        return None
+    segments_are_valid = isinstance(segments, list)
+    previous_end = 0.0
+    alignment_starts = {item.start for item in alignment}
+    alignment_ends = {item.end for item in alignment}
+    for expected_id, segment in enumerate(
+        segments if isinstance(segments, list) else []
     ):
-        return None
-    for segment in segments:
         if (
             not isinstance(segment, dict)
-            or not isinstance(segment.get("id"), int)
             or isinstance(segment.get("id"), bool)
+            or segment.get("id") != expected_id
             or not isinstance(segment.get("text"), str)
+            or not segment["text"].strip()
         ):
-            return None
+            segments_are_valid = False
+            break
         start, end = segment.get("start"), segment.get("end")
         if (
             isinstance(start, bool)
             or not isinstance(start, (int, float))
             or isinstance(end, bool)
             or not isinstance(end, (int, float))
-            or not 0 <= float(start) <= float(end)
+            or not previous_end <= float(start) <= float(end)
+            or float(end) > plan["source"]["sample_count"] / SAMPLE_RATE + 0.001
+            or float(start) not in alignment_starts
+            or float(end) not in alignment_ends
         ):
-            return None
-    return info_factory(
-        plan["request"]["language"], bool(data["word_timestamps"])
-    ), segments
+            segments_are_valid = False
+            break
+        previous_end = float(end)
+    if segments_are_valid and alignment:
+        source_text = "".join(char for char in data["text"] if not char.isspace())
+        segment_text = "".join(
+            char
+            for segment in cast(list[dict[str, Any]], segments)
+            for char in segment["text"]
+            if not char.isspace()
+        )
+        segments_are_valid = segment_text == source_text
+    if (
+        data.get("segmentation_version") != QWEN3_SEGMENTATION_VERSION
+        or not segments_are_valid
+    ):
+        segments = build_sentence_segments(
+            data["text"],
+            alignment,
+            plan["source"]["sample_count"] / SAMPLE_RATE,
+            chunk_index="merged",
+            language=plan["request"]["language"],
+        )
+        data["segmentation_version"] = QWEN3_SEGMENTATION_VERSION
+        data["word_timestamps"] = [asdict(item) for item in alignment]
+        data["segments"] = segments
+        write_json_atomic(path, data)
+    return info_factory(plan["request"]["language"], bool(alignment)), cast(
+        list[dict[str, Any]], segments
+    )

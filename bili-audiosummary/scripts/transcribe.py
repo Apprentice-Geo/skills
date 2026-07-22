@@ -192,7 +192,7 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
     }
 
     write_json(json_path, payload)
-    write_markdown_from_json(json_path, md_path, normalize_segments=True)
+    write_markdown_from_json(json_path, md_path)
 
     logger.info("Audio: %s", path_to_posix(audio_path))
     logger.info("JSON: %s", path_to_posix(json_path))

@@ -16,7 +16,16 @@ def _qwen_merge(
         item = results[_qwen_chunk_key(layout["index"])]
         text_parts.append(item["text"].strip())
         offset = layout["start_sample"] / SAMPLE_RATE
-        for word in _qwen_valid_alignment(item["word_timestamps"]) or []:
+        for word in (
+            _qwen_valid_alignment(
+                item["word_timestamps"],
+                layout["end_sample"] - layout["start_sample"],
+                text=item["text"],
+                chunk_index=layout["index"],
+                language=plan["request"]["language"],
+            )
+            or []
+        ):
             global_items.append(
                 AlignmentItem(
                     word.text,
@@ -26,4 +35,14 @@ def _qwen_merge(
             )
     text = " ".join(part for part in text_parts if part)
     duration = plan["source"]["sample_count"] / SAMPLE_RATE
-    return text, global_items, build_sentence_segments(text, global_items, duration)
+    return (
+        text,
+        global_items,
+        build_sentence_segments(
+            text,
+            global_items,
+            duration,
+            chunk_index="merged",
+            language=plan["request"]["language"],
+        ),
+    )

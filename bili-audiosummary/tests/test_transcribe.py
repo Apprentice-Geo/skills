@@ -284,6 +284,7 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
     parallel_mock.assert_not_called()
     assert result["payload"]["source"] == "qwen3-asr"
     assert len(read_json(result["json_path"])["segments"]) == 2
-    assert "[00:00:00 - 00:00:10] 第一段文本，第二段文本" in result[
-        "markdown_path"
-    ].read_text(encoding="utf-8")
+    markdown = result["markdown_path"].read_text(encoding="utf-8")
+    assert "[00:00:00 - 00:00:05] 第一段文本" in markdown
+    assert "[00:00:05 - 00:00:10] 第二段文本" in markdown
+    assert "第一段文本，第二段文本" not in markdown

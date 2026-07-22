@@ -60,7 +60,7 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/asr/qwen3.py`: preserves the Qwen3 import surface and owns CUDA model/forced-aligner loading plus transcription orchestration and isolated retry.
 - `scripts/asr/qwen3_plan.py`: owns Qwen3 language/source/request identity, planning VAD parameters, Schema 3 plan construction, and complete plan-identity validation.
 - `scripts/asr/qwen3_workspace.py`: owns Qwen3 workspace paths and cached plan/result/progress validation; `scripts/asr/qwen3_merge.py` applies global timestamp offsets and merges chunk output.
-- `scripts/asr/qwen3_alignment.py`: owns the existing character-to-timestamp consumption and sentence assembly behavior.
+- `scripts/asr/qwen3_alignment.py`: strictly maps forced-aligner item text back to source-text character ranges and builds provider-owned sentence segments.
 - `scripts/asr/parallel/`: faster-whisper Schema 6 package. `plan.py` owns Whisper identity and worker selection, and worker execution consumes ndarray slices. The package also contains caching, resume state, merge logic, metrics, logging, and orchestration.
 - `scripts/config.py`: owns repository paths, language priorities, model locations, ASR defaults, and summary template selection.
 - `scripts/manifest_io.py`: resolves manifest-relative paths, loads manifests and metadata, and infers result directories.
@@ -88,9 +88,11 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 
 - Qwen3 uses the same fixed-count optimizer as Whisper. With the same sample count, speech intervals, bounds, and fixed chunk count, both providers receive identical boundaries.
 - Its count strategy is always `full` with `group_size=QWEN3_MAX_INFERENCE_BATCH_SIZE`: use legal group-size multiples when available; otherwise use the greatest legal chunk count. Execution batches use the same constant and `max_new_tokens=1024`. Pipeline language codes are mapped to Qwen3's canonical names (`zh` to `Chinese`, `en` to `English`) and passed to every batch and isolated retry.
-- Schema 3 plan, progress, per-chunk results, and merged `result.json` use exact source/request/layout identity and atomic writes. Plan reuse also requires every recorded planning-VAD and chunk-planning parameter to equal the current configuration. The request identity includes both the pipeline language code and mapped model language. A complete merged cache returns before decode, dependency import, CUDA check, or model load. Partial recovery decodes and loads once.
+- Schema 3 plan, progress, per-chunk results, and merged `result.json` use exact source/request/layout identity and atomic writes. Plan reuse also requires every recorded planning-VAD and chunk-planning parameter to equal the current configuration. The request identity includes both the pipeline language code and mapped model language. Merged output has an independent `segmentation_version=2`; compatible older raw text/timestamp results are re-segmented before audio decode, dependency import, CUDA check, or model load. Partial recovery decodes and loads once.
 - Each chunk's text is stripped before merge, and non-empty chunks are always joined with one ASCII space regardless of language.
-- A failed batch is retried once as individual single-chunk calls. Successful members are cached immediately; any remaining failure blocks merge, while the next invocation may retry only missing chunks. Empty chunk text and timestamps are cacheable; validation is limited to schema, identity, coordinate, and data-type safety.
+- Each forced-aligner item is authoritative: its text is matched exactly and in order against the chunk transcript, while only source whitespace and Unicode punctuation may be skipped. This produces the original character range for every timestamp item without reproducing Qwen's tokenizer. Unmatched content, extra or reordered items, non-finite or non-monotonic times, and times outside the chunk invalidate the result. The same validation applies to new inference and cached chunk/merged data.
+- Qwen3 sentence construction never splits inside one alignment item. Strong punctuation in item gaps or after an item is an uncrossable semantic boundary. Within each semantic interval, 3 seconds is a soft minimum, 10 seconds is the target, and 20 seconds plus 50 non-whitespace characters are hard limits. Equal-distance candidates prefer weak punctuation, then whitespace, then an ordinary item boundary. A final sub-3-second piece merges backward only within the same semantic interval and only within both hard limits. A single over-limit alignment item is retained with a warning.
+- A failed batch, including an alignment-contract failure, is retried once as individual single-chunk calls. Successful members are cached immediately; any remaining failure blocks merge, while the next invocation may retry only missing or invalid chunks. Empty chunk text and timestamps remain cacheable.
 
 ### Setup Entry Points
 
@@ -151,12 +153,12 @@ results/<BVID>/
 ```
 
 - Transcript JSON: structured metadata, source provider, language, and timestamped segments.
-- Transcript Markdown: human- and Agent-readable timestamped transcript. When ASR segments are compacted onto one line, Chinese segments use `，` and other languages use `, ` as separators; line breaks caused by compaction limits do not receive extra punctuation.
+- Transcript Markdown: human- and Agent-readable timestamped transcript. It is a pure rendering of transcript JSON: every non-empty JSON segment becomes one adjacent Markdown transcript line. Rendering does not merge or split segments and does not insert punctuation.
 - `fetch_manifest.json`: canonical video identity plus paths to metadata, audio, and subtitles.
 - `metadata.json`: compact metadata used by later stages.
 - `metadata.raw.json`: sanitized full metadata returned by yt-dlp.
 - `asr_parallel/`: faster-whisper-only Schema 6 workspace with sample-coordinate plan/VAD/chunk results, progress, merged intermediate transcript, and metrics. It contains no normalized PCM or chunk WAV files.
-- `asr_qwen3/`: Qwen3-only Schema 3 workspace with plan, progress, sample-coordinate VAD, per-chunk raw text/timestamps, and merged `result.json`.
+- `asr_qwen3/`: Qwen3-only Schema 3 workspace with plan, progress, sample-coordinate VAD, per-chunk raw text/timestamps, and merged `result.json`; merged sentence output carries independent segmentation version 2.
 - Pipeline log: complete processing details and traceback data. It starts in `.cache/logs/` and moves into the result directory after BVID resolution.
 - Summary prompt: task and data boundaries, a relative Markdown link to the transcript, embedded summary instructions, selected language template, and the full final-summary path.
 - Final summary: preferably written by a fresh subagent that receives only the prompt path and summary task; when delegation is unavailable, the current Agent follows the same prompt.

@@ -11,17 +11,18 @@ from scripts.asr.chunking import (
     detect_speech_samples,
 )
 from scripts.asr.qwen3_alignment import (
+    MAX_SEGMENT_CHARACTERS,
+    MAX_SEGMENT_SECONDS,
     MIN_SEGMENT_SECONDS,
     STRONG_PUNCTUATION,
+    TARGET_SEGMENT_SECONDS,
     WEAK_PUNCTUATION,
+    AlignmentContractError,
     AlignmentItem,
-    SegmentDraft,
-    _merge_segments,
     _to_float,
     build_sentence_segments,
-    consume_alignment_item,
-    consumes_timestamp,
     normalize_alignment_items,
+    validate_alignment_contract,
 )
 from scripts.asr.qwen3_merge import _qwen_merge
 from scripts.asr.qwen3_plan import (
@@ -36,6 +37,7 @@ from scripts.asr.qwen3_plan import (
     _qwen_validate_plan,
 )
 from scripts.asr.qwen3_workspace import (
+    QWEN3_SEGMENTATION_VERSION,
     _qwen_chunk_key,
     _qwen_load_chunk_results,
     _qwen_load_json,
@@ -64,15 +66,18 @@ logger = get_logger(__name__)
 # responsibilities live in focused sibling modules.
 __all__ = [
     "AlignmentItem",
+    "AlignmentContractError",
     "DEFAULT_VAD_PARAMETERS",
     "MIN_SEGMENT_SECONDS",
+    "MAX_SEGMENT_SECONDS",
+    "MAX_SEGMENT_CHARACTERS",
     "QWEN3_CACHE_SCHEMA_VERSION",
+    "QWEN3_SEGMENTATION_VERSION",
     "QWEN3_LANGUAGE_NAMES",
     "SAMPLE_PLANNING_PARAMETERS",
     "STRONG_PUNCTUATION",
-    "SegmentDraft",
+    "TARGET_SEGMENT_SECONDS",
     "WEAK_PUNCTUATION",
-    "_merge_segments",
     "_qwen_build_plan",
     "_qwen_chunk_key",
     "_qwen_language_name",
@@ -89,10 +94,9 @@ __all__ = [
     "_qwen_workspace_paths",
     "_to_float",
     "build_sentence_segments",
-    "consume_alignment_item",
-    "consumes_timestamp",
     "has_model_weights",
     "normalize_alignment_items",
+    "validate_alignment_contract",
     "transcribe_with_qwen3",
 ]
 
@@ -165,13 +169,21 @@ def _qwen_result_payload(
     alignment = normalize_alignment_items(
         list(getattr(timestamp_data, "items", []) or [])
     )
+    text = str(getattr(result, "text", "") or "").strip()
+    validate_alignment_contract(
+        text,
+        alignment,
+        (layout["end_sample"] - layout["start_sample"]) / SAMPLE_RATE,
+        chunk_index=layout["index"],
+        language=plan["request"]["language"],
+    )
     return {
         "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
         "plan": plan,
         "chunk_index": layout["index"],
         "start_sample": layout["start_sample"],
         "end_sample": layout["end_sample"],
-        "text": str(getattr(result, "text", "") or "").strip(),
+        "text": text,
         "word_timestamps": [asdict(item) for item in alignment],
     }
 
@@ -227,6 +239,7 @@ def transcribe_with_qwen3(
             paths["merged"],
             {
                 "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+                "segmentation_version": QWEN3_SEGMENTATION_VERSION,
                 "plan": plan,
                 "text": text,
                 "word_timestamps": [asdict(item) for item in alignment],
@@ -287,6 +300,7 @@ def transcribe_with_qwen3(
         paths["merged"],
         {
             "schema_version": QWEN3_CACHE_SCHEMA_VERSION,
+            "segmentation_version": QWEN3_SEGMENTATION_VERSION,
             "plan": plan,
             "text": text,
             "word_timestamps": [asdict(item) for item in alignment],

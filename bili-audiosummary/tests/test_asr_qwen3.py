@@ -19,10 +19,17 @@ def make_audio(seconds: int) -> NormalizedAudio:
 
 
 def make_result(text: str = "", start: float = 0.0, end: float = 0.0):
+    stripped = text.strip()
     items = (
         []
-        if not text
-        else [types.SimpleNamespace(text=text, start_time=start, end_time=end)]
+        if not stripped
+        else [
+            types.SimpleNamespace(
+                text=stripped,
+                start_time=start,
+                end_time=end,
+            )
+        ]
     )
     return types.SimpleNamespace(
         text=text, time_stamps=types.SimpleNamespace(items=items)
@@ -70,6 +77,43 @@ def test_qwen3_current_schema_full_cache_skips_decode_cuda_and_model(
 
     assert info["max_new_tokens"] == 1024
     assert segments == []
+
+
+@pytest.mark.parametrize("segmentation_version", [None, 2])
+def test_qwen3_stale_merged_segmentation_is_rebuilt_without_decode_or_model(
+    workspace_tmp_path: Path,
+    monkeypatch,
+    segmentation_version: int | None,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr_qwen3"
+    plan = qwen3._qwen_build_plan(audio_path, "en", 25 * SAMPLE_RATE, [])
+    write_json_atomic(workspace / "asr_plan.json", plan)
+    cached_result = {
+        "schema_version": qwen3.QWEN3_CACHE_SCHEMA_VERSION,
+        "plan": plan,
+        "text": "hello world",
+        "word_timestamps": [
+            {"text": "hello", "start": 0.0, "end": 5.0},
+            {"text": "world", "start": 5.0, "end": 10.0},
+        ],
+        "segments": [{"id": 0, "start": 0.0, "end": 10.0, "text": "stale"}],
+    }
+    if segmentation_version is not None:
+        cached_result["segmentation_version"] = segmentation_version
+    write_json_atomic(workspace / "result.json", cached_result)
+    monkeypatch.setattr(
+        qwen3, "decode_normalized_audio", lambda *_args: pytest.fail("decoded")
+    )
+    monkeypatch.setattr(qwen3, "_load_qwen_model", lambda: pytest.fail("loaded"))
+
+    _info, segments = qwen3.transcribe_with_qwen3(audio_path, "en", workspace)
+
+    assert segments == [{"id": 0, "start": 0.0, "end": 10.0, "text": "hello world"}]
+    merged = read_json(workspace / "result.json")
+    assert merged["segmentation_version"] == qwen3.QWEN3_SEGMENTATION_VERSION
+    assert merged["segments"] == segments
 
 
 @pytest.mark.parametrize(
@@ -208,6 +252,93 @@ def test_qwen3_batch_failure_isolates_members_and_caches_successes(
     assert len(list((workspace / "chunk_results").glob("*.json"))) == 3
     progress = read_json(workspace / "progress.json")
     assert progress["chunks"]["chunk_001"]["status"] == "failed"
+
+
+def test_qwen3_alignment_contract_failure_is_isolated_and_blocks_merge(
+    workspace_tmp_path: Path,
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    calls: list[int] = []
+
+    class Model:
+        def transcribe(self, inputs, **_kwargs):
+            calls.append(len(inputs))
+            return [
+                types.SimpleNamespace(
+                    text="hello",
+                    time_stamps=types.SimpleNamespace(
+                        items=[
+                            types.SimpleNamespace(
+                                text="wrong", start_time=0.0, end_time=1.0
+                            )
+                        ]
+                    ),
+                )
+                for _input in inputs
+            ]
+
+    prepare(monkeypatch, make_audio(100), Model())
+    workspace = workspace_tmp_path / "asr_qwen3"
+
+    with pytest.raises(RuntimeError, match="chunk_000"):
+        qwen3.transcribe_with_qwen3(audio_path, "en", workspace)
+
+    assert calls == [3, 1, 1, 1]
+    progress = read_json(workspace / "progress.json")
+    error = progress["chunks"]["chunk_000"]["error"]
+    assert "chunk=0" in error
+    assert "language=en" in error
+    assert "token_index=0" in error
+    assert "expected='w'" in error
+    assert "actual='h'" in error
+    assert "Qwen3 batch failed; isolating each chunk" in caplog.text
+
+
+def test_qwen3_invalid_chunk_alignment_cache_is_retranscribed(
+    workspace_tmp_path: Path,
+    monkeypatch,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr_qwen3"
+    audio = make_audio(25)
+    plan = qwen3._qwen_build_plan(audio_path, "en", audio.sample_count, [])
+    layout = plan["chunks"][0]
+    write_json_atomic(workspace / "asr_plan.json", plan)
+    write_json_atomic(
+        workspace / "chunk_results" / "chunk_000.json",
+        {
+            "schema_version": qwen3.QWEN3_CACHE_SCHEMA_VERSION,
+            "plan": plan,
+            "chunk_index": 0,
+            "start_sample": layout["start_sample"],
+            "end_sample": layout["end_sample"],
+            "text": "hello",
+            "word_timestamps": [{"text": "wrong", "start": 0.0, "end": 1.0}],
+        },
+    )
+    calls: list[int] = []
+
+    class Model:
+        def transcribe(self, inputs, **_kwargs):
+            calls.append(len(inputs))
+            return [make_result("hello", 0.0, 1.0)]
+
+    prepare(monkeypatch, audio, Model())
+
+    _info, segments = qwen3.transcribe_with_qwen3(audio_path, "en", workspace)
+
+    assert calls == [1]
+    assert segments == [{"id": 0, "start": 0.0, "end": 1.0, "text": "hello"}]
+    assert (
+        read_json(workspace / "chunk_results" / "chunk_000.json")["word_timestamps"][0][
+            "text"
+        ]
+        == "hello"
+    )
 
 
 def test_qwen3_previous_schema_plan_is_rejected_and_empty_chunks_are_cacheable(

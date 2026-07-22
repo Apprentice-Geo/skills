@@ -120,7 +120,7 @@ def subtitle_to_transcript(
     }
 
     write_json(json_path, payload)
-    write_markdown_from_json(json_path, md_path, normalize_segments=False)
+    write_markdown_from_json(json_path, md_path)
 
     logger.info("Subtitle: %s", path_to_posix(subtitle_path))
     logger.info("JSON: %s", path_to_posix(json_path))
