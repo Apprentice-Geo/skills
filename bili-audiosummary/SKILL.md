@@ -24,7 +24,7 @@ User-facing instructions (用户使用说明) for installation, configuration, a
 3. Run the pipeline from the Skill directory:
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>"
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language <zh|en>
 ```
 
 Choose the transcript language (转写语言) and final-summary language (最终总结语言) from the user's request. Use only documented options from [README.md](README.md); do not infer undocumented processing behavior (未记录的处理行为).

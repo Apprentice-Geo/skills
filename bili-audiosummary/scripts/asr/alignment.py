@@ -8,24 +8,33 @@ from typing import Any
 
 STRONG_PUNCTUATION = set("。.!！？?")
 WEAK_PUNCTUATION = set("，,；;")
-MIN_SEGMENT_SECONDS = 3.0
-TARGET_SEGMENT_SECONDS = 10.0
-MAX_SEGMENT_SECONDS = 20.0
-MAX_SEGMENT_CHARACTERS = 50
+# 最小句子时长
+MIN_SEGMENT_SECONDS = 2.0
+# 目标句子时长
+TARGET_SEGMENT_SECONDS = 12.0
+# 最大句子时长
+MAX_SEGMENT_SECONDS = 24.0
+# 最大句子对齐项数
+MAX_SEGMENT_ALIGNMENT_ITEMS = 72
+# 时间容差
 _TIME_EPSILON = 0.001
 
 logger = logging.getLogger(__name__)
 
 
 class AlignmentContractError(RuntimeError):
-    """Qwen text and forced-aligner output violate strict source mapping."""
+    """Provider text and word timestamps violate strict source mapping."""
 
 
 @dataclass(frozen=True)
-class AlignmentItem:
+class TranscriptWord:
     text: str
     start: float
     end: float
+    probability: float | None = None
+
+
+AlignmentItem = TranscriptWord
 
 
 @dataclass(frozen=True)
@@ -69,7 +78,7 @@ def _contract_error(
     reason: str,
 ) -> AlignmentContractError:
     return AlignmentContractError(
-        "Qwen3 alignment contract mismatch: "
+        "ASR alignment contract mismatch: "
         f"chunk={chunk_index}, language={language}, token_index={token_index}, "
         f"expected={expected!r}, actual={actual!r}, reason={reason}"
     )
@@ -163,8 +172,8 @@ def validate_alignment_contract(
     return spans
 
 
-def normalize_alignment_items(items: list[Any]) -> list[AlignmentItem]:
-    normalized: list[AlignmentItem] = []
+def normalize_alignment_items(items: list[Any]) -> list[TranscriptWord]:
+    normalized: list[TranscriptWord] = []
     for item in items:
         text = str(getattr(item, "text", "") or "")
         start = getattr(item, "start_time", None)
@@ -172,44 +181,86 @@ def normalize_alignment_items(items: list[Any]) -> list[AlignmentItem]:
         if start is None or end is None:
             continue
         normalized.append(
-            AlignmentItem(text=text, start=_to_float(start), end=_to_float(end))
+            TranscriptWord(text=text, start=_to_float(start), end=_to_float(end))
         )
     return normalized
 
 
-def _non_whitespace_length(text: str) -> int:
-    return sum(not char.isspace() for char in text)
+def _piece_alignment_item_count(piece: _SegmentPiece) -> int:
+    return piece.end_token - piece.start_token
 
 
 def _boundary_rank(text: str, tokens: list[AlignedTextSpan], boundary: int) -> int:
+    """
+    确认切分优先级
+    越小越优先
+    """
     if boundary >= len(tokens):
-        return 2
-    gap = text[tokens[boundary - 1].end_char : tokens[boundary].start_char]
-    if any(char in WEAK_PUNCTUATION for char in gap):
+        return 3
+    gap = text[
+        max(tokens[boundary - 1].end_char - 1, 0) : min(
+            tokens[boundary].start_char + 1, len(text)
+        )
+    ]
+    if any(char in STRONG_PUNCTUATION for char in gap):
         return 0
-    if any(char.isspace() for char in gap):
+    if any(char in WEAK_PUNCTUATION for char in gap):
         return 1
-    return 2
+    if any(char.isspace() for char in gap):
+        return 2
+    return 3
 
 
 def _semantic_intervals(
-    text: str, tokens: list[AlignedTextSpan]
+    text: str,
+    tokens: list[AlignedTextSpan],
+    alignment_items: list[AlignmentItem],
 ) -> list[_SemanticInterval]:
     intervals: list[_SemanticInterval] = []
     start_token = 0
     start_char = 0
     for boundary in range(1, len(tokens) + 1):
         gap_end = tokens[boundary].start_char if boundary < len(tokens) else len(text)
-        gap = text[tokens[boundary - 1].end_char : gap_end]
+        # 前后两个 token 的边界严格相等
+        # 因此需要 -1 和 +1 来获取首尾可能的标点符号
+        gap = text[
+            max(tokens[boundary - 1].end_char - 1, 0) : min(gap_end + 1, len(text))
+        ]
         if not any(char in STRONG_PUNCTUATION for char in gap):
+            continue
+        duration = (
+            alignment_items[boundary - 1].end - alignment_items[start_token].start
+        )
+
+        # 强标点不再允许产生过短句
+        if duration + _TIME_EPSILON < MIN_SEGMENT_SECONDS:
             continue
         intervals.append(_SemanticInterval(start_token, boundary, start_char, gap_end))
         start_token = boundary
         start_char = gap_end
+
+    # 剩余尾段
     if start_token < len(tokens):
-        intervals.append(
-            _SemanticInterval(start_token, len(tokens), start_char, len(text))
+        tail = _SemanticInterval(
+            start_token=start_token,
+            end_token=len(tokens),
+            start_char=start_char,
+            end_char=len(text),
         )
+
+        tail_duration = alignment_items[-1].end - alignment_items[start_token].start
+
+        # 尾段不足最短时长时，与前一区间合并
+        if intervals and tail_duration + _TIME_EPSILON < MIN_SEGMENT_SECONDS:
+            previous = intervals[-1]
+            intervals[-1] = _SemanticInterval(
+                start_token=previous.start_token,
+                end_token=tail.end_token,
+                start_char=previous.start_char,
+                end_char=tail.end_char,
+            )
+        else:
+            intervals.append(tail)
     return intervals
 
 
@@ -228,13 +279,12 @@ def _piece_duration(
 
 
 def _within_hard_limits(
-    text: str,
     piece: _SegmentPiece,
     alignment_items: list[AlignmentItem],
 ) -> bool:
     return (
         _piece_duration(piece, alignment_items) <= MAX_SEGMENT_SECONDS + _TIME_EPSILON
-        and _non_whitespace_length(_piece_text(text, piece)) <= MAX_SEGMENT_CHARACTERS
+        and _piece_alignment_item_count(piece) <= MAX_SEGMENT_ALIGNMENT_ITEMS
     )
 
 
@@ -252,7 +302,7 @@ def _split_interval(
             if start == interval.start_token
             else tokens[start].start_char
         )
-        candidates: list[tuple[float, int, int, _SegmentPiece]] = []
+        candidates: list[tuple[int, int, _SegmentPiece]] = []
         for boundary in range(start + 1, interval.end_token + 1):
             end_char = (
                 interval.end_char
@@ -260,12 +310,10 @@ def _split_interval(
                 else tokens[boundary].start_char
             )
             piece = _SegmentPiece(start, boundary, start_char, end_char)
-            if not _within_hard_limits(text, piece, alignment_items):
+            if not _within_hard_limits(piece, alignment_items):
                 continue
-            duration = _piece_duration(piece, alignment_items)
             candidates.append(
                 (
-                    abs(duration - TARGET_SEGMENT_SECONDS),
                     _boundary_rank(text, tokens, boundary),
                     boundary,
                     piece,
@@ -280,20 +328,23 @@ def _split_interval(
             )
             chosen = _SegmentPiece(start, start + 1, start_char, end_char)
             logger.warning(
-                "single Qwen3 token exceeds segmentation hard limit: "
-                "token=%r duration=%.3fs characters=%d",
+                "single ASR alignment item exceeds segmentation hard limit: "
+                "item=%r duration=%.3fs alignment_items=%d",
                 tokens[start].text,
                 _piece_duration(chosen, alignment_items),
-                _non_whitespace_length(_piece_text(text, chosen)),
+                _piece_alignment_item_count(chosen),
             )
         else:
             soft_candidates = [
                 candidate
                 for candidate in candidates
-                if _piece_duration(candidate[3], alignment_items) + _TIME_EPSILON
+                if _piece_duration(candidate[2], alignment_items) + _TIME_EPSILON
                 >= MIN_SEGMENT_SECONDS
             ]
-            chosen = min(soft_candidates or candidates, key=lambda item: item[:3])[3]
+            # 先比较优先级 再比较长度 都取最小的
+            chosen = min(
+                soft_candidates or candidates, key=lambda item: (item[0], item[1])
+            )[2]
         pieces.append(chosen)
         start = chosen.end_token
 
@@ -309,7 +360,7 @@ def _split_interval(
             previous.start_char,
             tail.end_char,
         )
-        if _within_hard_limits(text, combined, alignment_items):
+        if _within_hard_limits(combined, alignment_items):
             pieces[-2:] = [combined]
     return pieces
 
@@ -336,7 +387,7 @@ def build_sentence_segments(
     )
     pieces = [
         piece
-        for interval in _semantic_intervals(text, tokens)
+        for interval in _semantic_intervals(text, tokens, alignment_items)
         for piece in _split_interval(text, tokens, alignment_items, interval)
     ]
     return [

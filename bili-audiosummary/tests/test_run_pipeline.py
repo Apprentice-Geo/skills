@@ -211,6 +211,8 @@ def test_parse_args_accepts_summary_language(monkeypatch) -> None:
         [
             "run_pipeline.py",
             "https://www.bilibili.com/video/BVTEST/",
+            "--language",
+            "zh",
             "--summary-language",
             "en",
         ],
@@ -219,6 +221,20 @@ def test_parse_args_accepts_summary_language(monkeypatch) -> None:
     options = run_pipeline.PipelineOptions.from_args(run_pipeline.parse_args())
 
     assert options.summary_language == "en"
+
+
+def test_parse_args_requires_language(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_pipeline.py", "https://www.bilibili.com/video/BVTEST/"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        run_pipeline.parse_args()
+
+    assert exc_info.value.code == 2
+    assert "--language" in capsys.readouterr().err
 
 
 def test_pipeline_prefers_usable_subtitle_without_calling_asr(

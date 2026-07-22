@@ -1,7 +1,5 @@
 from typing import Any
 
-SIMPLIFIED_CHINESE_PROMPT = "以下是普通话内容，请使用简体中文转写。"
-
 
 def make_segment(segment: Any) -> dict[str, Any]:
     return {

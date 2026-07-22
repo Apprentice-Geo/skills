@@ -67,7 +67,7 @@ def test_run_transcribe_writes_outputs_with_mocked_asr(
         },
     )
     mocker.patch(
-        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        "scripts.transcribe.run_asr_pipeline",
         return_value=(
             {"language": "zh", "duration": 1.0},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试文本"}],
@@ -114,18 +114,14 @@ def test_run_transcribe_propagates_qwen3_failure_without_whisper_fallback(
     )
     monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
     qwen3_mock = mocker.patch(
-        "scripts.transcribe.transcribe_with_qwen3",
+        "scripts.transcribe.run_asr_pipeline",
         side_effect=RuntimeError(failure),
-    )
-    parallel_mock = mocker.patch(
-        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe"
     )
 
     with pytest.raises(RuntimeError, match=failure):
         transcribe.run_transcribe(args)
 
     qwen3_mock.assert_called_once()
-    parallel_mock.assert_not_called()
     assert "falling back" not in capsys.readouterr().out.lower()
     assert not (result_dir / "BVTEST_transcript.json").exists()
     assert not (result_dir / "BVTEST_transcript.md").exists()
@@ -135,17 +131,33 @@ def test_transcribe_cli_rejects_word_timestamps_option(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["transcribe.py", "audio.m4a", "--word-timestamps"],
+        [
+            "transcribe.py",
+            "audio.m4a",
+            "--language",
+            "zh",
+            "--word-timestamps",
+        ],
     )
 
     with pytest.raises(SystemExit):
         transcribe.parse_args()
 
 
+def test_transcribe_cli_requires_language(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["transcribe.py", "audio.m4a"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        transcribe.parse_args()
+
+    assert exc_info.value.code == 2
+    assert "--language" in capsys.readouterr().err
+
+
 def test_transcribe_cli_distinguishes_automatic_and_explicit_worker_values(
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(sys, "argv", ["transcribe.py", "audio.m4a"])
+    monkeypatch.setattr(sys, "argv", ["transcribe.py", "audio.m4a", "--language", "zh"])
 
     automatic = TranscribeOptions.from_args(transcribe.parse_args())
 
@@ -158,6 +170,8 @@ def test_transcribe_cli_distinguishes_automatic_and_explicit_worker_values(
         [
             "transcribe.py",
             "audio.m4a",
+            "--language",
+            "zh",
             "--num-workers",
             "1",
             "--cpu-threads",
@@ -203,7 +217,7 @@ def test_run_transcribe_only_emits_stage(
         {"id": "BVTEST", "audio_files": [audio_path.as_posix()]},
     )
     mocker.patch(
-        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        "scripts.transcribe.run_asr_pipeline",
         return_value=(
             {"language": "zh"},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "测试"}],
@@ -229,19 +243,18 @@ def test_run_transcribe_uses_parallel_asr_for_whisper(
     manifest_path = resource_dir / "fetch_manifest.json"
     write_json(manifest_path, {"id": "BVTEST", "audio_files": [audio_path.as_posix()]})
     parallel_mock = mocker.patch(
-        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe",
+        "scripts.transcribe.run_asr_pipeline",
         return_value=(
             {"language": "zh", "duration": 9.0},
             [{"id": 0, "start": 0.0, "end": 1.0, "text": "并行文本"}],
             "faster-whisper",
         ),
     )
-    qwen3_mock = mocker.patch("scripts.transcribe.transcribe_with_qwen3")
-
     result = transcribe.run_transcribe(make_args(manifest_path, result_dir))
 
     parallel_mock.assert_called_once()
-    qwen3_mock.assert_not_called()
+    assert isinstance(parallel_mock.call_args.args[2], transcribe.WhisperProvider)
+    assert isinstance(parallel_mock.call_args.args[3], transcribe.WhisperCpuPolicy)
     assert result["json_path"] == result_dir / "BVTEST_transcript.json"
     assert result["markdown_path"] == result_dir / "BVTEST_transcript.md"
     assert result["payload"]["segments"][0]["text"] == "并行文本"
@@ -261,27 +274,26 @@ def test_run_transcribe_uses_only_qwen3_for_explicit_qwen3_provider(
     args = make_args(manifest_path, result_dir)
     args.asr_provider = "qwen3"
     qwen3_mock = mocker.patch(
-        "scripts.transcribe.transcribe_with_qwen3",
+        "scripts.transcribe.run_asr_pipeline",
         return_value=(
             {"language": "zh"},
             [
                 {"id": 0, "start": 0.0, "end": 5.0, "text": "第一段文本"},
                 {"id": 1, "start": 5.0, "end": 10.0, "text": "第二段文本"},
             ],
+            "qwen3-asr",
         ),
-    )
-    parallel_mock = mocker.patch(
-        "scripts.transcribe.parallel_asr.run_parallel_whisper_transcribe"
     )
 
     result = transcribe.run_transcribe(args)
 
-    qwen3_mock.assert_called_once_with(
+    qwen3_mock.assert_called_once()
+    assert qwen3_mock.call_args.args[:2] == (
         audio_path,
-        "zh",
         result_dir / "asr_qwen3",
     )
-    parallel_mock.assert_not_called()
+    assert isinstance(qwen3_mock.call_args.args[2], transcribe.Qwen3Provider)
+    assert isinstance(qwen3_mock.call_args.args[3], transcribe.Qwen3CudaPolicy)
     assert result["payload"]["source"] == "qwen3-asr"
     assert len(read_json(result["json_path"])["segments"]) == 2
     markdown = result["markdown_path"].read_text(encoding="utf-8")

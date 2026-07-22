@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from scripts import fetch_audio, transcribe
-from scripts.asr.qwen3 import has_model_weights
+from scripts.asr.providers.qwen3 import has_model_weights
 from scripts.config import (
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,

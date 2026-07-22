@@ -255,9 +255,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cookies", type=Path, help="Path to a Netscape-format cookies.txt file."
     )
-    parser.add_argument(
-        "--language", choices=("zh", "en"), default=DEFAULT_TRANSCRIBE_LANGUAGE
-    )
+    parser.add_argument("--language", choices=("zh", "en"), required=True)
     parser.add_argument(
         "--summary-language",
         choices=("zh", "en"),

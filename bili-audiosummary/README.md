@@ -41,12 +41,12 @@ uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 运行完整 pipeline：
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "https://www.bilibili.com/video/BV12kXmBCEDi/"
+uv run --no-sync python -m scripts.run_pipeline "https://www.bilibili.com/video/BV12kXmBCEDi/" --language zh
 ```
 
 ### 语言选项
 
-使用 `--language` 指定字幕和转写语言，使用独立的 `--summary-language` 指定最终总结语言。例如，对英文内容生成中文总结：
+必须使用 `--language` 指定字幕和转写语言（`zh` 或 `en`）；缺少该参数时 pipeline 会直接报错。使用独立的 `--summary-language` 指定最终总结语言。例如，对英文内容生成中文总结：
 
 ```powershell
 uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en --summary-language zh
@@ -59,7 +59,7 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en -
 需要跳过字幕并直接转写音频时：
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --skip-subtitles
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --skip-subtitles
 ```
 
 ### 使用 Qwen3-ASR
@@ -74,10 +74,12 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 然后显式选择 Qwen3-ASR：
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --asr-provider qwen3
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --asr-provider qwen3
 ```
 
 该选项只运行 Qwen3-ASR。若依赖、模型、CUDA、模型加载、推理或对齐失败，本次转写会终止。如需改用 faster-whisper，请重新运行并省略 provider 参数，或显式传入 `--asr-provider whisper`。
+
+两种 Provider 共用同一套音频解码、VAD、chunk 规划、词级校验、缓存恢复与句子合成流程，但分别保留 `asr_parallel/` 和 `asr_qwen3/` 工作区。faster-whisper 生产转写固定启用词级时间戳；词项保存在内部 chunk 与 merged artifact 中，最终 transcript JSON 和 Markdown 仍只公开句子级 `segments`。
 
 ### 生成和校验总结
 
@@ -113,7 +115,7 @@ Bilibili 返回 `HTTP 412` 或请求需要登录态时，可准备 Netscape 格�
 将文件放到项目根目录并命名为 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，pipeline 会自动检测。也可以显式指定：
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\cookies.txt
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --cookies .\cookies.txt
 ```
 
 Cookie 文件包含登录凭据，不应提交到版本控制，也不应复制到总结、日志说明或 benchmark 结果中。

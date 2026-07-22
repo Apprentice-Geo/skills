@@ -19,11 +19,61 @@
 
 ## 开发边界
 
-- 先读取当前实现、测试和相关文档，再判断现有契约；不要仅凭旧说明推断行为。
-- 仓库当前的两条转写处理路径仍在开发。不要在本文件中把它们的选择、回退、并行、缓存或失败处理写成固定策略；涉及转写的改动应以当次需求、当前代码和对应测试为准。
-- 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 和 `references/` 中与该行为直接相关的内容。
+- 先读取当前实现、测试和相关文档，再判断现有契约，以实现为准，不要仅凭旧说明、旧记忆及旧文档推断行为。
+- 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 和 `references/` 中与该行为直接相关的内容
+- 对于实验性改动，例如效率实验，正确性实验，不要同步到文档中
 - `.cache/`、`.venv/`、`models/`、`results/`、`tmp/`、cookie 文件、音频和本地模型均为本地或生成内容，不应纳入提交。
-- 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `python -m scripts.<module>` 形式运行。
+- 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `uv run python -m scripts.<module>` 形式运行。
+
+## 第三方 ASR 返回契约
+
+以下 JSON 仅用于表示上游返回值的字段结构；Provider 实际返回 Python 对象，不是项目写入的 JSON artifact。依赖升级后应重新核对这些契约。
+
+Qwen3 返回顶层语言、完整带标点文本，以及可选的时间戳项：
+
+```json
+{
+  "language": "zh",
+  "text": "这是完整的转写文本。",
+  "time_stamps": {
+    "items": [
+      {
+        "text": "这",
+        "start_time": 0.0,
+        "end_time": 0.2
+      }
+    ]
+  }
+}
+```
+
+上游时间戳项通常会清除常规标点，仅保留字母、数字和 ASCII 单引号；中文通常为字级，英文通常按空格分项。
+
+faster-whisper 的转写结果包含多个分段；调用还会返回 `TranscriptionInfo`：
+
+```json
+{
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 1.5,
+      "text": " This is a sentence.",
+      "words": [
+        {
+          "word": " This",
+          "start": 0.0,
+          "end": 0.4,
+          "probability": 0.98
+        }
+      ]
+    }
+  ]
+}
+```
+
+faster-whisper 没有顶层完整文本，需要拼接 `Segment.text`。`Word.word` 默认依 tokenizer 将标点并入前词或后词，双引号和单引号的方向取决于位置；中文粒度不代表语义分词。
+
+简要对照：Qwen3 是“完整带标点文本 + 通常无常规标点的时间戳项”，faster-whisper 是“多个带标点分段 + 通常携带相邻标点的词项”。
 
 ## 环境与常用命令
 
@@ -39,7 +89,7 @@
 uv sync --python 3.12
 ```
 
-运行代码检查：
+提交前运行代码检查：
 
 ```powershell
 uv run ruff check

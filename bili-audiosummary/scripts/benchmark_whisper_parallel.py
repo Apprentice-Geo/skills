@@ -10,7 +10,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.asr.parallel import run_parallel_whisper_transcribe
+from scripts.asr.execution import WhisperCpuPolicy
+from scripts.asr.pipeline import run_asr_pipeline
+from scripts.asr.providers import WhisperProvider
 from scripts.benchmark import (
     BENCHMARK_AUDIO_CACHE_DIR,
     BENCHMARK_VIDEOS,
@@ -46,10 +48,11 @@ def run_case(case_path: Path) -> int:
         max_chunk_seconds=float(case["max_chunk_seconds"]),
     )
     started_at = time.perf_counter()
-    run_parallel_whisper_transcribe(
+    run_asr_pipeline(
         audio_path,
-        options,
         output_dir / "asr_parallel",
+        WhisperProvider(options),
+        WhisperCpuPolicy(options),
     )
     elapsed = round(time.perf_counter() - started_at, 3)
     metrics = read_json(output_dir / "asr_parallel" / "metrics.json")

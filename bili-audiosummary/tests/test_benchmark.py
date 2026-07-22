@@ -31,6 +31,53 @@ def test_whisper_parallel_benchmark_cli_defaults_to_three_repetitions(
     assert args.max_chunk_seconds == [180, 300, 450]
 
 
+def test_whisper_parallel_benchmark_case_uses_unified_asr_pipeline(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.m4a"
+    output_dir = workspace_tmp_path / "transcript"
+    result_path = workspace_tmp_path / "result.json"
+    case_path = workspace_tmp_path / "case.json"
+    metrics_path = output_dir / "asr_parallel" / "metrics.json"
+    metrics_path.parent.mkdir(parents=True)
+    metrics = {
+        "chunk_count": 2,
+        "num_workers": 2,
+        "batch_count": 1,
+        "hard_cut_count": 0,
+        "chunk_estimated_speech_durations": [10.0, 11.0],
+        "max_estimated_speech_duration": 11.0,
+        "speech_load_msre": 0.01,
+    }
+    write_json(metrics_path, metrics)
+    write_json(
+        case_path,
+        {
+            "audio_path": str(audio_path),
+            "output_dir": str(output_dir),
+            "result_path": str(result_path),
+            "max_chunk_seconds": 180,
+        },
+    )
+    run_asr_pipeline = mocker.patch(
+        "scripts.benchmark_whisper_parallel.run_asr_pipeline"
+    )
+    mocker.patch(
+        "scripts.benchmark_whisper_parallel.time.perf_counter",
+        side_effect=[10.0, 12.5],
+    )
+
+    assert whisper_parallel_benchmark.run_case(case_path) == 0
+
+    pipeline_args = run_asr_pipeline.call_args.args
+    assert pipeline_args[:2] == (audio_path, output_dir / "asr_parallel")
+    assert isinstance(pipeline_args[2], whisper_parallel_benchmark.WhisperProvider)
+    assert isinstance(pipeline_args[3], whisper_parallel_benchmark.WhisperCpuPolicy)
+    assert pipeline_args[3].options.max_chunk_seconds == 180
+    assert read_json(result_path) == {"elapsed_seconds": 2.5, **metrics}
+
+
 def test_chunk_limit_benchmark_rotates_limit_order() -> None:
     assert whisper_parallel_benchmark.rotated_limits((180, 300, 450), 0) == (
         180,

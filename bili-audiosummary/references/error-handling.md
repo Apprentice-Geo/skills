@@ -10,7 +10,7 @@ Use this reference only when setup or processing fails.
 - [HTTP 412 and Cookies](#http-412-and-cookies)
 - [Subtitle Cache](#subtitle-cache)
 - [ASR Failures](#asr-failures)
-- [Parallel faster-whisper Cache and Resume](#parallel-faster-whisper-cache-and-resume)
+- [Unified ASR Cache and Resume](#unified-asr-cache-and-resume)
 - [Strict Qwen3 Provider](#strict-qwen3-provider)
 - [Logs](#logs)
 - [Stop Conditions](#stop-conditions)
@@ -48,7 +48,7 @@ Use this reference only when setup or processing fails.
 - For another filename or location, rerun explicitly:
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\cookies.txt
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --cookies .\cookies.txt
 ```
 
 - If cookies are still rejected, confirm that the export came from a logged-in Bilibili session, uses Netscape format, and has not expired.
@@ -67,22 +67,24 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --cookies .\coo
 - Check the transcript command log for model-loading, audio-decoding, memory, or language-normalization errors.
 - For Chinese transcription failures involving OpenCC, rerun core setup to restore `opencc-python-reimplemented`.
 - Standalone `--num-workers` and `--cpu-threads` overrides are strict. Values must be positive, their product must not exceed `B = max(1, floor(cpu_count * 0.75))`, and the resolved worker count must admit a `30s-180s` chunk count divisible by that worker count. The command does not lower explicit values or switch back to automatic planning; an impossible configuration fails before model loading.
-- Audio decode, planning VAD, invalid chunk layout, or merge validation errors stop before a final transcript is written. Use the full log to identify the failing stage; the normal planning and merge contracts are documented in [architecture.md](architecture.md#parallel-faster-whisper-invariants).
+- Audio decode, planning VAD, invalid chunk layout, word mapping, or merge validation errors stop before a final transcript is written. Use the full log to identify the failing stage; the normal contracts are documented in [architecture.md](architecture.md#shared-asr-pipeline-invariants).
 - For memory exhaustion, account for the decoded audio array in addition to provider and model working memory. Retry only after reducing competing memory use or choosing a supported lower-resource configuration.
 - Do not claim a transcript or summary was produced when ASR terminated before writing transcript outputs.
 
-## Parallel faster-whisper Cache and Resume
+## Unified ASR Cache and Resume
 
-- The workspace is `results/<BVID>/asr_parallel/`. Inspect `asr_plan.json`, `progress.json`, `vad_result.json`, `chunk_results/`, and the full log when resume behavior is unexpected.
-- Missing, malformed, incompatible, overlapping, or out-of-range cached data is not reused. The current run regenerates the affected planning state and retranscribes chunks without a valid compatible result.
+- The workspace is `results/<BVID>/asr_parallel/` for Whisper and `results/<BVID>/asr_qwen3/` for Qwen3. Both contain `asr_plan.json`, `vad_result.json`, `progress.json`, `chunk_results/`, `result.json`, and `metrics.json`.
+- Missing, malformed, incompatible, text-mismatched, non-monotonic, or out-of-range cached word data is not reused. The current run regenerates the affected planning state or retranscribes only chunks without a valid compatible result.
 - Older cache schemas are incompatible with the current workspace contract. Do not edit cache JSON manually to force reuse; rerun and allow the pipeline to replace the affected state.
 - Stale files can remain on disk while being counted as ignored. Their presence alone does not prove that the run reused them; use the log and current progress state to confirm cache decisions.
 - Every program invocation gives chunks without a valid result a fresh state. Within that invocation, the first Whisper failure is retried once and the second failure stops merging. Rerunning gives that failed chunk a new one-retry budget while preserving other valid chunk results.
+- A complete compatible cache skips audio decode, device checks, and model loading. A partial cache decodes once, loads the selected model once, and preserves all valid chunk results. Provider request or execution-policy identity changes invalidate the unified plan and its results.
 
 ## Strict Qwen3 Provider
 
 - `--asr-provider qwen3` is strict Qwen3-only mode. It never imports, initializes, or invokes whole-audio or parallel faster-whisper after a Qwen3 failure.
 - Qwen3 requires an available CUDA GPU, optional dependencies, `models/qwen3-asr-0.6b/`, and `models/qwen3-forcedaligner-0.6b/`.
+- Qwen3 provider parsing clips only a final word whose forced-aligner end exceeds the chunk duration by at most `0.1s`, and records a warning in the full log. Larger overruns, an out-of-range start, or an overrun on an earlier word remain alignment failures.
 - Install or repair the optional environment with:
 
 ```powershell

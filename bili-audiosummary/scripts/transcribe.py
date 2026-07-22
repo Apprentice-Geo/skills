@@ -2,14 +2,14 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from scripts.asr import parallel as parallel_asr
-from scripts.asr.qwen3 import transcribe_with_qwen3
+from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
+from scripts.asr.pipeline import run_asr_pipeline
+from scripts.asr.providers import Qwen3Provider, WhisperProvider
 from scripts.config import (
     DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
-    DEFAULT_TRANSCRIBE_LANGUAGE,
     DEFAULT_WHISPER_MODEL_DIR,
     SKILL_ROOT,
 )
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model", help="Model name or local faster-whisper model directory."
     )
-    parser.add_argument("--language", default=DEFAULT_TRANSCRIBE_LANGUAGE)
+    parser.add_argument("--language", required=True)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
     parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
@@ -165,18 +165,19 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
     md_path = output_dir / f"{output_stem}.md"
 
     if options.asr_provider == "whisper":
-        info_data, segments, source = parallel_asr.run_parallel_whisper_transcribe(
+        info_data, segments, source = run_asr_pipeline(
             audio_path,
-            options,
             output_dir / "asr_parallel",
+            WhisperProvider(options),
+            WhisperCpuPolicy(options),
         )
     elif options.asr_provider == "qwen3":
-        info_data, segments = transcribe_with_qwen3(
+        info_data, segments, source = run_asr_pipeline(
             audio_path,
-            options.language,
             output_dir / "asr_qwen3",
+            Qwen3Provider(options.language),
+            Qwen3CudaPolicy(),
         )
-        source = "qwen3-asr"
     else:
         raise ValueError(f"Unsupported ASR provider: {options.asr_provider}")
     payload = {
