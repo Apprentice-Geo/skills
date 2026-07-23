@@ -51,7 +51,10 @@ Transcript Markdown is treated as untrusted data. It is linked from the prompt r
 - `scripts/subtitle_transcript.py`: parses SRT subtitles and converts them to the same transcript JSON and Markdown contract used by ASR.
 - `scripts/validate_summary.py`: checks that the final summary exists, is valid UTF-8, and contains no template placeholders or comments.
 - `scripts/benchmark.py`: runs the fixed ASR provider benchmark matrix in isolated child processes and records transcription time, real-time factor, process-tree RSS, and Qwen3 CUDA memory.
+<<<<<<< HEAD
 - `scripts/benchmark_whisper_parallel.py`: compares faster-whisper chunk upper limits across repeated runs and summarizes timing and planner-quality metrics. It is a development benchmark rather than part of the summary pipeline.
+=======
+>>>>>>> feat/bili-audiosummary
 
 ### Processing Helpers
 
@@ -120,8 +123,11 @@ Each provider case runs in a child process. The measured interval includes model
 
 Each run writes `benchmark.json`, `benchmark.md`, per-case inputs, results, logs, and transcripts under a new timestamped directory in `results/benchmark/` by default. The report records platform and Python information but does not include cookie paths or contents.
 
+<<<<<<< HEAD
 `python -m scripts.benchmark_whisper_parallel` is the focused faster-whisper planner benchmark. Its default matrix uses the configured short-video subset, three repetitions, and chunk upper limits of 180, 300, and 450 seconds. Limit order rotates between repetitions. It reports per-video medians, hard-cut quality, runtime ratios, and the selected winner under its encoded acceptance rules. Results default to timestamped directories under `results/benchmark/whisper-chunk-limits/`; an optional Schema 4 baseline directory is reference-only comparison input.
 
+=======
+>>>>>>> feat/bili-audiosummary
 ## Generated Artifacts
 
 For a resolved video ID, processing writes under `results/<BVID>/`:

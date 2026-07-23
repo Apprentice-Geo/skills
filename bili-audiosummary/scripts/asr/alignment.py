@@ -10,8 +10,11 @@ STRONG_PUNCTUATION = set("。.!！？?")
 WEAK_PUNCTUATION = set("，,；;")
 # 最小句子时长
 MIN_SEGMENT_SECONDS = 2.0
+<<<<<<< HEAD
 # 目标句子时长
 TARGET_SEGMENT_SECONDS = 12.0
+=======
+>>>>>>> feat/bili-audiosummary
 # 最大句子时长
 MAX_SEGMENT_SECONDS = 24.0
 # 最大句子对齐项数
