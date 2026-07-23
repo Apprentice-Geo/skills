@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from scripts.model_artifacts import model_has_weights
+from scripts.model_artifacts import model_has_required_files, model_has_weights
 from scripts.process_logging import ProcessLogger, SetupError
 
 DOWNLOAD_SCRIPT = (
@@ -20,8 +20,11 @@ def download_model(
     weight_patterns: Sequence[str],
     logger: ProcessLogger,
     env: Mapping[str, str],
+    *,
+    require_all: bool = False,
 ) -> bool:
-    if model_has_weights(model_dir, weight_patterns):
+    ready = model_has_required_files if require_all else model_has_weights
+    if ready(model_dir, weight_patterns):
         return False
 
     model_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -30,6 +33,6 @@ def download_model(
         f"Download model {repo_id}",
         env=env,
     )
-    if not model_has_weights(model_dir, weight_patterns):
+    if not ready(model_dir, weight_patterns):
         raise SetupError(f"Downloaded model is missing required weights: {model_dir}")
     return True

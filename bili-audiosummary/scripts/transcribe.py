@@ -1,4 +1,6 @@
 import argparse
+import importlib.util
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -6,13 +8,15 @@ from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
 from scripts.asr.pipeline import run_asr_pipeline
 from scripts.asr.providers import Qwen3Provider, WhisperProvider
 from scripts.config import (
-    DEFAULT_ASR_PROVIDER,
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
     DEFAULT_TRANSCRIBE_DEVICE,
     DEFAULT_WHISPER_MODEL_DIR,
+    QWEN3_ALIGNER_MODEL_DIR,
+    QWEN3_ASR_MODEL_DIR,
     SKILL_ROOT,
 )
+from scripts.language_detection import LanguageDetection, detect_language
 from scripts.manifest_io import (
     infer_result_dir,
     load_manifest,
@@ -20,7 +24,11 @@ from scripts.manifest_io import (
     resolve_manifest_path,
     resolve_path,
 )
-from scripts.model_artifacts import WHISPER_WEIGHT_PATTERNS, model_has_weights
+from scripts.model_artifacts import (
+    QWEN3_WEIGHT_PATTERNS,
+    WHISPER_WEIGHT_PATTERNS,
+    model_has_weights,
+)
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -32,6 +40,8 @@ from scripts.transcript_output import write_markdown_from_json
 from scripts.utils import ensure_dir, path_to_posix, write_json
 
 logger = get_logger(__name__)
+
+TRANSCRIBE_MODELS = ("qwen3", "faster-whisper")
 
 
 def default_model_path() -> str:
@@ -70,15 +80,14 @@ def parse_args() -> argparse.Namespace:
         "--output-dir", type=Path, help="Result directory for transcript outputs."
     )
     parser.add_argument(
-        "--asr-provider",
-        choices=("whisper", "qwen3"),
-        default=DEFAULT_ASR_PROVIDER,
-        help="Strict ASR provider. qwen3 requires CUDA plus explicitly installed dependencies and models; failures do not fall back to whisper.",
+        "--model",
+        choices=TRANSCRIBE_MODELS,
+        help="Transcription model. Omit to prefer Qwen3 and otherwise use faster-whisper.",
     )
     parser.add_argument(
-        "--model", help="Model name or local faster-whisper model directory."
+        "--language",
+        help="Spoken language code. Omit to detect one language for the full audio.",
     )
-    parser.add_argument("--language", required=True)
     parser.add_argument("--device", default=DEFAULT_TRANSCRIBE_DEVICE)
     parser.add_argument("--compute-type", default=DEFAULT_TRANSCRIBE_COMPUTE_TYPE)
     parser.add_argument("--beam-size", type=int, default=DEFAULT_TRANSCRIBE_BEAM_SIZE)
@@ -141,18 +150,88 @@ def main() -> int:
     return 0
 
 
+def _qwen3_ready() -> bool:
+    if (
+        importlib.util.find_spec("qwen_asr") is None
+        or importlib.util.find_spec("torch") is None
+        or importlib.util.find_spec("torchaudio") is None
+    ):
+        return False
+    if not model_has_weights(
+        QWEN3_ASR_MODEL_DIR, QWEN3_WEIGHT_PATTERNS
+    ) or not model_has_weights(QWEN3_ALIGNER_MODEL_DIR, QWEN3_WEIGHT_PATTERNS):
+        return False
+    import torch
+
+    return bool(torch.cuda.is_available())
+
+
+def _whisper_ready() -> bool:
+    return importlib.util.find_spec("faster_whisper") is not None and model_has_weights(
+        DEFAULT_WHISPER_MODEL_DIR, WHISPER_WEIGHT_PATTERNS
+    )
+
+
+def resolve_transcribe_options(
+    options: TranscribeOptions, audio_path: Path
+) -> tuple[TranscribeOptions, LanguageDetection | None]:
+    detection = None
+    language = options.language
+    if not language:
+        detection = detect_language(audio_path)
+        language = detection.language
+    language = language.lower()
+
+    requested_model = options.model
+    if requested_model is None and options.asr_provider is not None:
+        requested_model = (
+            "faster-whisper"
+            if options.asr_provider == "whisper"
+            else options.asr_provider
+        )
+    if requested_model not in (None, *TRANSCRIBE_MODELS):
+        raise ValueError(f"Unsupported transcription model: {requested_model}")
+
+    if requested_model == "qwen3":
+        if language not in Qwen3Provider.supported_languages:
+            supported = ", ".join(sorted(Qwen3Provider.supported_languages))
+            raise ValueError(
+                f"Qwen3 does not support language '{language}' in the current "
+                f"timestamped transcription pipeline. Supported: {supported}."
+            )
+        selected_model = "qwen3"
+    elif requested_model == "faster-whisper":
+        selected_model = "faster-whisper"
+    elif language in Qwen3Provider.supported_languages and _qwen3_ready():
+        selected_model = "qwen3"
+    elif _whisper_ready():
+        selected_model = "faster-whisper"
+    else:
+        raise RuntimeError(
+            "No transcription model is ready. Install Qwen3 or faster-whisper "
+            "dependencies and model files before retrying."
+        )
+
+    provider = "qwen3" if selected_model == "qwen3" else "whisper"
+    return (
+        replace(
+            options,
+            language=language,
+            asr_provider=provider,
+            model=None,
+        ),
+        detection,
+    )
+
+
 def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, Any]:
     options = TranscribeOptions.from_args(args)
-    terminal_info(
-        logger,
-        "[Stage] Transcribe audio with %s",
-        options.asr_provider,
-    )
     manifest_path, audio_path, manifest = resolve_inputs(options)
-    metadata = load_metadata_from_manifest(manifest)
-
     if not audio_path.exists():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
+    options, detection = resolve_transcribe_options(options, audio_path)
+    terminal_info(logger, "[Stage] Transcribe audio with %s", options.asr_provider)
+    metadata = load_metadata_from_manifest(manifest)
 
     output_dir = infer_result_dir(manifest_path, audio_path, options.output_dir)
     ensure_dir(output_dir)
@@ -173,6 +252,8 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
             WhisperCpuPolicy(options),
         )
     elif options.asr_provider == "qwen3":
+        if options.language is None:
+            raise RuntimeError("Resolved transcription language is missing.")
         info_data, segments, source = run_asr_pipeline(
             audio_path,
             output_dir / "asr_qwen3",
@@ -192,6 +273,11 @@ def run_transcribe(args: argparse.Namespace | TranscribeOptions) -> dict[str, An
         **info_data,
         "segments": segments,
     }
+    if detection is not None:
+        payload["language_detection"] = {
+            "model": "speechbrain/lang-id-voxlingua107-ecapa",
+            "probability": detection.probability,
+        }
 
     write_json(json_path, payload)
     write_markdown_from_json(json_path, md_path)

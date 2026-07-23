@@ -28,6 +28,7 @@ class SetupPaths:
     venv_dir: Path
     venv_python: Path
     whisper_model_dir: Path
+    language_id_model_dir: Path
     qwen3_asr_model_dir: Path
     qwen3_aligner_model_dir: Path
 
@@ -49,6 +50,7 @@ class SetupPaths:
             venv_dir=venv_dir,
             venv_python=venv_dir / "Scripts" / "python.exe",
             whisper_model_dir=models_dir / "faster-whisper-small",
+            language_id_model_dir=models_dir / "lang-id-voxlingua107-ecapa",
             qwen3_asr_model_dir=models_dir / "qwen3-asr-0.6b",
             qwen3_aligner_model_dir=models_dir / "qwen3-forcedaligner-0.6b",
         )

@@ -62,8 +62,12 @@ def test_faster_whisper_model_setup_downloads_default_model(
     paths = patch_model_setup_environment(monkeypatch, workspace_tmp_path)
     downloads: list[tuple[str, Path, tuple[str, ...]]] = []
 
-    def fake_download_model(_python, repo_id, model_dir, patterns, *_args):
+    def fake_download_model(_python, repo_id, model_dir, patterns, *_args, **_kwargs):
         downloads.append((repo_id, model_dir, tuple(patterns)))
+        model_dir.mkdir(parents=True, exist_ok=True)
+        for pattern in patterns:
+            if "*" not in pattern:
+                (model_dir / pattern).write_bytes(b"x")
         return True
 
     monkeypatch.setattr(install_model, "download_model", fake_download_model)
@@ -72,10 +76,20 @@ def test_faster_whisper_model_setup_downloads_default_model(
 
     assert downloads == [
         (
+            "speechbrain/lang-id-voxlingua107-ecapa",
+            paths.language_id_model_dir,
+            (
+                "embedding_model.ckpt",
+                "classifier.ckpt",
+                "hyperparams.yaml",
+                "label_encoder.txt",
+            ),
+        ),
+        (
             "Systran/faster-whisper-small",
             paths.whisper_model_dir,
             ("model.bin",),
-        )
+        ),
     ]
 
 
@@ -83,7 +97,10 @@ def test_qwen3_model_setup_reports_missing_extra_dependencies(
     workspace_tmp_path: Path,
     monkeypatch,
 ) -> None:
-    patch_model_setup_environment(monkeypatch, workspace_tmp_path)
+    paths = patch_model_setup_environment(monkeypatch, workspace_tmp_path)
+    paths.language_id_model_dir.mkdir(parents=True)
+    for filename in install_model.LANGUAGE_ID_REQUIRED_FILES:
+        (paths.language_id_model_dir / filename).write_bytes(b"x")
 
     with pytest.raises(
         SetupError, match="uv sync --python 3.12 --no-dev --extra qwen3"

@@ -65,9 +65,9 @@ class TranscribeOptions:
     manifest: Path | None = None
     audio: Path | None = None
     output_dir: Path | None = None
-    asr_provider: str = DEFAULT_ASR_PROVIDER
+    asr_provider: str | None = None
     model: str | None = None
-    language: str = DEFAULT_TRANSCRIBE_LANGUAGE
+    language: str | None = None
     device: str = DEFAULT_TRANSCRIBE_DEVICE
     compute_type: str = DEFAULT_TRANSCRIBE_COMPUTE_TYPE
     beam_size: int = DEFAULT_TRANSCRIBE_BEAM_SIZE
@@ -86,9 +86,9 @@ class TranscribeOptions:
             manifest=getattr(args, "manifest", None),
             audio=getattr(args, "audio", None),
             output_dir=getattr(args, "output_dir", None),
-            asr_provider=getattr(args, "asr_provider", DEFAULT_ASR_PROVIDER),
+            asr_provider=getattr(args, "asr_provider", None),
             model=getattr(args, "model", None),
-            language=getattr(args, "language", DEFAULT_TRANSCRIBE_LANGUAGE),
+            language=getattr(args, "language", None),
             device=getattr(args, "device", DEFAULT_TRANSCRIBE_DEVICE),
             compute_type=getattr(args, "compute_type", DEFAULT_TRANSCRIBE_COMPUTE_TYPE),
             beam_size=getattr(args, "beam_size", DEFAULT_TRANSCRIBE_BEAM_SIZE),

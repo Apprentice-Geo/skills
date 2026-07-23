@@ -23,6 +23,8 @@ class WhisperProvider:
     source = "faster-whisper"
 
     def __init__(self, options: TranscribeOptions) -> None:
+        if options.language is None:
+            raise ValueError("WhisperProvider requires a resolved language.")
         self.options = options
         self.language = options.language
         self.model = options.model or path_to_posix(DEFAULT_WHISPER_MODEL_DIR)

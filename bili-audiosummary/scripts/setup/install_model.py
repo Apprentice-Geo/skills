@@ -5,7 +5,12 @@ import os
 import sys
 from pathlib import Path
 
-from scripts.model_artifacts import QWEN3_WEIGHT_PATTERNS, WHISPER_WEIGHT_PATTERNS
+from scripts.model_artifacts import (
+    LANGUAGE_ID_REQUIRED_FILES,
+    QWEN3_WEIGHT_PATTERNS,
+    WHISPER_WEIGHT_PATTERNS,
+    model_has_required_files,
+)
 from scripts.process_logging import ProcessLogger, SetupError
 from scripts.setup.download_models import download_model
 from scripts.setup.environment import (
@@ -19,6 +24,30 @@ from scripts.setup.environment import (
 WHISPER_MODEL_REPO = "Systran/faster-whisper-small"
 QWEN3_ASR_MODEL_REPO = "Qwen/Qwen3-ASR-0.6B"
 QWEN3_ALIGNER_MODEL_REPO = "Qwen/Qwen3-ForcedAligner-0.6B"
+LANGUAGE_ID_MODEL_REPO = "speechbrain/lang-id-voxlingua107-ecapa"
+
+
+def install_language_id_model(
+    python: Path,
+    paths: SetupPaths,
+    logger: ProcessLogger,
+) -> None:
+    download_model(
+        python,
+        LANGUAGE_ID_MODEL_REPO,
+        paths.language_id_model_dir,
+        LANGUAGE_ID_REQUIRED_FILES,
+        logger,
+        os.environ,
+        require_all=True,
+    )
+    if not model_has_required_files(
+        paths.language_id_model_dir, LANGUAGE_ID_REQUIRED_FILES
+    ):
+        raise SetupError(
+            "Downloaded language identification model is incomplete: "
+            f"{paths.language_id_model_dir}"
+        )
 
 
 def verify_qwen3_imports(python: Path, logger: ProcessLogger) -> None:
@@ -41,7 +70,7 @@ def install_faster_whisper_model(
     paths: SetupPaths,
     logger: ProcessLogger,
 ) -> None:
-    logger.step(2, 2, "Download and verify faster-whisper model")
+    logger.step(3, 3, "Download and verify faster-whisper model")
     download_model(
         python,
         WHISPER_MODEL_REPO,
@@ -57,10 +86,10 @@ def install_qwen_models(
     paths: SetupPaths,
     logger: ProcessLogger,
 ) -> None:
-    logger.step(2, 4, "Verify Qwen3 extra imports")
+    logger.step(3, 5, "Verify Qwen3 extra imports")
     verify_qwen3_imports(python, logger)
 
-    logger.step(3, 4, "Download and verify Qwen3 ASR model")
+    logger.step(4, 5, "Download and verify Qwen3 ASR model")
     download_model(
         python,
         QWEN3_ASR_MODEL_REPO,
@@ -70,7 +99,7 @@ def install_qwen_models(
         os.environ,
     )
 
-    logger.step(4, 4, "Download and verify Qwen3 aligner model")
+    logger.step(5, 5, "Download and verify Qwen3 aligner model")
     download_model(
         python,
         QWEN3_ALIGNER_MODEL_REPO,
@@ -95,9 +124,11 @@ def run_model_setup(model: str, root: Path | None = None) -> Path:
                 rf"uv run --no-sync python -m scripts.setup.install_model --model {model}"
             )
 
-        total_steps = 2 if model == "faster-whisper" else 4
+        total_steps = 3 if model == "faster-whisper" else 5
         logger.step(1, total_steps, "Verify uv-managed Python 3.12 environment")
         assert_python_312(read_python_version(python, logger), "Existing .venv")
+        logger.step(2, total_steps, "Download and verify language ID model")
+        install_language_id_model(python, paths, logger)
 
         if model == "faster-whisper":
             install_faster_whisper_model(python, paths, logger)

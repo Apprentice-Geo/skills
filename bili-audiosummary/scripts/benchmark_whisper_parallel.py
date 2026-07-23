@@ -20,7 +20,7 @@ from scripts.benchmark import (
     require_provider_ready,
     select_videos,
 )
-from scripts.config import RESULTS_DIR
+from scripts.config import DEFAULT_TRANSCRIBE_LANGUAGE, RESULTS_DIR
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import ensure_dir, read_json, write_json
 
@@ -45,6 +45,7 @@ def run_case(case_path: Path) -> int:
     options = TranscribeOptions(
         audio=audio_path,
         output_dir=output_dir,
+        language=DEFAULT_TRANSCRIBE_LANGUAGE,
         max_chunk_seconds=float(case["max_chunk_seconds"]),
     )
     started_at = time.perf_counter()

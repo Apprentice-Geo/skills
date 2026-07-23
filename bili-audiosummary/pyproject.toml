@@ -9,6 +9,9 @@ dependencies = [
     "numpy",
     "opencc-python-reimplemented",
     "psutil",
+    "speechbrain",
+    "torch",
+    "torchaudio",
 ]
 
 [project.optional-dependencies]

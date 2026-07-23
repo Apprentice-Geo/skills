@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import scripts.transcribe as transcribe
+from scripts.language_detection import LanguageDetection
 from scripts.process_logging import LoggingSession
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import read_json, write_json
@@ -144,14 +145,86 @@ def test_transcribe_cli_rejects_word_timestamps_option(monkeypatch) -> None:
         transcribe.parse_args()
 
 
-def test_transcribe_cli_requires_language(monkeypatch, capsys) -> None:
+def test_transcribe_cli_allows_automatic_language_and_model(monkeypatch) -> None:
     monkeypatch.setattr(sys, "argv", ["transcribe.py", "audio.m4a"])
 
-    with pytest.raises(SystemExit) as exc_info:
-        transcribe.parse_args()
+    options = TranscribeOptions.from_args(transcribe.parse_args())
 
-    assert exc_info.value.code == 2
-    assert "--language" in capsys.readouterr().err
+    assert options.language is None
+    assert options.model is None
+    assert options.asr_provider is None
+
+
+def test_resolve_options_detects_language_and_prefers_ready_qwen3(
+    workspace_tmp_path: Path, mocker
+) -> None:
+    audio_path = workspace_tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    mocker.patch(
+        "scripts.transcribe.detect_language",
+        return_value=LanguageDetection("zh", 0.91),
+    )
+    mocker.patch("scripts.transcribe._qwen3_ready", return_value=True)
+
+    resolved, detection = transcribe.resolve_transcribe_options(
+        TranscribeOptions(audio=audio_path), audio_path
+    )
+
+    assert resolved.language == "zh"
+    assert resolved.asr_provider == "qwen3"
+    assert resolved.model is None
+    assert detection == LanguageDetection("zh", 0.91)
+
+
+def test_resolve_options_uses_whisper_for_language_unsupported_by_qwen3(
+    workspace_tmp_path: Path, mocker
+) -> None:
+    audio_path = workspace_tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    mocker.patch(
+        "scripts.transcribe.detect_language",
+        return_value=LanguageDetection("nl", 0.95),
+    )
+    mocker.patch("scripts.transcribe._whisper_ready", return_value=True)
+
+    resolved, _detection = transcribe.resolve_transcribe_options(
+        TranscribeOptions(audio=audio_path), audio_path
+    )
+
+    assert resolved.language == "nl"
+    assert resolved.asr_provider == "whisper"
+
+
+def test_resolve_options_uses_whisper_when_qwen3_is_not_ready(
+    workspace_tmp_path: Path, mocker
+) -> None:
+    audio_path = workspace_tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+    mocker.patch("scripts.transcribe._qwen3_ready", return_value=False)
+    mocker.patch("scripts.transcribe._whisper_ready", return_value=True)
+
+    resolved, detection = transcribe.resolve_transcribe_options(
+        TranscribeOptions(audio=audio_path, language="zh"), audio_path
+    )
+
+    assert resolved.asr_provider == "whisper"
+    assert detection is None
+
+
+def test_resolve_options_rejects_explicit_qwen3_for_unsupported_language(
+    workspace_tmp_path: Path,
+) -> None:
+    audio_path = workspace_tmp_path / "audio.wav"
+    audio_path.write_bytes(b"audio")
+
+    with pytest.raises(
+        ValueError,
+        match="Qwen3 does not support language 'nl'.*Supported:",
+    ):
+        transcribe.resolve_transcribe_options(
+            TranscribeOptions(audio=audio_path, language="nl", model="qwen3"),
+            audio_path,
+        )
 
 
 def test_transcribe_cli_distinguishes_automatic_and_explicit_worker_values(

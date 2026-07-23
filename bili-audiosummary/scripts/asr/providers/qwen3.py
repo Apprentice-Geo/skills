@@ -21,10 +21,23 @@ from scripts.model_artifacts import QWEN3_WEIGHT_PATTERNS, model_has_weights
 from scripts.process_logging import get_logger
 from scripts.utils import path_to_posix
 
-QWEN3_LANGUAGE_NAMES = {"en": "English", "zh": "Chinese"}
+QWEN3_LANGUAGE_NAMES = {
+    "de": "German",
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "yue": "Cantonese",
+    "zh": "Chinese",
+}
 QWEN3_END_TIME_TOLERANCE_SECONDS = 0.1
 
 logger = get_logger(__name__)
+
 
 def adapt_qwen_timestamp_items(items: list[Any]) -> list[TranscriptWord]:
     normalized: list[TranscriptWord] = []
@@ -35,13 +48,17 @@ def adapt_qwen_timestamp_items(items: list[Any]) -> list[TranscriptWord]:
         if start is None or end is None:
             continue
         normalized.append(
-            TranscriptWord(text=text, start=round(float(start), 3), end=round(float(end), 3))
+            TranscriptWord(
+                text=text, start=round(float(start), 3), end=round(float(end), 3)
+            )
         )
     return normalized
+
 
 class Qwen3Provider:
     name = "qwen3"
     source = "qwen3-asr"
+    supported_languages = frozenset(QWEN3_LANGUAGE_NAMES)
 
     def __init__(self, language: str) -> None:
         self.language = language
