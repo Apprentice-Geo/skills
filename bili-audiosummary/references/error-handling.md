@@ -75,10 +75,12 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh -
 
 - The workspace is `results/<BVID>/asr_parallel/` for Whisper and `results/<BVID>/asr_qwen3/` for Qwen3. Both contain `asr_plan.json`, `vad_result.json`, `progress.json`, `chunk_results/`, `result.json`, and `metrics.json`.
 - Missing, malformed, incompatible, text-mismatched, non-monotonic, or out-of-range cached word data is not reused. The current run regenerates the affected planning state or retranscribes only chunks without a valid compatible result.
+- `vad_result.json` is required for cache reuse. Missing or unreadable JSON, schema/source/VAD-parameter mismatches, and invalid interval structure are logged with a stable reason and regenerated after decoding. Intervals must use sorted non-overlapping integer sample coordinates; the loader does not clamp, reorder, merge, or otherwise repair them.
+- After VAD validation, the current execution policy derives layouts again. If they differ from `asr_plan.json`, the plan is rebuilt and all old chunk results are ignored. If an invalid VAD artifact is regenerated to the exact same layouts, the artifact is rewritten while compatible chunk results remain reusable. A decoded sample-count mismatch always regenerates VAD and the plan.
 - Older cache schemas are incompatible with the current workspace contract. Do not edit cache JSON manually to force reuse; rerun and allow the pipeline to replace the affected state.
 - Stale files can remain on disk while being counted as ignored. Their presence alone does not prove that the run reused them; use the log and current progress state to confirm cache decisions.
 - Every program invocation gives chunks without a valid result a fresh state. Within that invocation, the first Whisper failure is retried once and the second failure stops merging. Rerunning gives that failed chunk a new one-retry budget while preserving other valid chunk results.
-- A complete compatible cache skips audio decode, device checks, and model loading. A partial cache decodes once, loads the selected model once, and preserves all valid chunk results. Provider request or execution-policy identity changes invalidate the unified plan and its results.
+- A complete compatible plan, VAD artifact, and chunk cache skips audio decode, device checks, and model loading. A partial cache with valid VAD decodes once without repeating VAD, loads the selected model once, and preserves all valid chunk results. Provider request or execution-policy identity changes invalidate the unified plan and its results.
 
 ## Strict Qwen3 Provider
 
@@ -101,7 +103,10 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 - Setup logs are written to `.cache/logs/setup-<timestamp>.log`.
 - Pipeline, fetch, subtitle, and transcription logs start in `.cache/logs/`.
 - After metadata or an output directory identifies the result location, processing logs move to `results/<BVID>/`.
-- During parallel faster-whisper transcription, the terminal reports VAD and chunk planning, the resolved worker allocation, audio preparation, per-chunk cache/resume/success state, retry summaries, and merge completion.
+- During ASR, the full log records the selected provider and execution policy, plan/VAD/cache state, audio decode, safe model-preparation fields, reused and pending chunk counts, execution, merge, and the final success or failure summary. It does not record transcript text, model return objects, cookies, environment variables, or model internals.
+- During parallel faster-whisper transcription, the terminal remains concise while the full log records each failed chunk attempt. The first failure is a warning with its original traceback and retry action; the second is an error with its original traceback and final-failure action.
+- A failed Qwen3 batch is a warning with the batch number, chunk range, original traceback, and isolation action. Each chunk that also fails during isolation has one separate error traceback. The isolation traceback does not repeat the failed batch traceback.
+- `progress.json` stores only `ExceptionType: message` for a failed chunk, never a traceback. The raised pipeline error maps every failed chunk to the same concise summary; a single failure retains its original exception as the Python cause, while multiple independent failures are not represented as one artificial cause.
 - On failure, use the printed `Full log` path. It contains commands, BVID, manifest and metadata paths, cache decisions, ASR provider details, yt-dlp warnings, and tracebacks.
 - Chunk failures are concise in the terminal; their full tracebacks are available only in the log. The terminal is not the complete diagnostic record.
 

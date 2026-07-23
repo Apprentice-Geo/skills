@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from scripts.model_artifacts import model_has_weights
 from scripts.process_logging import ProcessLogger, SetupError
 
 DOWNLOAD_SCRIPT = (
@@ -10,12 +11,6 @@ DOWNLOAD_SCRIPT = (
     "from huggingface_hub import snapshot_download; "
     "snapshot_download(repo_id=sys.argv[1], local_dir=sys.argv[2])"
 )
-
-
-def model_has_weights(model_dir: Path, patterns: Sequence[str]) -> bool:
-    return model_dir.is_dir() and any(
-        next(model_dir.glob(pattern), None) is not None for pattern in patterns
-    )
 
 
 def download_model(

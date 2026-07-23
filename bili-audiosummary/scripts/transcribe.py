@@ -20,6 +20,7 @@ from scripts.manifest_io import (
     resolve_manifest_path,
     resolve_path,
 )
+from scripts.model_artifacts import WHISPER_WEIGHT_PATTERNS, model_has_weights
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -34,7 +35,7 @@ logger = get_logger(__name__)
 
 
 def default_model_path() -> str:
-    if (DEFAULT_WHISPER_MODEL_DIR / "model.bin").exists():
+    if model_has_weights(DEFAULT_WHISPER_MODEL_DIR, WHISPER_WEIGHT_PATTERNS):
         return path_to_posix(DEFAULT_WHISPER_MODEL_DIR)
     raise RuntimeError(
         "Local faster-whisper model is missing. Run "

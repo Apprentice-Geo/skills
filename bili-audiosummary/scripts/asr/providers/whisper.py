@@ -3,13 +3,19 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import numpy as np
+
 from scripts.asr.alignment import TranscriptWord, _to_float
 from scripts.asr.chunking import ChunkLayout
 from scripts.asr.common import is_chinese_language, make_simplified_chinese_converter
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
 from scripts.config import DEFAULT_WHISPER_MODEL_DIR
+from scripts.model_artifacts import WHISPER_WEIGHT_PATTERNS, model_has_weights
+from scripts.process_logging import get_logger
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
+
+logger = get_logger(__name__)
 
 
 class WhisperProvider:
@@ -33,9 +39,8 @@ class WhisperProvider:
         }
 
     def prepare(self, execution_identity: dict[str, Any]) -> Any:
-        if (
-            not self.options.model
-            and not (DEFAULT_WHISPER_MODEL_DIR / "model.bin").exists()
+        if not self.options.model and not model_has_weights(
+            DEFAULT_WHISPER_MODEL_DIR, WHISPER_WEIGHT_PATTERNS
         ):
             raise RuntimeError(
                 "Local faster-whisper model is missing. Run "
@@ -44,6 +49,17 @@ class WhisperProvider:
             )
         from faster_whisper import WhisperModel
 
+        logger.info(
+            "ASR model prepare: provider=%s model=%s device=%s compute_type=%s "
+            "policy=%s num_workers=%d cpu_threads=%d",
+            self.name,
+            self.model,
+            self.options.device,
+            self.options.compute_type,
+            execution_identity["policy"],
+            int(execution_identity["num_workers"]),
+            int(execution_identity["cpu_threads"]),
+        )
         return WhisperModel(
             self.model,
             device=self.options.device,
@@ -53,7 +69,7 @@ class WhisperProvider:
         )
 
     def transcribe_one(
-        self, prepared: Any, samples: Any, layout: ChunkLayout
+        self, prepared: Any, samples: np.ndarray, layout: ChunkLayout
     ) -> ChunkTranscript:
         started = time.perf_counter()
         raw_segments, info = prepared.transcribe(

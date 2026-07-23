@@ -6,6 +6,7 @@ dependencies = [
     "yt-dlp==2026.3.17",
     "faster-whisper==1.2.1",
     "ffmpeg-binaries-compat",
+    "numpy",
     "opencc-python-reimplemented",
     "psutil",
 ]
@@ -16,7 +17,6 @@ qwen3 = [
     "transformers",
     "accelerate",
     "huggingface-hub",
-    "numpy",
     "soundfile",
     "librosa",
     "torch",

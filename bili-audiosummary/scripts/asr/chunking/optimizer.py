@@ -8,7 +8,6 @@ from typing import Iterable
 
 from scripts.asr.chunking.timeline import Timeline
 
-_EXHAUSTIVE_STATE_LIMIT = 50_000
 _EXHAUSTIVE_HARD_POINT_LIMIT = 1_000
 
 
@@ -475,87 +474,6 @@ def _result_from_boundaries(
         max_speech_load=max(loads, default=0),
         speech_load_msre=msre,
     )
-
-
-def _pareto_insert(
-    frontier: list[tuple[int, int, int, tuple[int, ...]]],
-    candidate: tuple[int, int, int, tuple[int, ...]],
-) -> None:
-    hard, maximum_load, square_sum, path = candidate
-    for current in frontier:
-        current_hard, current_maximum, current_square, current_path = current
-        if (
-            current_hard <= hard
-            and current_maximum <= maximum_load
-            and current_square <= square_sum
-            and (
-                (current_hard, current_maximum, current_square)
-                != (hard, maximum_load, square_sum)
-                or current_path <= path
-            )
-        ):
-            return
-    frontier[:] = [
-        current
-        for current in frontier
-        if not (
-            hard <= current[0]
-            and maximum_load <= current[1]
-            and square_sum <= current[2]
-            and ((hard, maximum_load, square_sum) != current[:3] or path < current[3])
-        )
-    ]
-    frontier.append(candidate)
-
-
-def _optimize_exhaustively(
-    timeline: Timeline,
-    chunk_count: int,
-    minimum: int,
-    maximum: int,
-) -> BoundaryOptimizationResult:
-    states: dict[int, list[tuple[int, int, int, tuple[int, ...]]]] = {
-        0: [(0, 0, 0, (0,))]
-    }
-    for stage in range(1, chunk_count + 1):
-        window_lo, window_hi = _stage_window(
-            timeline.duration,
-            chunk_count,
-            stage,
-            minimum,
-            maximum,
-        )
-        targets = (
-            (timeline.duration,)
-            if stage == chunk_count
-            else range(window_lo, window_hi + 1)
-        )
-        next_states: dict[int, list[tuple[int, int, int, tuple[int, ...]]]] = {}
-        for target in targets:
-            target_frontier: list[tuple[int, int, int, tuple[int, ...]]] = []
-            for predecessor, predecessor_states in states.items():
-                if not minimum <= target - predecessor <= maximum:
-                    continue
-                load = timeline.speech_at(target) - timeline.speech_at(predecessor)
-                cut_cost = int(stage < chunk_count and timeline.is_hard(target))
-                for hard, maximum_load, square_sum, path in predecessor_states:
-                    _pareto_insert(
-                        target_frontier,
-                        (
-                            hard + cut_cost,
-                            max(maximum_load, load),
-                            square_sum + load * load,
-                            (*path, target),
-                        ),
-                    )
-            if target_frontier:
-                next_states[target] = target_frontier
-        states = next_states
-    final_states = states.get(timeline.duration, [])
-    if not final_states:
-        raise ValueError("Unable to construct a legal chunk boundary layout.")
-    selected = min(final_states, key=lambda item: (item[0], item[1], item[2], item[3]))
-    return _result_from_boundaries(timeline, selected[3])
 
 
 def _safe_nodes_by_stage(
@@ -1035,15 +953,6 @@ def optimize_chunk_boundaries(
             max_chunk_samples,
         )
         return _result_from_boundaries(timeline, boundaries)
-
-    state_estimate = duration_samples * chunk_count
-    if state_estimate <= _EXHAUSTIVE_STATE_LIMIT:
-        return _optimize_exhaustively(
-            timeline,
-            chunk_count,
-            min_chunk_samples,
-            max_chunk_samples,
-        )
 
     if timeline.total_speech == duration_samples:
         boundaries = _balanced_boundaries(duration_samples, chunk_count)

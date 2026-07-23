@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import logging
 import os
 import time
 from typing import Any
+
+import numpy as np
 
 from scripts.asr.alignment import TranscriptWord, normalize_alignment_items
 from scripts.asr.chunking import SAMPLE_RATE, ChunkLayout
@@ -16,19 +17,14 @@ from scripts.config import (
     QWEN3_DTYPE,
     QWEN3_MAX_NEW_TOKENS,
 )
+from scripts.model_artifacts import QWEN3_WEIGHT_PATTERNS, model_has_weights
+from scripts.process_logging import get_logger
 from scripts.utils import path_to_posix
 
 QWEN3_LANGUAGE_NAMES = {"en": "English", "zh": "Chinese"}
 QWEN3_END_TIME_TOLERANCE_SECONDS = 0.1
 
-logger = logging.getLogger(__name__)
-
-
-def has_model_weights(model_dir: Any) -> bool:
-    return (
-        model_dir.is_dir()
-        and next(model_dir.glob("model*.safetensors"), None) is not None
-    )
+logger = get_logger(__name__)
 
 
 class Qwen3Provider:
@@ -73,9 +69,9 @@ class Qwen3Provider:
             raise RuntimeError(
                 "Qwen3 ASR requires an available CUDA GPU. Use the default whisper provider on CPU."
             )
-        if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(
-            QWEN3_ALIGNER_MODEL_DIR
-        ):
+        if not model_has_weights(
+            QWEN3_ASR_MODEL_DIR, QWEN3_WEIGHT_PATTERNS
+        ) or not model_has_weights(QWEN3_ALIGNER_MODEL_DIR, QWEN3_WEIGHT_PATTERNS):
             raise RuntimeError(
                 "Qwen3 local models are missing. Run "
                 r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
@@ -83,6 +79,17 @@ class Qwen3Provider:
         os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
         model_path = path_to_posix(QWEN3_ASR_MODEL_DIR)
         dtype = getattr(torch, QWEN3_DTYPE)
+        logger.info(
+            "ASR model prepare: provider=%s model=%s forced_aligner=%s "
+            "device=%s compute_type=%s policy=%s batch_size=%d",
+            self.name,
+            model_path,
+            path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
+            QWEN3_DEVICE_MAP,
+            QWEN3_DTYPE,
+            execution_identity["policy"],
+            int(execution_identity["batch_size"]),
+        )
         generation_config = GenerationConfig.from_pretrained(
             model_path, temperature=None
         )
@@ -147,7 +154,7 @@ class Qwen3Provider:
         return transcript
 
     def transcribe_one(
-        self, prepared: Any, samples: Any, layout: ChunkLayout
+        self, prepared: Any, samples: np.ndarray, layout: ChunkLayout
     ) -> ChunkTranscript:
         started = time.perf_counter()
         results = prepared.transcribe(
@@ -160,7 +167,7 @@ class Qwen3Provider:
         return self.parse_result(results[0], layout, time.perf_counter() - started)
 
     def transcribe_batch(
-        self, prepared: Any, items: list[tuple[Any, ChunkLayout]]
+        self, prepared: Any, items: list[tuple[np.ndarray, ChunkLayout]]
     ) -> list[ChunkTranscript]:
         started = time.perf_counter()
         results = prepared.transcribe(

@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 from scripts import fetch_audio, transcribe
-from scripts.asr.providers.qwen3 import has_model_weights
 from scripts.config import (
     DEFAULT_TRANSCRIBE_BEAM_SIZE,
     DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
@@ -23,6 +22,7 @@ from scripts.config import (
     RESULTS_DIR,
     SKILL_ROOT,
 )
+from scripts.model_artifacts import QWEN3_WEIGHT_PATTERNS, model_has_weights
 from scripts.runtime_options import FetchOptions, TranscribeOptions
 from scripts.utils import ensure_dir, read_json, write_json
 
@@ -90,9 +90,9 @@ def require_provider_ready(provider: str) -> None:
         ) from exc
     if not torch.cuda.is_available():
         raise RuntimeError("Qwen3 ASR requires an available CUDA GPU.")
-    if not has_model_weights(QWEN3_ASR_MODEL_DIR) or not has_model_weights(
-        QWEN3_ALIGNER_MODEL_DIR
-    ):
+    if not model_has_weights(
+        QWEN3_ASR_MODEL_DIR, QWEN3_WEIGHT_PATTERNS
+    ) or not model_has_weights(QWEN3_ALIGNER_MODEL_DIR, QWEN3_WEIGHT_PATTERNS):
         raise RuntimeError(
             "Qwen3 local models are missing. Run "
             "uv run --no-sync python -m scripts.setup.install_model --model qwen3."

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from scripts.process_logging import ProcessResult, SetupError
-from scripts.setup.download_models import download_model, model_has_weights
+from scripts.setup.download_models import download_model
 
 
 class ModelDownloadLogger:
@@ -17,16 +17,6 @@ class ModelDownloadLogger:
             self.weight_path.parent.mkdir(parents=True, exist_ok=True)
             self.weight_path.write_bytes(b"weights")
         return ProcessResult(0, "")
-
-
-def test_model_has_weights_accepts_sharded_safetensors(
-    workspace_tmp_path: Path,
-) -> None:
-    model_dir = workspace_tmp_path / "model"
-    model_dir.mkdir()
-    (model_dir / "model-00001-of-00002.safetensors").write_bytes(b"weights")
-
-    assert model_has_weights(model_dir, ("model*.safetensors",))
 
 
 def test_download_model_uses_venv_python_and_validates_weights(

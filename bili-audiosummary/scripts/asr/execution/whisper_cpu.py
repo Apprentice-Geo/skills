@@ -16,7 +16,11 @@ from scripts.asr.chunking import (
     plan_chunks,
 )
 from scripts.asr.pipeline_types import ChunkTranscript
+from scripts.asr.providers.base import AsrProvider
+from scripts.process_logging import get_logger
 from scripts.runtime_options import TranscribeOptions
+
+logger = get_logger(__name__)
 
 
 class WhisperCpuPolicy:
@@ -113,21 +117,23 @@ class WhisperCpuPolicy:
 
     def execute(
         self,
-        provider: Any,
+        provider: AsrProvider,
         audio: NormalizedAudio,
         pending: list[ChunkLayout],
         identity: dict[str, Any],
         cache: Callable[[ChunkTranscript], None],
-    ) -> dict[str, str]:
+    ) -> dict[str, BaseException]:
         if not pending:
             return {}
         model = provider.prepare(identity)
         attempts = {layout.index: 0 for layout in pending}
         current = list(pending)
-        failures: dict[str, str] = {}
+        failures: dict[str, BaseException] = {}
+        retry_count = int(identity.get("retry_count", 1))
+        total_attempts = retry_count + 1
         with ThreadPoolExecutor(max_workers=int(identity["num_workers"])) as executor:
             while current:
-                futures: dict[Future[Any], ChunkLayout] = {
+                futures: dict[Future[ChunkTranscript], ChunkLayout] = {
                     executor.submit(
                         provider.transcribe_one, model, audio.slice(layout), layout
                     ): layout
@@ -139,10 +145,31 @@ class WhisperCpuPolicy:
                     try:
                         cache(future.result())
                     except Exception as exc:
-                        if attempts[layout.index] < 1:
-                            attempts[layout.index] += 1
+                        attempt = attempts[layout.index] + 1
+                        attempts[layout.index] = attempt
+                        if attempt <= retry_count:
+                            logger.warning(
+                                "ASR chunk failed: provider=%s policy=%s "
+                                "chunk=chunk_%03d attempt=%d/%d action=retry",
+                                provider.name,
+                                self.name,
+                                layout.index,
+                                attempt,
+                                total_attempts,
+                                exc_info=True,
+                            )
                             retry.append(layout)
                         else:
-                            failures[f"chunk_{layout.index:03d}"] = str(exc)
+                            logger.error(
+                                "ASR chunk failed: provider=%s policy=%s "
+                                "chunk=chunk_%03d attempt=%d/%d action=fail",
+                                provider.name,
+                                self.name,
+                                layout.index,
+                                attempt,
+                                total_attempts,
+                                exc_info=True,
+                            )
+                            failures[f"chunk_{layout.index:03d}"] = exc
                 current = retry
         return failures

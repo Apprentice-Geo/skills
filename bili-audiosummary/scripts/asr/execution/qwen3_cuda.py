@@ -9,7 +9,11 @@ from scripts.asr.chunking import (
     plan_chunks,
 )
 from scripts.asr.pipeline_types import ChunkTranscript
+from scripts.asr.providers.base import BatchAsrProvider
 from scripts.config import QWEN3_MAX_INFERENCE_BATCH_SIZE
+from scripts.process_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class Qwen3CudaPolicy:
@@ -42,27 +46,51 @@ class Qwen3CudaPolicy:
 
     def execute(
         self,
-        provider: Any,
+        provider: BatchAsrProvider,
         audio: NormalizedAudio,
         pending: list[ChunkLayout],
         identity: dict[str, Any],
         cache: Callable[[ChunkTranscript], None],
-    ) -> dict[str, str]:
+    ) -> dict[str, BaseException]:
         if not pending:
             return {}
         model = provider.prepare(identity)
-        failures: dict[str, str] = {}
+        failures: dict[str, BaseException] = {}
         batch_size = int(identity["batch_size"])
         for offset in range(0, len(pending), batch_size):
+            batch_number = offset // batch_size + 1
             batch = pending[offset : offset + batch_size]
             items = [(audio.slice(layout), layout) for layout in batch]
+            batch_failed = False
             try:
                 for transcript in provider.transcribe_batch(model, items):
                     cache(transcript)
             except Exception:
-                for samples, layout in items:
-                    try:
-                        cache(provider.transcribe_one(model, samples, layout))
-                    except Exception as exc:
-                        failures[f"chunk_{layout.index:03d}"] = str(exc)
+                batch_failed = True
+                logger.warning(
+                    "ASR batch failed: provider=%s policy=%s batch=%d "
+                    "chunks=chunk_%03d..chunk_%03d attempt=batch action=isolate",
+                    provider.name,
+                    self.name,
+                    batch_number,
+                    batch[0].index,
+                    batch[-1].index,
+                    exc_info=True,
+                )
+            if not batch_failed:
+                continue
+            for samples, layout in items:
+                try:
+                    cache(provider.transcribe_one(model, samples, layout))
+                except Exception as exc:
+                    logger.error(
+                        "ASR chunk failed: provider=%s policy=%s batch=%d "
+                        "chunk=chunk_%03d attempt=isolation action=fail",
+                        provider.name,
+                        self.name,
+                        batch_number,
+                        layout.index,
+                        exc_info=True,
+                    )
+                    failures[f"chunk_{layout.index:03d}"] = exc
         return failures

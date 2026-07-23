@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from scripts.asr.alignment import AlignmentContractError, TranscriptWord
+from scripts.asr.chunking import VadParameters
 from scripts.asr.pipeline_types import (
     ASR_PIPELINE_SCHEMA_VERSION,
     AsrPipelinePlan,
@@ -13,6 +14,21 @@ from scripts.asr.pipeline_types import (
     SourceIdentity,
 )
 from scripts.utils import read_json, write_json_atomic
+
+VadArtifactReason = Literal[
+    "missing",
+    "unreadable",
+    "schema_mismatch",
+    "source_mismatch",
+    "parameters_mismatch",
+    "invalid_structure",
+]
+
+
+@dataclass(frozen=True)
+class VadArtifactValidation:
+    intervals: list[tuple[int, int]] | None
+    reason: VadArtifactReason | None
 
 
 def workspace_paths(root: Path) -> dict[str, Path]:
@@ -83,36 +99,44 @@ def write_vad_result(
 
 
 def load_valid_vad_result(
-    path: Path, source: SourceIdentity, parameters: Any
-) -> list[tuple[int, int]] | None:
-    data = load_json_or_none(path)
-    if (
-        not isinstance(data, dict)
-        or data.get("schema_version") != ASR_PIPELINE_SCHEMA_VERSION
-        or data.get("source") != asdict(source)
-        or data.get("parameters") != asdict(parameters)
-        or not isinstance(data.get("speech_intervals"), list)
-    ):
-        return None
+    path: Path, source: SourceIdentity, parameters: VadParameters
+) -> VadArtifactValidation:
+    if not path.exists():
+        return VadArtifactValidation(None, "missing")
+    try:
+        data = read_json(path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return VadArtifactValidation(None, "unreadable")
+    if not isinstance(data, dict):
+        return VadArtifactValidation(None, "invalid_structure")
+    if data.get("schema_version") != ASR_PIPELINE_SCHEMA_VERSION:
+        return VadArtifactValidation(None, "schema_mismatch")
+    if data.get("source") != asdict(source):
+        return VadArtifactValidation(None, "source_mismatch")
+    if data.get("parameters") != asdict(parameters):
+        return VadArtifactValidation(None, "parameters_mismatch")
+    if not isinstance(data.get("speech_intervals"), list):
+        return VadArtifactValidation(None, "invalid_structure")
     intervals: list[tuple[int, int]] = []
     previous_end = 0
     for item in data["speech_intervals"]:
         if not isinstance(item, dict):
-            return None
+            return VadArtifactValidation(None, "invalid_structure")
         start, end = item.get("start_sample"), item.get("end_sample")
         if (
             isinstance(start, bool)
             or not isinstance(start, int)
             or isinstance(end, bool)
             or not isinstance(end, int)
+            or start < 0
             or start < previous_end
-            or end < start
+            or end <= start
             or end > source.sample_count
         ):
-            return None
+            return VadArtifactValidation(None, "invalid_structure")
         intervals.append((start, end))
         previous_end = end
-    return intervals
+    return VadArtifactValidation(intervals, None)
 
 
 def chunk_payload(plan: AsrPipelinePlan, transcript: ChunkTranscript) -> dict[str, Any]:

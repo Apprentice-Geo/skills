@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
+from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pytest
@@ -10,8 +12,24 @@ from scripts.asr.alignment import AlignmentContractError
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
 from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
 from scripts.asr.providers import Qwen3Provider, WhisperProvider
-from scripts.asr.providers.qwen3 import has_model_weights
+from scripts.config import QWEN3_DEVICE_MAP, QWEN3_DTYPE
+from scripts.process_logging import LoggingSession, get_logger
 from scripts.runtime_options import TranscribeOptions
+
+
+@contextmanager
+def isolated_logging_session(log_path):
+    root_logger = get_logger()
+    handlers = list(root_logger.handlers)
+    level = root_logger.level
+    propagate = root_logger.propagate
+    try:
+        with LoggingSession(log_path):
+            yield
+    finally:
+        root_logger.handlers[:] = handlers
+        root_logger.setLevel(level)
+        root_logger.propagate = propagate
 
 
 def test_whisper_provider_forces_word_timestamps_and_preserves_probability() -> None:
@@ -75,14 +93,68 @@ def test_qwen_provider_parses_probability_as_none() -> None:
     assert identity["return_time_stamps"] is True
 
 
-def test_qwen_model_weights_accept_sharded_safetensors(
-    workspace_tmp_path: Path,
+def test_whisper_prepare_logs_only_safe_model_configuration(
+    workspace_tmp_path: Path, monkeypatch
 ) -> None:
-    model_dir = workspace_tmp_path / "model"
-    model_dir.mkdir()
-    (model_dir / "model-00001-of-00002.safetensors").write_bytes(b"weights")
+    faster_whisper = ModuleType("faster_whisper")
+    faster_whisper.WhisperModel = lambda *_args, **_kwargs: object()
+    monkeypatch.setitem(sys.modules, "faster_whisper", faster_whisper)
+    provider = WhisperProvider(
+        TranscribeOptions(
+            language="en",
+            model="custom-whisper",
+            device="cpu",
+            compute_type="int8",
+        )
+    )
+    log_path = workspace_tmp_path / "whisper-prepare.log"
 
-    assert has_model_weights(model_dir)
+    with isolated_logging_session(log_path):
+        provider.prepare(
+            {
+                "policy": "whisper-cpu",
+                "num_workers": 2,
+                "cpu_threads": 3,
+            }
+        )
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert (
+        "provider=whisper model=custom-whisper device=cpu compute_type=int8 "
+        "policy=whisper-cpu num_workers=2 cpu_threads=3"
+    ) in log_text
+
+
+def test_qwen_prepare_logs_only_safe_model_configuration(
+    workspace_tmp_path: Path, monkeypatch
+) -> None:
+    torch = ModuleType("torch")
+    torch.cuda = SimpleNamespace(is_available=lambda: True)
+    setattr(torch, QWEN3_DTYPE, object())
+    qwen_asr = ModuleType("qwen_asr")
+    qwen_asr.Qwen3ASRModel = SimpleNamespace(
+        from_pretrained=lambda *_args, **_kwargs: object()
+    )
+    transformers = ModuleType("transformers")
+    transformers.GenerationConfig = SimpleNamespace(
+        from_pretrained=lambda *_args, **_kwargs: object()
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "qwen_asr", qwen_asr)
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    monkeypatch.setattr(
+        "scripts.asr.providers.qwen3.model_has_weights", lambda *_args: True
+    )
+    provider = Qwen3Provider("zh")
+    log_path = workspace_tmp_path / "qwen-prepare.log"
+
+    with isolated_logging_session(log_path):
+        provider.prepare({"policy": "qwen3-cuda", "batch_size": 4})
+
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "provider=qwen3" in log_text
+    assert f"device={QWEN3_DEVICE_MAP} compute_type={QWEN3_DTYPE}" in log_text
+    assert "policy=qwen3-cuda batch_size=4" in log_text
 
 
 def test_qwen_provider_clips_small_last_word_end_overrun() -> None:
@@ -133,12 +205,14 @@ def test_whisper_chinese_conversion_only_changes_returned_segment_copy(
     assert converted[0]["text"] == "后台"
 
 
-def test_whisper_policy_retries_each_failed_chunk_once(monkeypatch) -> None:
+def test_whisper_policy_logs_retry_traceback_then_succeeds(
+    workspace_tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr("scripts.asr.execution.whisper_cpu.os.cpu_count", lambda: 4)
     policy = WhisperCpuPolicy(TranscribeOptions(num_workers=1, cpu_threads=1))
     layout = ChunkLayout(0, 0, 16_000, "audio_end", 1)
     audio = NormalizedAudio(np.zeros(16_000, dtype=np.float32))
-    provider = SimpleNamespace(prepare=lambda identity: object())
+    provider = SimpleNamespace(name="whisper", prepare=lambda identity: object())
     calls = []
 
     def transcribe_one(*_args):
@@ -149,27 +223,69 @@ def test_whisper_policy_retries_each_failed_chunk_once(monkeypatch) -> None:
 
     provider.transcribe_one = transcribe_one
     cached = []
-    failures = policy.execute(
-        provider,
-        audio,
-        [layout],
-        {"num_workers": 1, "cpu_threads": 1},
-        cached.append,
-    )
+    log_path = workspace_tmp_path / "whisper-retry.log"
+    with isolated_logging_session(log_path):
+        failures = policy.execute(
+            provider,
+            audio,
+            [layout],
+            {"num_workers": 1, "cpu_threads": 1},
+            cached.append,
+        )
 
     assert failures == {}
     assert calls == [1, 1]
     assert cached == ["ok"]
+    log_text = log_path.read_text(encoding="utf-8")
+    assert (
+        "provider=whisper policy=whisper-cpu chunk=chunk_000 attempt=1/2 action=retry"
+    ) in log_text
+    assert "Traceback (most recent call last)" in log_text
+    assert "RuntimeError: once" in log_text
 
 
-def test_qwen_policy_isolates_failed_batch_and_caches_successes() -> None:
+def test_whisper_policy_returns_final_exception_and_logs_second_traceback(
+    workspace_tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr("scripts.asr.execution.whisper_cpu.os.cpu_count", lambda: 4)
+    policy = WhisperCpuPolicy(TranscribeOptions(num_workers=1, cpu_threads=1))
+    layout = ChunkLayout(0, 0, 16_000, "audio_end", 1)
+    audio = NormalizedAudio(np.zeros(16_000, dtype=np.float32))
+    provider = SimpleNamespace(
+        name="whisper",
+        prepare=lambda identity: object(),
+        transcribe_one=lambda *_args: (_ for _ in ()).throw(RuntimeError("permanent")),
+    )
+    log_path = workspace_tmp_path / "whisper-failure.log"
+
+    with isolated_logging_session(log_path):
+        failures = policy.execute(
+            provider,
+            audio,
+            [layout],
+            {"num_workers": 1, "cpu_threads": 1},
+            lambda _transcript: None,
+        )
+
+    failure = failures["chunk_000"]
+    assert isinstance(failure, RuntimeError)
+    assert str(failure) == "permanent"
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "attempt=1/2 action=retry" in log_text
+    assert "attempt=2/2 action=fail" in log_text
+    assert log_text.count("Traceback (most recent call last)") == 2
+
+
+def test_qwen_policy_logs_batch_and_isolated_failure_tracebacks(
+    workspace_tmp_path,
+) -> None:
     policy = Qwen3CudaPolicy()
     layouts = [
         ChunkLayout(0, 0, 1, "silence", 0),
         ChunkLayout(1, 1, 2, "audio_end", 0),
     ]
     audio = NormalizedAudio(np.zeros(2, dtype=np.float32))
-    provider = SimpleNamespace(prepare=lambda identity: object())
+    provider = SimpleNamespace(name="qwen3", prepare=lambda identity: object())
     provider.transcribe_batch = lambda *_args: (_ for _ in ()).throw(
         RuntimeError("batch")
     )
@@ -181,13 +297,28 @@ def test_qwen_policy_isolates_failed_batch_and_caches_successes() -> None:
 
     provider.transcribe_one = one
     cached = []
-    failures = policy.execute(
-        provider,
-        audio,
-        layouts,
-        {"batch_size": 2},
-        cached.append,
-    )
+    log_path = workspace_tmp_path / "qwen-failure.log"
+    with isolated_logging_session(log_path):
+        failures = policy.execute(
+            provider,
+            audio,
+            layouts,
+            {"batch_size": 2},
+            cached.append,
+        )
 
     assert [item.chunk_index for item in cached] == [0]
-    assert failures == {"chunk_001": "bad"}
+    assert isinstance(failures["chunk_001"], RuntimeError)
+    assert str(failures["chunk_001"]) == "bad"
+    log_text = log_path.read_text(encoding="utf-8")
+    assert (
+        "provider=qwen3 policy=qwen3-cuda batch=1 "
+        "chunks=chunk_000..chunk_001 attempt=batch action=isolate"
+    ) in log_text
+    assert (
+        "provider=qwen3 policy=qwen3-cuda batch=1 "
+        "chunk=chunk_001 attempt=isolation action=fail"
+    ) in log_text
+    assert "RuntimeError: batch" in log_text
+    assert "RuntimeError: bad" in log_text
+    assert log_text.count("Traceback (most recent call last)") == 2

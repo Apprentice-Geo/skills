@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from scripts.model_artifacts import QWEN3_WEIGHT_PATTERNS, WHISPER_WEIGHT_PATTERNS
 from scripts.process_logging import ProcessLogger, SetupError
 from scripts.setup.download_models import download_model
 from scripts.setup.environment import (
@@ -45,7 +46,7 @@ def install_faster_whisper_model(
         python,
         WHISPER_MODEL_REPO,
         paths.whisper_model_dir,
-        ("model.bin",),
+        WHISPER_WEIGHT_PATTERNS,
         logger,
         os.environ,
     )
@@ -64,7 +65,7 @@ def install_qwen_models(
         python,
         QWEN3_ASR_MODEL_REPO,
         paths.qwen3_asr_model_dir,
-        ("model*.safetensors",),
+        QWEN3_WEIGHT_PATTERNS,
         logger,
         os.environ,
     )
@@ -74,7 +75,7 @@ def install_qwen_models(
         python,
         QWEN3_ALIGNER_MODEL_REPO,
         paths.qwen3_aligner_model_dir,
-        ("model*.safetensors",),
+        QWEN3_WEIGHT_PATTERNS,
         logger,
         os.environ,
     )
