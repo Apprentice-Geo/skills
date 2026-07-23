@@ -37,6 +37,11 @@ def _to_float(value: Any) -> float:
 
 
 def _is_skippable_source_character(char: str) -> bool:
+    '''
+    判断是否是以下两种字符
+    空格、换行、制表符等空白
+    Unicode 分类为标点的字符
+    '''
     return char.isspace() or unicodedata.category(char).startswith("P")
 
 
@@ -64,7 +69,12 @@ def _walk_source_text(
     language: str,
     on_boundary: Callable[[int, int], None] | None = None,
 ) -> None:
+    '''
+    遍历源文本
+    按顺序消费时间戳项
+    '''
     for item_index, item in enumerate(alignment_items):
+        # 校验每个时间戳项的文本不为空
         if item.text:
             continue
         raise _contract_error(
@@ -76,7 +86,9 @@ def _walk_source_text(
             reason="empty alignment item",
         )
 
+    # 当前处理第几个时间戳项
     item_index = 0
+    # 当前处理该时间戳项的第几个字符
     item_char_index = 0
     pending_boundary: tuple[int, int] | None = None
     for source_index, actual_char in enumerate(text):
@@ -88,6 +100,7 @@ def _walk_source_text(
         if actual_char == expected_char:
             if pending_boundary is not None and item_char_index == 0:
                 if on_boundary is not None:
+                    # 触发上一个句子的边界回调
                     on_boundary(*pending_boundary)
                 pending_boundary = None
 
@@ -99,6 +112,7 @@ def _walk_source_text(
                     pending_boundary = (source_index + 1, item_index)
             continue
 
+        # 跳过源文本中不匹配的空白或标点符号
         if _is_skippable_source_character(actual_char):
             if actual_char in PUNCTUATION and item_char_index == 0:
                 pending_boundary = (source_index + 1, item_index)
@@ -141,6 +155,11 @@ def validate_alignment_contract(
     chunk_index: int | str,
     language: str,
 ) -> None:
+    '''
+    校验
+    文本覆盖和顺序正确
+    时间戳范围和顺序正确
+    '''
     _walk_source_text(
         text,
         alignment_items,
@@ -187,20 +206,6 @@ def _validate_alignment_times(
         previous_end = item.end
 
 
-def normalize_alignment_items(items: list[Any]) -> list[TranscriptWord]:
-    normalized: list[TranscriptWord] = []
-    for item in items:
-        text = str(getattr(item, "text", "") or "")
-        start = getattr(item, "start_time", None)
-        end = getattr(item, "end_time", None)
-        if start is None or end is None:
-            continue
-        normalized.append(
-            TranscriptWord(text=text, start=_to_float(start), end=_to_float(end))
-        )
-    return normalized
-
-
 def _build_sentence_segments(
     text: str,
     alignment_items: list[AlignmentItem],
@@ -212,7 +217,9 @@ def _build_sentence_segments(
         return []
 
     segments: list[dict[str, Any]] = []
+    # 当前句子在完整文本中的起始字符位置
     sentence_start_char = 0
+    # 当前句子对应的第一个时间戳项
     sentence_start_item = 0
 
     def append_sentence(sentence_boundary: int, end_item: int) -> None:

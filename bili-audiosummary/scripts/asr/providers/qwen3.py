@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from scripts.asr.alignment import TranscriptWord, normalize_alignment_items
+from scripts.asr.alignment import TranscriptWord
 from scripts.asr.chunking import SAMPLE_RATE, ChunkLayout
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
 from scripts.config import (
@@ -26,6 +26,18 @@ QWEN3_END_TIME_TOLERANCE_SECONDS = 0.1
 
 logger = get_logger(__name__)
 
+def adapt_qwen_timestamp_items(items: list[Any]) -> list[TranscriptWord]:
+    normalized: list[TranscriptWord] = []
+    for item in items:
+        text = str(getattr(item, "text", "") or "")
+        start = getattr(item, "start_time", None)
+        end = getattr(item, "end_time", None)
+        if start is None or end is None:
+            continue
+        normalized.append(
+            TranscriptWord(text=text, start=round(float(start), 3), end=round(float(end), 3))
+        )
+    return normalized
 
 class Qwen3Provider:
     name = "qwen3"
@@ -108,7 +120,7 @@ class Qwen3Provider:
         self, result: Any, layout: ChunkLayout, elapsed_seconds: float
     ) -> ChunkTranscript:
         timestamp_data = getattr(result, "time_stamps", None)
-        normalized = normalize_alignment_items(
+        normalized = adapt_qwen_timestamp_items(
             list(getattr(timestamp_data, "items", []) or [])
         )
         words = tuple(
