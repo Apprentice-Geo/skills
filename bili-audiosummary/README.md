@@ -1,199 +1,134 @@
 # bili-audiosummary
 
-该项目是一个 Agent Skill，遵循 [Agent Skills](https://agentskills.io/home) 开放标准。可根据 B 站字幕，或者音频转写结果生成视频内容总结。
+`bili-audiosummary` 是一个遵循 [Agent Skills](https://agentskills.io/home) 开放标准的 Agent Skill。它接收 Bilibili 视频 URL，基于可用字幕或音频转写生成 transcript 和 summary prompt，再由 Agent 完成最终总结。
 
-已实现：输入 B 站视频 URL，解析 BVID，下载目标语言字幕和最低可用音频流；若存在符合目标语言且可用的 `.srt` 字幕，则直接转换为统一 transcript；否则默认使用 faster-whisper 执行 STT，在本机有可用 CUDA 时也可选用 Qwen3-ASR，并拼接 instructions、总结模板和转写文本生成 summary prompt。
+## 功能亮点
 
-## 目录结构
-
-```text
-bili-audiosummary/
-├─ SKILL.md
-├─ README.md
-├─ requirements.txt
-├─ .gitignore
-├─ .venv/                         # setup_windows.ps1 创建，本地 Python >= 3.12 虚拟环境
-├─ .cache/
-│  ├─ uv/                          # setup 默认 uv 缓存
-│  └─ huggingface/                 # setup 默认 Hugging Face 下载缓存
-├─ models/
-│  ├─ faster-whisper-small/         # 默认 STT 本地模型
-│  ├─ qwen3-asr-0.6b/               # 可选 Qwen3 ASR 本地模型
-│  └─ qwen3-forcedaligner-0.6b/     # 可选 Qwen3 对齐模型
-├─ scripts/
-│  ├─ setup_windows.bat
-│  ├─ setup_windows.ps1
-│  ├─ run_pipeline.py             # 总入口：抓字幕/音频，优先用字幕，必要时执行 STT，生成 summary prompt
-│  ├─ fetch_audio.py              # 解析 URL，下载目标语言字幕和音频
-│  ├─ transcribe.py               # 默认使用 faster-whisper，可选优先尝试 Qwen3-ASR 生成转写结果
-│  ├─ config.py
-│  └─ utils.py
-├─ references/
-│  └─ error-handling.md           # Skill 执行过程中的错误处理参考
-├─ assets/
-│  ├─ summary_instructions.md     # 总结生成规则
-│  ├─ summary_template_en.md      # 英文总结输出模板
-│  └─ summary_template_zh.md      # 中文总结输出模板
-└─ results/
-   └─ <BVID>/
-      ├─ resource/
-      │  ├─ <BVID>.<audio-ext>
-      │  ├─ fetch_manifest.json
-      │  ├─ metadata.json
-      │  ├─ metadata.raw.json
-      │  └─ subtitle/
-      │     └─ <BVID>.<lang>.srt
-      ├─ <BVID>_transcript.json
-      ├─ <BVID>_transcript.md
-      └─ <BVID>_summary_prompt.md
-```
-
-## 当前流程
-
-```text
-URL
-  -> yt-dlp 解析元信息和 BVID
-  -> 将后续下载入口规范化为 https://www.bilibili.com/video/<BVID>/
-  -> results/<BVID>/ 创建结果目录
-  -> 优先复用符合目标语言且可正常解析的 .srt 本地字幕缓存；无匹配缓存或缓存损坏时尽力下载目标语言字幕
-  -> 优先复用已下载音频；无缓存时尽力下载最低可用音频流
-  -> 字幕可用时直接生成 transcript；无可用字幕或字幕无效时执行 ASR (default faster-whisper; optional Qwen3-ASR on CUDA)
-  -> 若字幕和音频都不可用，则报错退出
-  -> 输出 transcript.json 和 transcript.md
-  -> 拼接 summary_instructions、summary_template 和 transcript
-  -> 输出 <BVID>_summary_prompt.md
-```
-
-## 环境配置
-
-Windows 默认使用：
-
-```powershell
-.\scripts\setup_windows.ps1
-```
-
-脚本会：
-
-- 已有 `.venv/` 且其 Python 版本大于等于 3.12 时复用
-- 否则优先使用 `uv` 创建 Python 3.12 虚拟环境 `.venv/`
-- 如果系统没有 `uv`，自动尝试使用本机 Python 3.12 或更高版本创建虚拟环境
-- 默认升级 pip，并将相关 Python 依赖安装到 `.venv/`
-- 优先检测系统 `ffmpeg/ffprobe`
-- 系统缺失时使用 `ffmpeg-binaries-compat` 随 Python 依赖安装的二进制
-- 下载默认模型 `Systran/faster-whisper-small` 到 `models/faster-whisper-small/`
-- 未显式设置 `UV_CACHE_DIR` 时，默认将 uv 缓存放到 `.cache/uv/`
-- 未显式设置 `HF_HOME` 时，默认将 Hugging Face 下载缓存放到 `.cache/huggingface/`
-
-推荐安装 [`uv`](https://docs.astral.sh/uv/) 以获得更稳定使用体验。
-
-
-默认 setup 只准备 faster-whisper。Qwen3-ASR 是有可用 CUDA 时的可选项，需要显式执行：
-
-```powershell
-.\scripts\setup_windows.ps1 -InstallQwen3 -DownloadQwen3Models
-```
-
-Qwen3 的可选依赖安装仍然继续兼容 `PIP_INDEX_URL` 和 `HF_ENDPOINT` 的国内镜像优化。其中 `torch` 与 `torchaudio` 会在启用 `-InstallQwen3` 时单独走 PyTorch 官方 CUDA wheel 源，避免从普通 PyPI 安装成 CPU 版；Qwen3 模型下载继续通过 `huggingface_hub` 完成。当前设计要求本地模型已存在后才能使用 Qwen3 运行转写。
-
-setup 脚本会默认使用 [PyPI 清华源](https://pypi.tuna.tsinghua.edu.cn/simple)与 [Hugging Face 镜像站](https://hf-mirror.com)。
-如果 pip 通过配置镜像安装依赖失败，脚本会自动重试官方 PyPI 源 `https://pypi.org/simple`。实际使用中，系统代理可能导致镜像源的 simple 索引解析异常，表现为常见包提示 `from versions: none`；遇到这类情况可以先关闭代理重试，或直接使用官方源。
-
-需要使用原生源可在运行前设置：
-
-```powershell
-$env:PIP_INDEX_URL="https://pypi.org/simple/"
-$env:HF_ENDPOINT="https://huggingface.co/"
-```
-
-ffmpeg 解析顺序为：系统 PATH 中的 `ffmpeg/ffprobe` -> `ffmpeg-binaries-compat`。
-
-## 使用方式
-
-如果遇到 B 站返回 `HTTP 412` 或其他需要登录态的情况，可先准备 `cookies.txt`。
-
-推荐方式：
-
-- Chrome：安装 `Get cookies.txt LOCALLY` 扩展，然后在已登录 B 站的情况下导出，文件会直接保存到下载目录。
-  扩展地址：<https://chromewebstore.google.com/detail/get-cookiestxt-locally/>
-- Edge：安装 `Cookie-Editor` 扩展，在已登录 B 站的情况下选择导出格式为 `Netscape`，扩展会将内容复制到剪贴板。随后新建一个 `cookies.txt` 文件，将内容粘贴并保存。
-  扩展地址：<https://microsoftedge.microsoft.com/addons/detail/cookieeditor/>
-
-将导出的 cookie 文件复制到 SKILL 根目录。若文件名是 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，脚本会自动检测并使用；也可以在命令中显式指定：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "<bilibili-url>" --cookies .\cookies.txt
-```
-
-总入口：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
-```
-
-跳过字幕复用/下载并强制使用 ASR：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/" --skip-subtitles
-```
-
-抓取元信息、字幕和音频：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\fetch_audio.py "https://www.bilibili.com/video/BV12kXmBCEDi/"
-```
-
-同一 `BVID` 重跑时：
-
-- `fetch_audio.py` 会优先复用符合当前请求语言且可正常解析的 `.srt` 字幕缓存；缓存损坏时会尝试重新拉取字幕
-- 已下载音频会直接复用
-- 字幕或音频下载失败时先输出 warning，不会立即中止流程
-- `run_pipeline.py --skip-subtitles` 会跳过字幕复用和下载，直接使用音频 ASR
-- `run_pipeline.py` 只有在既没有可用字幕、也没有可用音频可供 STT 回退时才会报错退出
-
-仅执行 STT：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\transcribe.py results/BV12kXmBCEDi/resource/fetch_manifest.json
-```
-
-在本机有可用 CUDA，且本地 Qwen3 模型已下载完成时，可选优先尝试 Qwen3-ASR。若 Qwen3-ASR 不可用或运行失败，代码会回退到 faster-whisper：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/" --asr-provider qwen3
-```
-
-处理英文内容时，可显式指定目标语言：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_pipeline.py "https://www.bilibili.com/video/BV12kXmBCEDi/" --language en
-```
-
-Qwen3 路径实际运行时内部固定使用：
-
-- `Qwen/Qwen3-ASR-0.6B`
-- `Qwen/Qwen3-ForcedAligner-0.6B`
-- `device_map="cuda:0"`
-- `dtype="bfloat16"`
-
-Qwen3 的安装策略：
-
-- 默认依赖继续走当前 `PIP_INDEX_URL`，例如清华源
-- `torch` 和 `torchaudio` 在 `-InstallQwen3` 时单独从 PyTorch 官方 CUDA wheel 源安装
-- Qwen3 模型和 aligner 仍通过 `huggingface_hub` 下载，继续受 `HF_ENDPOINT` 控制
-- 使用 `--asr-provider qwen3` 前，需要先执行 `-InstallQwen3` 和 `-DownloadQwen3Models`
-- `--asr-provider qwen3` 表示优先尝试 Qwen3-ASR，不是严格只允许 Qwen3；可查看 transcript JSON 的 `source` 字段确认实际使用的是 `qwen3-asr` 还是 `faster-whisper`
-
-## 依赖组件
-
-- 视频元信息、字幕和音频下载：`yt-dlp`
-- 音频处理：`ffmpeg`或`ffmpeg-binaries-compat`
-- 默认语音转写：`faster-whisper`
-- 中文 faster-whisper 转写会使用简体中文提示，并通过 OpenCC 将输出规范化为简体中文。
-- 可选 CUDA 语音转写：`qwen-asr` + `torch` + `torchaudio` + `transformers` + `accelerate` + `huggingface_hub` + `numpy` + `soundfile` + `librosa`
+- 音频优先：适合访谈、讲座、播客、教程、新闻评论和解说类视频。
+- 字幕与 ASR：优先使用可用字幕，必要时通过本地 ASR 模型转写音频。
+- 可选 Provider：默认使用 faster-whisper；满足 CUDA、依赖和模型要求时可显式选择 Qwen3-ASR。
+- 中间结果复用：重复运行时会在条件匹配的情况下复用已有资源和处理结果。
+- 统一产物：生成带时间戳的 transcript、summary prompt、最终总结路径和处理日志。
 
 ## 能力边界
 
-- 该 Skill 只生成 summary prompt；最终 summary 由调用该 Skill 的 Agent 根据 prompt 写入。
-- 当前不分析视频画面；transcript 优先来自目标语言字幕，字幕不可用时才回退到音频 STT。
-- 只支持 bilibili 平台的视频 URL。
-- Qwen3-ASR 仅建议在本机有可用 CUDA，且本地模型已准备完成时启用；无 CUDA 或未准备模型时继续使用默认 faster-whisper。
+- 总结仅依据字幕或 ASR 生成的 transcript，不分析视频画面。
+- 不适合主要信息来自画面、图表、动作、屏幕文字或视觉演示的视频。
+- 目前仅支持 Bilibili 视频 URL。
+- pipeline 负责准备 transcript 和 summary prompt；最终 summary 由执行该 Skill 的 Agent 写入并校验。
+- 显式选择 Qwen3-ASR 后，如果环境准备或转写失败，本次运行会停止，不会自动切换到 faster-whisper。
+
+## 作为 Agent Skill 安装
+
+按照所用 Agent 客户端的 Skill 安装说明，将本仓库中的 `bili-audiosummary` 目录完整安装、复制或链接到该客户端的 Skill 目录。安装时需保留 `SKILL.md`、`assets/`、`references/` 和 `scripts/` 等全部项目文件。
+
+安装后，向 Agent 提供 Bilibili 视频 URL，并提出总结、笔记、要点提炼或时间戳整理等请求。Agent 会根据 [SKILL.md](SKILL.md) 执行流程。
+
+## 在本地运行
+
+本项目支持 Windows 和 Python 3.12，并统一使用 `uv` 管理解释器和依赖。在 Windows PowerShell 中进入项目目录，然后运行：
+
+```powershell
+.\scripts\setup\setup_windows.bat
+```
+
+默认 setup 会准备 Python 3.12 虚拟环境、核心依赖和项目使用的 ffmpeg。首次使用 ASR 前，还需要安装至少一种本地模型。默认 CPU 路径推荐 faster-whisper：
+
+```powershell
+uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
+```
+
+运行完整 pipeline：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline "https://www.bilibili.com/video/BV12kXmBCEDi/" --language zh
+```
+
+### 语言选项
+
+必须使用 `--language` 指定字幕和转写语言（`zh` 或 `en`）；缺少该参数时 pipeline 会直接报错。使用独立的 `--summary-language` 指定最终总结语言。例如，对英文内容生成中文总结：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language en --summary-language zh
+```
+
+省略 `--summary-language` 时，最终总结语言跟随 transcript 语言。
+
+### 强制使用 ASR
+
+需要跳过字幕并直接转写音频时：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --skip-subtitles
+```
+
+### 使用 Qwen3-ASR
+
+Qwen3-ASR 需要可用的 CUDA 环境、可选依赖和本地模型。先完成安装：
+
+```powershell
+uv sync --python 3.12 --no-dev --extra qwen3
+uv run --no-sync python -m scripts.setup.install_model --model qwen3
+```
+
+然后显式选择 Qwen3-ASR：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --asr-provider qwen3
+```
+
+该选项只运行 Qwen3-ASR。若依赖、模型、CUDA、模型加载、推理或对齐失败，本次转写会终止。如需改用 faster-whisper，请重新运行并省略 provider 参数，或显式传入 `--asr-provider whisper`。
+
+两种 Provider 共用同一套音频解码、VAD、chunk 规划、词级校验、缓存恢复与句子合成流程，但分别保留 `asr_parallel/` 和 `asr_qwen3/` 工作区。faster-whisper 生产转写固定启用词级时间戳；词项保存在内部 chunk 与 merged artifact 中，最终 transcript JSON 和 Markdown 仍只公开句子级 `segments`。
+
+### 生成和校验总结
+
+pipeline 会打印 `Summary Prompt` 和 `Final Summary Path`。Agent 根据 prompt 写入最终 summary 后，应执行：
+
+```powershell
+uv run --no-sync python -m scripts.validate_summary "<summary-path>"
+```
+
+## ASR Benchmark
+
+仓库提供显式运行的 benchmark，用于比较当前 ASR 路径的耗时和资源占用。运行前需要准备对应依赖、模型和测试视频所需的网络访问条件：
+
+```powershell
+uv run --no-sync python -m scripts.benchmark
+```
+
+需要局部重测时，可重复传入 `--video` 或 `--provider`：
+
+```powershell
+uv run --no-sync python -m scripts.benchmark --video BV1W694BEE7F --provider whisper
+```
+
+benchmark 的样本、计量范围、缓存和输出约定见 [项目架构](references/architecture.md#benchmark)。
+
+## Cookies 导出
+
+Bilibili 返回 `HTTP 412` 或请求需要登录态时，可准备 Netscape 格式的 cookie 文件。以下两种方法已经测试：
+
+- Chrome：安装 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/)，登录 Bilibili 后导出，文件会保存到下载目录。
+- Edge：安装 [Cookie-Editor](https://microsoftedge.microsoft.com/addons/detail/cookieeditor/)，登录 Bilibili 后选择 `Netscape` 格式导出，将剪贴板内容保存为 `cookies.txt`。
+
+将文件放到项目根目录并命名为 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，pipeline 会自动检测。也可以显式指定：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language zh --cookies .\cookies.txt
+```
+
+Cookie 文件包含登录凭据，不应提交到版本控制，也不应复制到总结、日志说明或 benchmark 结果中。
+
+## 进一步文档
+
+- [项目架构](references/architecture.md)：pipeline 数据流、脚本职责、ASR 内部契约、缓存、产物和 benchmark 行为。
+- [错误处理](references/error-handling.md)：setup、网络、Cookie、字幕、ASR、缓存和日志故障的排查与停止条件。
+
+## 主要第三方依赖
+
+- [`yt-dlp`](https://github.com/yt-dlp/yt-dlp)：解析 Bilibili 元信息并下载字幕和音频。
+- [`ffmpeg-binaries-compat`](https://pypi.org/project/ffmpeg-binaries-compat/)：提供项目使用的 `ffmpeg` 和 `ffprobe`。
+- [`faster-whisper`](https://github.com/SYSTRAN/faster-whisper)：默认 ASR 引擎，可在 CPU 环境运行。
+- [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)：可选 CUDA ASR 引擎。
+- [`uv`](https://docs.astral.sh/uv/)：Python 3.12 环境和依赖管理入口。

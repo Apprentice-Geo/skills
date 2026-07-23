@@ -3,21 +3,28 @@ import re
 from pathlib import Path
 from typing import Any
 
-from manifest_io import (
+from scripts.config import SKILL_ROOT
+from scripts.manifest_io import (
     infer_result_dir,
     load_manifest,
     load_metadata_from_manifest,
     resolve_manifest_path,
     resolve_path,
 )
-from subtitle_utils import infer_subtitle_language
-from transcript_output import write_markdown
-from utils import ensure_dir, path_to_posix, write_json
-
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    get_logger,
+    terminal_info,
+)
+from scripts.subtitle_utils import infer_subtitle_language
+from scripts.transcript_output import write_markdown_from_json
+from scripts.utils import ensure_dir, path_to_posix, write_json
 
 SRT_TIME_PATTERN = re.compile(
     r"(?P<start>\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(?P<end>\d{2}:\d{2}:\d{2},\d{3})"
 )
+logger = get_logger(__name__)
 
 
 def parse_srt_timestamp(value: str) -> float:
@@ -32,7 +39,9 @@ def parse_srt_timestamp(value: str) -> float:
 
 
 def normalize_text(lines: list[str]) -> str:
-    return re.sub(r"\s+", " ", " ".join(line.strip() for line in lines if line.strip())).strip()
+    return re.sub(
+        r"\s+", " ", " ".join(line.strip() for line in lines if line.strip())
+    ).strip()
 
 
 def parse_srt(path: Path) -> list[dict[str, Any]]:
@@ -83,6 +92,7 @@ def subtitle_to_transcript(
     metadata: dict[str, Any],
     output_dir: Path,
 ) -> dict[str, Any]:
+    terminal_info(logger, "[Stage] Build transcript from subtitle")
     suffix = subtitle_path.suffix.lower()
     if suffix != ".srt":
         raise ValueError(f"Unsupported subtitle format: {subtitle_path}")
@@ -93,6 +103,9 @@ def subtitle_to_transcript(
     json_path = output_dir / f"{output_stem}.json"
     md_path = output_dir / f"{output_stem}.md"
     subtitle_language = infer_subtitle_language(subtitle_path)
+    session = LoggingSession.current()
+    if session is not None:
+        session.move_to(output_dir)
 
     payload = {
         "bvid": video_id,
@@ -107,12 +120,12 @@ def subtitle_to_transcript(
     }
 
     write_json(json_path, payload)
-    write_markdown(md_path, payload)
+    write_markdown_from_json(json_path, md_path)
 
-    print(f"Subtitle: {path_to_posix(subtitle_path)}")
-    print(f"JSON: {path_to_posix(json_path)}")
-    print(f"Markdown: {path_to_posix(md_path)}")
-    print(f"Segments: {len(segments)}")
+    logger.info("Subtitle: %s", path_to_posix(subtitle_path))
+    logger.info("JSON: %s", path_to_posix(json_path))
+    logger.info("Markdown: %s", path_to_posix(md_path))
+    logger.info("Segments: %d", len(segments))
     return {
         "subtitle_path": subtitle_path,
         "json_path": json_path,
@@ -123,22 +136,40 @@ def subtitle_to_transcript(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Convert a subtitle file into the unified transcript outputs.")
+    parser = argparse.ArgumentParser(
+        description="Convert a subtitle file into the unified transcript outputs."
+    )
     parser.add_argument("subtitle", help="Path to a subtitle file.")
-    parser.add_argument("--manifest", type=Path, required=True, help="Path to resource/fetch_manifest.json.")
-    parser.add_argument("--output-dir", type=Path, help="Result directory for transcript outputs.")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="Path to resource/fetch_manifest.json.",
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, help="Result directory for transcript outputs."
+    )
     return parser.parse_args()
 
 
 def main() -> int:
-    args = parse_args()
-    subtitle_path = resolve_path(args.subtitle)
-    manifest_path = resolve_manifest_path(args.manifest)
-    manifest = load_manifest(manifest_path)
-    metadata = load_metadata_from_manifest(manifest)
-    output_dir = infer_result_dir(manifest_path, subtitle_path, args.output_dir)
-    ensure_dir(output_dir)
-    subtitle_to_transcript(subtitle_path, manifest, metadata, output_dir)
+    log_path = create_timestamped_log_path(
+        SKILL_ROOT / ".cache" / "logs",
+        "subtitle",
+    )
+    with LoggingSession(log_path) as session:
+        try:
+            args = parse_args()
+            subtitle_path = resolve_path(args.subtitle)
+            manifest_path = resolve_manifest_path(args.manifest)
+            manifest = load_manifest(manifest_path)
+            metadata = load_metadata_from_manifest(manifest)
+            output_dir = infer_result_dir(manifest_path, subtitle_path, args.output_dir)
+            ensure_dir(output_dir)
+            subtitle_to_transcript(subtitle_path, manifest, metadata, output_dir)
+        except Exception as exc:
+            session.report_failure(exc)
+            return 1
     return 0
 
 

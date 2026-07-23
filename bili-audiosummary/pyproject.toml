@@ -1,0 +1,65 @@
+[project]
+name = "bili-audiosummary"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "yt-dlp==2026.3.17",
+    "faster-whisper==1.2.1",
+    "ffmpeg-binaries-compat",
+    "numpy",
+    "opencc-python-reimplemented",
+    "psutil",
+]
+
+[project.optional-dependencies]
+qwen3 = [
+    "qwen-asr",
+    "transformers",
+    "accelerate",
+    "huggingface-hub",
+    "soundfile",
+    "librosa",
+    "torch",
+    "torchaudio",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=8.0,<9",
+    "pytest-mock>=3.14,<4",
+    "pyyaml==6.0.3",
+    "ruff>=0.15.22",
+]
+
+[[tool.uv.index]]
+name = "tsinghua-pypi"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "B",
+]
+
+[tool.pyright]
+include = ["scripts"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"

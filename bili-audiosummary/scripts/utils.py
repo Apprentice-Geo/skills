@@ -1,11 +1,9 @@
 import json
 import os
 import re
-import shutil
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 from typing import Any, Optional
-
+from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 WINDOWS_RESERVED_NAMES = {
     "CON",
@@ -41,13 +39,29 @@ def sanitize_filename(value: str, max_length: int = 120) -> str:
 
 
 def normalize_bilibili_video_url(value: str) -> str:
+    parts = urlsplit(value)
+    if parts.path == "/list/watchlater/":
+        bvid_values = parse_qs(parts.query).get("bvid", [])
+        if bvid_values and re.fullmatch(r"BV[0-9A-Za-z]+", bvid_values[0]):
+            return f"https://www.bilibili.com/video/{bvid_values[0]}/"
+
     match = re.search(r"/video/(BV[0-9A-Za-z]+)/?", value)
     if not match:
         return value
 
-    parts = urlsplit(value)
     normalized_path = f"/video/{match.group(1)}/"
-    return urlunsplit((parts.scheme or "https", parts.netloc or "www.bilibili.com", normalized_path, "", ""))
+    page_values = parse_qs(parts.query).get("p", [])
+    page = page_values[-1] if page_values else ""
+    normalized_query = f"p={page}" if re.fullmatch(r"[1-9]\d*", page) else ""
+    return urlunsplit(
+        (
+            parts.scheme or "https",
+            parts.netloc or "www.bilibili.com",
+            normalized_path,
+            normalized_query,
+            "",
+        )
+    )
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -55,11 +69,22 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def write_json_atomic(path: Path, data: Any) -> None:
+    ensure_dir(path.parent)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    temporary_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temporary_path, path)
+
+
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def path_to_posix(path: Path) -> str:
+    # 把 Path 对象转换成使用 / 分隔的字符串路径
     return path.as_posix()
 
 
@@ -93,18 +118,13 @@ def resolve_ffmpeg_binaries_location() -> Optional[str]:
 
     bin_dir = ffmpeg_path.parent if ffmpeg_path.is_file() else ffmpeg_path
     exe_suffix = ".exe" if os.name == "nt" else ""
-    if (bin_dir / f"ffmpeg{exe_suffix}").exists() and (bin_dir / f"ffprobe{exe_suffix}").exists():
+    if (bin_dir / f"ffmpeg{exe_suffix}").exists() and (
+        bin_dir / f"ffprobe{exe_suffix}"
+    ).exists():
         return path_to_posix(bin_dir)
 
     return None
 
 
 def resolve_ffmpeg_location() -> Optional[str]:
-    if shutil.which("ffmpeg") and shutil.which("ffprobe"):
-        return None
-
-    package_location = resolve_ffmpeg_binaries_location()
-    if package_location:
-        return package_location
-
-    return None
+    return resolve_ffmpeg_binaries_location()

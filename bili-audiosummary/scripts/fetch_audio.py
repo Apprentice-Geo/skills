@@ -1,13 +1,13 @@
 import argparse
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
 
-import subtitle_transcript
 from yt_dlp import YoutubeDL
 
-from config import (
+from scripts import subtitle_transcript
+from scripts.config import (
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
     DEFAULT_TRANSCRIBE_LANGUAGE,
@@ -15,9 +15,16 @@ from config import (
     SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
 )
-from runtime_options import FetchOptions
-from subtitle_utils import infer_subtitle_language
-from utils import (
+from scripts.process_logging import (
+    LoggingSession,
+    YtDlpLogger,
+    create_timestamped_log_path,
+    get_logger,
+    terminal_info,
+)
+from scripts.runtime_options import FetchOptions
+from scripts.subtitle_utils import infer_subtitle_language
+from scripts.utils import (
     ensure_dir,
     list_media_files,
     normalize_bilibili_video_url,
@@ -26,6 +33,8 @@ from utils import (
     sanitize_filename,
     write_json,
 )
+
+logger = get_logger(__name__)
 
 
 class CookieRequiredError(RuntimeError):
@@ -86,13 +95,17 @@ def sort_subtitle_files(
     paths: list[Path], preferred_languages: list[str]
 ) -> list[Path]:
     order = {language: index for index, language in enumerate(preferred_languages)}
+
+    def sort_key(path: Path) -> tuple[int, float, str]:
+        language = infer_subtitle_language(path)
+        language_order = (
+            order.get(language, len(order)) if language is not None else len(order)
+        )
+        return language_order, -path.stat().st_mtime, path.name
+
     return sorted(
         paths,
-        key=lambda path: (
-            order.get(infer_subtitle_language(path), len(order)),
-            -path.stat().st_mtime,
-            path.name,
-        ),
+        key=sort_key,
     )
 
 
@@ -124,8 +137,11 @@ def select_valid_srt_files(
     for path in sort_subtitle_files(paths, preferred_languages):
         segments, error = subtitle_transcript.probe_srt(path)
         if segments is None:
-            print(
-                f"Warning: {context} subtitle is unusable: {path_to_posix(path)} ({error})"
+            logger.warning(
+                "%s subtitle is unusable: %s (%s)",
+                context,
+                path_to_posix(path),
+                error,
             )
             continue
         valid_files.append(path)
@@ -146,12 +162,17 @@ def make_base_options(options: FetchOptions) -> dict[str, Any]:
         "socket_timeout": options.socket_timeout,
         "windowsfilenames": True,
         "quiet": options.quiet,
-        "no_warnings": options.quiet,
+        "no_warnings": False,
+        "logger": YtDlpLogger(logger),
     }
 
     ffmpeg_location = resolve_ffmpeg_location()
-    if ffmpeg_location:
-        ydl_options["ffmpeg_location"] = ffmpeg_location
+    if not ffmpeg_location:
+        raise RuntimeError(
+            "ffmpeg-binaries-compat is unavailable. Run "
+            r".\scripts\setup\setup_windows.bat to repair the environment."
+        )
+    ydl_options["ffmpeg_location"] = ffmpeg_location
 
     add_cookie_options(ydl_options, options)
     return ydl_options
@@ -167,14 +188,19 @@ def extract_metadata(url: str, options: FetchOptions) -> dict[str, Any]:
         }
     )
 
-    with YoutubeDL(ydl_options) as ydl:
+    with YoutubeDL(cast(Any, ydl_options)) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
         except Exception as exc:
             if is_http_412_error(exc):
                 raise make_cookie_required_error() from exc
             raise
-        return ydl.sanitize_info(info)
+        if info is None:
+            raise RuntimeError("yt-dlp returned no metadata.")
+        sanitized = ydl.sanitize_info(info)
+        if sanitized is None:
+            raise RuntimeError("yt-dlp returned no usable metadata.")
+        return dict(sanitized)
 
 
 def get_video_id(info: dict[str, Any]) -> str:
@@ -192,7 +218,7 @@ def build_canonical_url(info: dict[str, Any], video_id: str) -> str:
     page_match = re.search(r"_p([0-9]+)$", str(info.get("id") or video_id))
     query_page = parse_qs(urlsplit(source_url).query).get("p", [])
     page = page_match.group(1) if page_match else (query_page[0] if query_page else "")
-    page_suffix = f"?p={page}" if page and page != "1" else ""
+    page_suffix = f"?p={page}" if page else ""
     return f"https://www.bilibili.com/video/{bvid}/{page_suffix}"
 
 
@@ -238,7 +264,7 @@ def download_subtitles(
         "Cached",
     )
     if cached_subtitle_files:
-        print(f"Using cached subtitle files: {len(cached_subtitle_files)}")
+        logger.info("Using cached subtitle files: %d", len(cached_subtitle_files))
         return cached_subtitle_files
 
     cached_srt_files = select_cached_subtitle_files(
@@ -246,7 +272,7 @@ def download_subtitles(
         preferred_languages,
     )
     if cached_srt_files:
-        print(
+        logger.warning(
             "Warning: cached subtitle files are invalid; attempting to re-download subtitles."
         )
 
@@ -263,12 +289,12 @@ def download_subtitles(
     )
 
     try:
-        with YoutubeDL(ydl_options) as ydl:
+        with YoutubeDL(cast(Any, ydl_options)) as ydl:
             ydl.download([url])
     except Exception as exc:
         if is_http_412_error(exc):
             raise make_cookie_required_error() from exc
-        print(f"Warning: subtitle download failed: {exc}")
+        logger.warning("Subtitle download failed: %s", exc, exc_info=True)
 
     subtitle_files = filter_subtitle_files_by_language(
         list_current_files(subtitle_dir, video_id),
@@ -300,7 +326,7 @@ def download_audio(
 
     cached_audio_files = list_current_files(audio_dir, video_id)
     if cached_audio_files:
-        print(f"Using cached audio files: {len(cached_audio_files)}")
+        logger.info("Using cached audio files: %d", len(cached_audio_files))
         return cached_audio_files
 
     ydl_options = make_base_options(options)
@@ -319,12 +345,12 @@ def download_audio(
     )
 
     try:
-        with YoutubeDL(ydl_options) as ydl:
+        with YoutubeDL(cast(Any, ydl_options)) as ydl:
             ydl.download([url])
     except Exception as exc:
         if is_http_412_error(exc):
             raise make_cookie_required_error() from exc
-        print(f"Warning: audio download failed: {exc}")
+        logger.warning("Audio download failed: %s", exc, exc_info=True)
 
     return list_current_files(audio_dir, video_id)
 
@@ -425,26 +451,34 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     options = FetchOptions.from_args(parse_args())
-    try:
-        run_fetch(options)
-    except CookieRequiredError as exc:
-        print(f"Error: {exc}")
-        return 2
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "fetch")
+    with LoggingSession(log_path) as session:
+        try:
+            run_fetch(options)
+        except Exception as exc:
+            session.report_failure(exc)
+            return 2 if isinstance(exc, CookieRequiredError) else 1
     return 0
 
 
 def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     options = FetchOptions.from_args(args)
     ensure_dir(options.output_dir)
+    normalized_url = normalize_bilibili_video_url(options.url)
+    terminal_info(logger, "[Stage] Fetch metadata, subtitles, and audio")
+    terminal_info(logger, "[BiliBili] Extracting URL: %s", normalized_url)
 
     cookie_path = resolve_cookie_path(options)
     if cookie_path and not options.cookies:
-        print(f"Using auto-detected cookies: {path_to_posix(cookie_path)}")
+        logger.info("Using auto-detected cookies: %s", path_to_posix(cookie_path))
 
-    info = extract_metadata(options.url, options)
+    info = extract_metadata(normalized_url, options)
     video_id = get_video_id(info)
     canonical_url = build_canonical_url(info, video_id)
     paths = build_result_paths(info, options.output_dir)
+    session = LoggingSession.current()
+    if session is not None:
+        session.move_to(paths["result"])
 
     metadata_path = paths["resource"] / "metadata.json"
     write_json(metadata_path, compact_metadata(info))
@@ -461,20 +495,22 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     should_download_audio = not options.skip_audio
     audio_files = []
     if should_download_audio:
-        audio_files = download_audio(canonical_url, paths["resource"], video_id, options)
+        audio_files = download_audio(
+            canonical_url, paths["resource"], video_id, options
+        )
     manifest_path = write_manifest(
         paths["result"], info, audio_files, subtitle_files, canonical_url
     )
 
-    print(f"Title: {info.get('title') or info.get('id')}")
-    print(f"BVID: {video_id}")
-    print(f"Canonical URL: {canonical_url}")
-    print(f"Result: {path_to_posix(paths['result'])}")
-    print(f"Metadata: {path_to_posix(metadata_path)}")
-    print(f"Raw metadata: {path_to_posix(raw_metadata_path)}")
-    print(f"Manifest: {path_to_posix(manifest_path)}")
-    print(f"Audio files: {len(audio_files)}")
-    print(f"Subtitle files: {len(subtitle_files)}")
+    terminal_info(logger, "Title: %s", info.get("title") or info.get("id"))
+    logger.info("BVID: %s", video_id)
+    logger.info("Canonical URL: %s", canonical_url)
+    logger.info("Result: %s", path_to_posix(paths["result"]))
+    logger.info("Metadata: %s", path_to_posix(metadata_path))
+    logger.info("Raw metadata: %s", path_to_posix(raw_metadata_path))
+    logger.info("Manifest: %s", path_to_posix(manifest_path))
+    logger.info("Audio files: %d", len(audio_files))
+    logger.info("Subtitle files: %d", len(subtitle_files))
     return {
         "info": info,
         "video_id": video_id,
@@ -484,6 +520,7 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
         "manifest_path": manifest_path,
         "audio_files": audio_files,
         "subtitle_files": subtitle_files,
+        "log_path": session.log_path if session is not None else None,
     }
 
 

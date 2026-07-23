@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-from config import SKILL_ROOT
-from utils import path_to_posix, read_json
+from scripts.config import SKILL_ROOT
+from scripts.utils import path_to_posix, read_json
 
 
 def resolve_path(value: str) -> Path:

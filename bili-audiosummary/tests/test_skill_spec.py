@@ -3,57 +3,79 @@ from pathlib import Path
 
 import yaml
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SKILL_PATH = REPO_ROOT / "SKILL.md"
+DOC_PATHS = (
+    SKILL_PATH,
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "references" / "architecture.md",
+    REPO_ROOT / "references" / "error-handling.md",
+)
+NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+MARKDOWN_LINK_PATTERN = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 
-def load_skill_frontmatter() -> dict:
-    skill_text = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
-    match = re.match(r"^---\n(.*?)\n---\n", skill_text, flags=re.DOTALL)
-    assert match, "SKILL.md must start with YAML frontmatter."
+def load_skill() -> tuple[dict, str]:
+    skill_text = SKILL_PATH.read_text(encoding="utf-8")
+    match = re.match(r"^---\n(.*?)\n---\n(.*)$", skill_text, flags=re.DOTALL)
+    assert match, "SKILL.md must contain YAML frontmatter followed by Markdown."
+
     payload = yaml.safe_load(match.group(1))
     assert isinstance(payload, dict)
-    return payload
+    return payload, match.group(2)
 
 
-def test_skill_frontmatter_matches_required_skill_metadata() -> None:
-    payload = load_skill_frontmatter()
+def test_skill_has_required_frontmatter_and_markdown_body() -> None:
+    payload, body = load_skill()
 
-    assert payload["name"] == REPO_ROOT.name
-    assert payload.get("description")
-    assert "Bilibili" in payload["description"] or "B站" in payload["description"]
-    assert payload.get("compatibility")
-    assert payload.get("metadata", {}).get("Github", "").startswith("https://")
+    assert "name" in payload
+    assert "description" in payload
+    assert body.strip()
 
 
-def test_skill_referenced_files_exist() -> None:
-    expected_paths = [
-        "SKILL.md",
-        "README.md",
-        "requirements.txt",
-        "scripts/run_pipeline.py",
-        "scripts/validate_summary.py",
-        "scripts/fetch_audio.py",
-        "scripts/transcribe.py",
-        "references/error-handling.md",
-        "assets/summary_instructions.md",
-        "assets/summary_template_en.md",
-        "assets/summary_template_zh.md",
-    ]
+def test_skill_name_follows_agent_skills_standard() -> None:
+    payload, _body = load_skill()
+    name = payload["name"]
 
-    for relative_path in expected_paths:
-        assert (REPO_ROOT / relative_path).exists(), f"Missing {relative_path}"
+    assert isinstance(name, str)
+    assert 1 <= len(name) <= 64
+    assert NAME_PATTERN.fullmatch(name)
+    assert name == REPO_ROOT.name
 
 
-def test_readme_declares_agent_skill_standard_and_main_usage() -> None:
-    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+def test_skill_description_follows_agent_skills_standard() -> None:
+    payload, _body = load_skill()
+    description = payload["description"]
 
-    assert "Agent Skills" in readme
-    assert "scripts\\run_pipeline.py" in readme or "scripts/run_pipeline.py" in readme
-    assert "--skip-subtitles" in readme
+    assert isinstance(description, str)
+    assert 1 <= len(description.strip()) <= 1024
 
 
-def test_skill_declares_summary_validator_usage() -> None:
-    skill = (REPO_ROOT / "SKILL.md").read_text(encoding="utf-8")
+def test_skill_description_covers_bilingual_trigger_boundary() -> None:
+    payload, _body = load_skill()
+    description = payload["description"]
 
-    assert "scripts\\validate_summary.py" in skill or "scripts/validate_summary.py" in skill
+    for term in ("B站", "BV", "音频总结", "笔记", "要点", "时间戳", "画面分析"):
+        assert term in description
+
+
+def test_skill_body_keeps_agent_facing_sections() -> None:
+    _payload, body = load_skill()
+
+    headings = re.findall(r"^## (.+)$", body, flags=re.MULTILINE)
+
+    assert headings == ["Usage Scenarios", "Main Steps", "Processing Time"]
+
+
+def test_documentation_local_markdown_links_resolve() -> None:
+    for document_path in DOC_PATHS:
+        document = document_path.read_text(encoding="utf-8")
+        for raw_target in MARKDOWN_LINK_PATTERN.findall(document):
+            target = raw_target.split("#", 1)[0]
+            if not target or "://" in target:
+                continue
+
+            resolved_target = document_path.parent / target
+            assert resolved_target.exists(), (
+                f"Broken local link in {document_path.relative_to(REPO_ROOT)}: {target}"
+            )
