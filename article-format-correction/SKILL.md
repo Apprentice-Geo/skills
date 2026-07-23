@@ -14,9 +14,9 @@ The corrected article should preserve the author's expression style. Do not impr
 
 ## Default Editing Mode
 
-Use light correction mode (轻量校对) by default. Fix only clear errors that are visible from the text itself.
+Use light correction mode by default. Fix only clear errors that are visible from the text itself.
 
-If the user specifies a heading, section, paragraph, range, or "do not modify the rest" (其余不用改动), edit only that scope. Treat explicit scope limits as hard boundaries.
+If the user specifies a heading, section, paragraph, range, or "do not modify the rest", edit only that scope. Treat explicit scope limits as hard boundaries.
 
 Do not expand, summarize, translate, add examples, add background knowledge, or convert the article into formal documentation unless the user explicitly asks for that kind of rewrite.
 
@@ -40,7 +40,7 @@ Preserve:
 - original paragraph boundaries unless Markdown syntax is clearly broken
 - code logic, commands, paths, URLs, logs, version numbers, and formulas
 - the author's uncertainty level, wording habits, and original tone
-- user-specified edit scope, including section-only edits and "do not modify the rest" (其余不用改动)
+- user-specified edit scope, including section-only edits and "do not modify the rest"
 
 Do not add facts, examples, explanations, conclusions, or background knowledge.
 
