@@ -25,6 +25,8 @@ def test_live_pipeline_can_force_asr_with_url_and_cookies() -> None:
             url,
             "--cookies",
             cookies,
+            "--language",
+            "zh",
             "--skip-subtitles",
         ],
         cwd=REPO_ROOT,
