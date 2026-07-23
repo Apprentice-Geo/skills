@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import unicodedata
 
 import pytest
@@ -33,44 +32,34 @@ def aligned(
 
 
 @pytest.mark.parametrize(
-    ("text", "item_texts", "expected_spans"),
+    ("text", "item_texts"),
     [
-        ("Hello world", ["Hello", "world"], [("Hello", 0, 5), ("world", 6, 11)]),
-        ("Hello,world", ["Helloworld"], [("Helloworld", 0, 11)]),
-        ("don't", ["don't"], [("don't", 0, 5)]),
-        ("你好 A股", ["你好", "A股"], [("你好", 0, 2), ("A股", 3, 5)]),
-        (
-            "state-of-the-art",
-            ["stateoftheart"],
-            [("stateoftheart", 0, 16)],
-        ),
-        ("3.14", ["314"], [("314", 0, 4)]),
-        (
-            "\tHello \n world\r\n",
-            ["Hello", "world"],
-            [("Hello", 1, 6), ("world", 9, 14)],
-        ),
-        ("，。!? --", [], []),
+        ("Hello world", ["Hello", "world"]),
+        ("Hello,world", ["Helloworld"]),
+        ("don't", ["don't"]),
+        ("你好 A股", ["你好", "A股"]),
+        ("state-of-the-art", ["stateoftheart"]),
+        ("3.14", ["314"]),
+        ("\tHello \n world\r\n", ["Hello", "world"]),
+        ("，。!? --", []),
     ],
 )
-def test_alignment_items_map_strictly_to_source_without_reproducing_tokenizer(
+def test_alignment_items_validate_strictly_without_reproducing_tokenizer(
     text: str,
     item_texts: list[str],
-    expected_spans: list[tuple[str, int, int]],
 ) -> None:
     items = [AlignmentItem(item_text, 0.0, 0.0) for item_text in item_texts]
 
-    spans = validate_alignment_contract(
-        text,
-        items,
-        duration=0.0,
-        chunk_index=0,
-        language="en",
+    assert (
+        validate_alignment_contract(
+            text,
+            items,
+            duration=0.0,
+            chunk_index=0,
+            language="en",
+        )
+        is None
     )
-
-    assert [
-        (span.text, span.start_char, span.end_char) for span in spans
-    ] == expected_spans
 
 
 @pytest.mark.parametrize(
@@ -111,11 +100,38 @@ def test_validate_alignment_contract_rejects_text_coverage_order_and_time(
     assert "actual=" in message
 
 
-def test_strong_punctuation_does_not_create_short_semantic_sentences() -> None:
+def test_all_configured_punctuation_creates_sentence_boundaries() -> None:
+    text = "甲，乙,丙；丁;戊。己.庚！辛!壬？癸?"
+    segments = build_sentence_segments(
+        text,
+        aligned(text, [float(index) for index in range(1, 11)]),
+    )
+
+    assert [segment["text"] for segment in segments] == [
+        "甲，",
+        "乙,",
+        "丙；",
+        "丁;",
+        "戊。",
+        "己.",
+        "庚！",
+        "辛!",
+        "壬？",
+        "癸?",
+    ]
+    assert [(segment["start"], segment["end"]) for segment in segments] == [
+        (float(index), float(index + 1)) for index in range(10)
+    ]
+
+
+def test_short_sentences_are_not_merged() -> None:
     text = "你。好。"
     segments = build_sentence_segments(text, aligned(text, [1.0, 2.0]))
 
-    assert segments == [{"id": 0, "start": 0.0, "end": 2.0, "text": text}]
+    assert segments == [
+        {"id": 0, "start": 0.0, "end": 1.0, "text": "你。"},
+        {"id": 1, "start": 1.0, "end": 2.0, "text": "好。"},
+    ]
 
 
 def test_punctuation_inside_one_alignment_item_is_not_a_cut_point() -> None:
@@ -128,118 +144,83 @@ def test_punctuation_inside_one_alignment_item_is_not_a_cut_point() -> None:
     assert segments == [{"id": 0, "start": 0.0, "end": 12.0, "text": text}]
 
 
-def test_unpunctuated_sentence_uses_earliest_minimum_duration_boundaries() -> None:
-    text = "甲乙丙丁戊己庚辛壬癸"
-    segments = build_sentence_segments(
-        text, aligned(text, [float(i) for i in range(2, 22, 2)])
-    )
-
-    assert [segment["text"] for segment in segments] == list(text)
-    assert [(segment["start"], segment["end"]) for segment in segments] == [
-        (float(index), float(index + 2)) for index in range(0, 20, 2)
-    ]
-
-
-def test_boundary_priority_precedes_earliest_boundary() -> None:
-    weak_text = "aa bb, cc dd"
-    weak_segments = build_sentence_segments(
-        weak_text,
-        aligned(
-            weak_text,
-            [4.0, 8.0, 16.0, 20.0],
-            item_texts=["aa", "bb", "cc", "dd"],
-        ),
-    )
-    space_text = "甲乙 cc dd"
-    space_segments = build_sentence_segments(
-        space_text,
-        aligned(
-            space_text,
-            [4.0, 8.0, 16.0, 20.0],
-            item_texts=["甲", "乙", "cc", "dd"],
-        ),
-    )
-
-    assert [segment["text"] for segment in weak_segments] == ["aa bb,", "cc", "dd"]
-    assert [segment["text"] for segment in space_segments] == ["甲乙", "cc", "dd"]
-
-
-def test_segments_at_the_minimum_duration_are_not_merged_backward() -> None:
-    text = "甲乙丙丁戊己"
-    segments = build_sentence_segments(
-        text, aligned(text, [2.0, 4.0, 6.0, 8.0, 10.0, 12.0])
-    )
-
-    assert [segment["text"] for segment in segments] == list(text)
-
-
-def test_alignment_items_split_at_earliest_minimum_duration_boundary() -> None:
-    text = "甲" * 80
+def test_punctuation_at_end_of_alignment_item_is_a_cut_point() -> None:
+    text = "Hello, world."
     segments = build_sentence_segments(
         text,
-        aligned(text, [round((index + 1) / 10, 1) for index in range(80)]),
+        [
+            AlignmentItem("Hello,", 0.0, 1.0),
+            AlignmentItem(" world.", 1.0, 2.0),
+        ],
     )
 
-    assert [len(segment["text"]) for segment in segments] == [20, 20, 20, 20]
-    assert "".join(segment["text"] for segment in segments) == text
-    assert [(segment["start"], segment["end"]) for segment in segments] == [
-        (0.0, 2.0),
-        (2.0, 4.0),
-        (4.0, 6.0),
-        (6.0, 8.0),
+    assert segments == [
+        {"id": 0, "start": 0.0, "end": 1.0, "text": "Hello,"},
+        {"id": 1, "start": 1.0, "end": 2.0, "text": "world."},
     ]
 
 
-def test_long_english_word_counts_as_one_alignment_item(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    text = "a" * 100
-
-    with caplog.at_level(logging.WARNING):
-        segments = build_sentence_segments(
+def test_punctuation_only_cuts_after_the_alignment_item_is_fully_consumed() -> None:
+    text = "Meet at a.m. Then leave."
+    segments = build_sentence_segments(
+        text,
+        aligned(
             text,
-            [AlignmentItem(text, 0.0, 21.0)],
-        )
-
-    assert segments == [{"id": 0, "start": 0.0, "end": 21.0, "text": text}]
-    assert (
-        "single ASR alignment item exceeds segmentation hard limit" not in caplog.text
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            item_texts=["Meet", "at", "am", "Then", "leave"],
+        ),
     )
 
+    assert segments == [
+        {"id": 0, "start": 0.0, "end": 3.0, "text": "Meet at a.m."},
+        {"id": 1, "start": 3.0, "end": 5.0, "text": "Then leave."},
+    ]
 
-def test_english_boundary_selection_counts_words_instead_of_letters() -> None:
-    words = [f"word{index:02d}abcdefgh" for index in range(72)]
+
+def test_unpunctuated_text_is_one_segment_regardless_of_length() -> None:
+    words = [f"word{index}" for index in range(80)]
     text = " ".join(words)
-
     segments = build_sentence_segments(
         text,
         aligned(
             text,
-            [round((index + 1) / 10, 1) for index in range(72)],
+            [float(index) for index in range(1, 81)],
             item_texts=words,
         ),
     )
 
-    assert [len(segment["text"].split()) for segment in segments] == [
-        20,
-        20,
-        20,
-        *([1] * 10),
-        2,
+    assert segments == [{"id": 0, "start": 0.0, "end": 80.0, "text": text}]
+
+
+def test_trailing_text_without_punctuation_stays_in_one_segment() -> None:
+    text = "第一句。没有标点的尾段"
+    segments = build_sentence_segments(
+        text,
+        aligned(text, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]),
+    )
+
+    assert segments == [
+        {"id": 0, "start": 0.0, "end": 3.0, "text": "第一句。"},
+        {"id": 1, "start": 3.0, "end": 10.0, "text": "没有标点的尾段"},
     ]
-    assert " ".join(segment["text"] for segment in segments) == text
 
 
-def test_overlong_atomic_item_is_kept_and_warned(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    text = "a"
-
-    with caplog.at_level(logging.WARNING):
-        segments = build_sentence_segments(
+def test_consecutive_punctuation_does_not_create_empty_segments() -> None:
+    text = "Really?! “Yes.”"
+    segments = build_sentence_segments(
+        text,
+        aligned(
             text,
-            [AlignmentItem(text, 0.0, 25.0)],
-        )
+            [1.0, 2.0],
+            item_texts=["Really", "Yes"],
+        ),
+    )
 
-    assert segments == [{"id": 0, "start": 0.0, "end": 25.0, "text": text}]
-    assert "single ASR alignment item exceeds segmentation hard limit" in caplog.text
+    assert segments == [
+        {"id": 0, "start": 0.0, "end": 1.0, "text": "Really?!"},
+        {"id": 1, "start": 1.0, "end": 2.0, "text": "“Yes.”"},
+    ]
+
+
+def test_punctuation_only_text_has_no_segments() -> None:
+    assert build_sentence_segments("，。!? --", []) == []
