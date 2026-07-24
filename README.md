@@ -2,7 +2,8 @@
 
 | Name | Purpose |
 | --- | --- |
-| bili-audiosummary | Summarize Bilibili videos from audio. |
+| audio-transcribe | Transcribe local audio with reusable Whisper or Qwen3 artifacts. |
+| bili-audiosummary | Prepare and resume Bilibili audio-summary jobs, using native subtitles or external transcription artifacts. |
 | article-format-correction | Lightly correct Markdown technical articles while preserving meaning, structure, and author expression style. |
 | anti-sycophancy-review | Review claims, plans, predictions, and interpretations without unsupported agreement. |
 | coding-guidelines | Apply personal coding collaboration rules for repository work, scoped changes, verification, tests, and delegation. |
