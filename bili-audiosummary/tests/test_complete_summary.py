@@ -1,0 +1,131 @@
+from pathlib import Path
+
+import pytest
+
+import scripts.complete_summary as complete_summary
+import scripts.continue_summary as continue_summary
+from scripts.utils import read_json, write_json
+from tests.test_continue_summary import make_needs_job, make_transcription
+
+
+def test_complete_keeps_prompt_ready_when_summary_is_invalid(
+    workspace_tmp_path: Path,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = make_transcription(workspace_tmp_path, audio_path)
+    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
+    summary_path = job_path.parent / job["prompt"]["summary_path"]
+    summary_path.write_text("{{placeholder}}", encoding="utf-8")
+
+    current, result = complete_summary.complete_summary(job_path)
+
+    assert not result.ok
+    assert current["status"] == "prompt_ready"
+    assert read_json(job_path)["status"] == "prompt_ready"
+
+
+def test_complete_accepts_warning_and_is_idempotent(
+    workspace_tmp_path: Path,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = make_transcription(workspace_tmp_path, audio_path)
+    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
+    summary_path = job_path.parent / job["prompt"]["summary_path"]
+    summary_path.write_text("# Summary\n\nEnglish only text.\n", encoding="utf-8")
+
+    completed, result = complete_summary.complete_summary(job_path)
+    repeated, repeated_result = complete_summary.complete_summary(job_path)
+
+    assert result.ok and result.warnings
+    assert completed["status"] == "complete"
+    assert repeated == completed
+    assert repeated_result.ok
+
+
+def test_complete_revalidates_external_artifacts_and_rolls_back(
+    workspace_tmp_path: Path,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = make_transcription(workspace_tmp_path, audio_path)
+    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
+    summary_path = job_path.parent / job["prompt"]["summary_path"]
+    summary_path.write_text("# 总结\n\n有效内容。\n", encoding="utf-8")
+    (manifest_path.parent / "raw_timestamps.json").write_text(
+        "tampered", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="digest mismatch"):
+        complete_summary.complete_summary(job_path)
+
+    rolled_back = read_json(job_path)
+    assert rolled_back["status"] == "needs_transcription"
+    assert summary_path.exists()
+    assert not (job_path.parent / job["prompt"]["path"]).exists()
+
+
+def test_external_invalidation_never_deletes_unrelated_job_file(
+    workspace_tmp_path: Path,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = make_transcription(workspace_tmp_path, audio_path)
+    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
+    unrelated = job_path.parent / "notes.md"
+    unrelated.write_text("keep me", encoding="utf-8")
+    job["prompt"]["path"] = "notes.md"
+    write_json(job_path, job)
+    (manifest_path.parent / "raw_timestamps.json").write_text(
+        "tampered", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="digest mismatch"):
+        complete_summary.complete_summary(job_path)
+
+    assert unrelated.read_text(encoding="utf-8") == "keep me"
+    assert read_json(job_path)["status"] == "needs_transcription"
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        [None],
+        [{"id": 1, "start": 0.0, "end": 1.0, "text": "bad"}],
+        [{"id": 0, "start": 1.0, "end": 0.5, "text": "bad"}],
+        [{"id": 0, "start": 0.0, "end": 1.0, "text": "  "}],
+    ],
+)
+def test_complete_rejects_malformed_native_subtitle_transcript(
+    workspace_tmp_path: Path,
+    segments,
+) -> None:
+    job_path, _audio_path = make_needs_job(workspace_tmp_path)
+    job = read_json(job_path)
+    transcript_path = job_path.parent / "BVTEST_transcript.json"
+    write_json(
+        transcript_path,
+        {
+            "bvid": "BVTEST",
+            "source": "subtitle",
+            "segments": segments,
+        },
+    )
+    prompt_path = job_path.parent / "BVTEST_summary_prompt.md"
+    summary_path = job_path.parent / "BVTEST_summary_zh.md"
+    prompt_path.write_text("prompt", encoding="utf-8")
+    summary_path.write_text("# 总结\n\n内容。\n", encoding="utf-8")
+    job.update(
+        {
+            "status": "prompt_ready",
+            "transcript": {
+                "source": "bilibili_subtitle",
+                "path": transcript_path.name,
+            },
+            "prompt": {
+                "path": prompt_path.name,
+                "summary_path": summary_path.name,
+            },
+        }
+    )
+    write_json(job_path, job)
+
+    with pytest.raises(ValueError, match="subtitle transcript"):
+        complete_summary.complete_summary(job_path)

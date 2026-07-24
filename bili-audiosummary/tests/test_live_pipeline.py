@@ -9,7 +9,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.live
-def test_live_pipeline_can_force_asr_with_url_and_cookies() -> None:
+def test_live_pipeline_can_prepare_external_transcription_with_url_and_cookies() -> (
+    None
+):
     url = os.environ.get("BILI_TEST_URL")
     cookies = os.environ.get("BILI_TEST_COOKIES")
     if not url or not cookies:
@@ -36,7 +38,6 @@ def test_live_pipeline_can_force_asr_with_url_and_cookies() -> None:
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert "[Stage] Transcribe audio with " in completed.stdout
-    assert "Summary Prompt:" in completed.stdout
-    assert "Skipping subtitles; using ASR from audio." not in completed.stdout
-    assert "Transcript JSON:" not in completed.stdout
+    assert "Summary Job:" in completed.stdout
+    assert "Transcription required for audio:" in completed.stdout
+    assert "Summary Prompt:" not in completed.stdout

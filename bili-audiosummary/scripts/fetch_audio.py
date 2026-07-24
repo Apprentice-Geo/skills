@@ -10,7 +10,7 @@ from scripts import subtitle_transcript
 from scripts.config import (
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
-    DEFAULT_TRANSCRIBE_LANGUAGE,
+    DEFAULT_SUBTITLE_LANGUAGE,
     RESULTS_DIR,
     SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
@@ -420,7 +420,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--language",
         choices=tuple(SUBTITLE_LANGUAGE_PRIORITY.keys()),
-        default=DEFAULT_TRANSCRIBE_LANGUAGE,
+        default=DEFAULT_SUBTITLE_LANGUAGE,
         help="Target language. Only subtitles from the selected language group will be requested.",
     )
     parser.add_argument(
