@@ -12,9 +12,12 @@ def use_test_results_dir(workspace_tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(run_pipeline, "RESULTS_DIR", workspace_tmp_path / "results")
 
 
-def make_args(skip_subtitles: bool = False) -> argparse.Namespace:
+def make_args(
+    skip_subtitles: bool = False,
+    url: str = "https://www.bilibili.com/video/BVTEST/",
+) -> argparse.Namespace:
     return argparse.Namespace(
-        url="https://www.bilibili.com/video/BVTEST/",
+        url=url,
         cookies=None,
         language="zh",
         summary_language=None,
@@ -27,19 +30,21 @@ def make_fetch_result(
     *,
     subtitle_text: str | None = None,
     audio: bool = True,
+    video_id: str = "BVTEST",
+    url: str = "https://www.bilibili.com/video/BVTEST/",
 ) -> dict:
-    result_dir = workspace_tmp_path / "results" / "BVTEST"
+    result_dir = workspace_tmp_path / "results" / video_id
     resource_dir = result_dir / "resource"
     subtitle_dir = resource_dir / "subtitle"
     subtitle_dir.mkdir(parents=True)
     audio_files = []
     if audio:
-        audio_path = resource_dir / "BVTEST.m4a"
+        audio_path = resource_dir / f"{video_id}.m4a"
         audio_path.write_bytes(b"audio")
         audio_files.append(audio_path)
     subtitle_files = []
     if subtitle_text is not None:
-        subtitle_path = subtitle_dir / "BVTEST.zh-Hans.srt"
+        subtitle_path = subtitle_dir / f"{video_id}.zh-Hans.srt"
         subtitle_path.write_text(subtitle_text, encoding="utf-8")
         subtitle_files.append(subtitle_path)
 
@@ -49,16 +54,16 @@ def make_fetch_result(
     write_json(
         manifest_path,
         {
-            "id": "BVTEST",
+            "id": video_id,
             "title": "测试视频",
-            "url": "https://www.bilibili.com/video/BVTEST/",
+            "url": url,
             "metadata_path": metadata_path.as_posix(),
             "audio_files": [path.as_posix() for path in audio_files],
             "subtitle_files": [path.as_posix() for path in subtitle_files],
         },
     )
     return {
-        "video_id": "BVTEST",
+        "video_id": video_id,
         "paths": {"result": result_dir},
         "metadata_path": metadata_path,
         "manifest_path": manifest_path,
@@ -164,6 +169,30 @@ def test_prepare_publishes_preparing_before_fetch(
     )
 
 
+def test_prepare_publishes_page_preparing_before_fetch(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    page_url = "https://www.bilibili.com/video/BVTEST/?p=2"
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        video_id="BVTEST_p2",
+        url=page_url,
+    )
+    job_path = fetch_result["paths"]["result"] / "summary_job.json"
+
+    def fake_fetch(_options):
+        assert read_json(job_path)["status"] == "preparing"
+        return fetch_result
+
+    mocker.patch("scripts.run_pipeline.fetch_audio.run_fetch", side_effect=fake_fetch)
+
+    result = run_pipeline.run_pipeline(make_args(url=page_url))
+
+    assert result["job_path"] == job_path
+    assert result["job"]["video"]["bvid"] == "BVTEST_p2"
+
+
 def test_fetch_failure_does_not_persist_sensitive_exception_text(
     workspace_tmp_path: Path,
     mocker,
@@ -230,6 +259,55 @@ def test_prepare_does_not_overwrite_existing_ready_job(
 
     assert read_json(job_path) == existing
     assert prompt_path.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("status", ["prompt_ready", "complete"])
+def test_prepare_page_job_does_not_touch_existing_base_ready_job(
+    workspace_tmp_path: Path,
+    mocker,
+    status: str,
+) -> None:
+    page_url = "https://www.bilibili.com/video/BVTEST/?p=2"
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        video_id="BVTEST_p2",
+        url=page_url,
+    )
+    base_job_path = workspace_tmp_path / "results" / "BVTEST" / "summary_job.json"
+    existing = {
+        "schema_version": 1,
+        "status": status,
+        "video": {
+            "bvid": "BVTEST",
+            "title": "测试视频",
+            "url": "https://www.bilibili.com/video/BVTEST/",
+        },
+        "resources": {
+            "fetch_manifest": "resource/fetch_manifest.json",
+            "subtitle": "resource/subtitle/BVTEST.zh-Hans.srt",
+            "audio": "resource/BVTEST.m4a",
+            "subtitle_skipped": False,
+        },
+        "transcript": {
+            "source": "bilibili_subtitle",
+            "path": "BVTEST_transcript.json",
+        },
+        "transcription_manifest": None,
+        "prompt": {
+            "path": "BVTEST_summary_prompt.md",
+            "summary_path": "BVTEST_summary_zh.md",
+        },
+        "error": None,
+    }
+    write_json_atomic(base_job_path, existing)
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
+
+    result = run_pipeline.run_pipeline(make_args(url=page_url))
+
+    assert result["job_path"] == fetch_result["paths"]["result"] / "summary_job.json"
+    assert read_json(base_job_path) == existing
 
 
 def test_parse_args_has_no_asr_model_options(monkeypatch) -> None:

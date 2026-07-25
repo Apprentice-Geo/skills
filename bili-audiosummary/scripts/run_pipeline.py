@@ -4,6 +4,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from scripts import fetch_audio, subtitle_transcript
 from scripts.config import (
@@ -227,14 +228,23 @@ def _job_base(
     }
 
 
-def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
-    normalized_url = normalize_bilibili_video_url(options.url)
+def _video_id_from_normalized_url(normalized_url: str) -> str:
     match = re.search(r"/video/(BV[0-9A-Za-z]+)", normalized_url)
     if match is None:
         raise ValueError(
             "A canonical Bilibili BV video URL is required to create the summary job."
         )
+
     video_id = match.group(1)
+    page_values = parse_qs(urlsplit(normalized_url).query).get("p", [])
+    if page_values:
+        return f"{video_id}_p{page_values[-1]}"
+    return video_id
+
+
+def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
+    normalized_url = normalize_bilibili_video_url(options.url)
+    video_id = _video_id_from_normalized_url(normalized_url)
     result_dir = (RESULTS_DIR / video_id).resolve()
     return result_dir / JOB_FILENAME, {
         "schema_version": 1,
