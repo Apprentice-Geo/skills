@@ -1,6 +1,6 @@
 ---
 name: audio-transcribe
-description: Use this skill when the user wants to transcribe a local audio file(本地音频转写) with reusable timestamps(时间戳), transcript artifacts(转写产物), Whisper, or Qwen3. Do not use it for downloading online videos(下载在线视频), Bilibili metadata(B站元数据), summarization(总结), or subtitle-file generation(字幕文件生成).
+description: Use this skill when the user wants to transcribe a local audio file(本地音频转写) with reusable timestamps(时间戳), transcript artifacts(转写产物), Whisper, or Qwen3.
 compatibility: Windows. Requires uv, Python 3.12, packaged ffmpeg, and at least one installed local transcription model.
 license: Apache-2.0
 metadata:
@@ -13,7 +13,7 @@ metadata:
 
 Use this skill when the user provides a local audio path and needs a transcript, ordered sentence segments, or standardized timestamps. The input must already exist locally.
 
-This skill does not download media, read Bilibili metadata, summarize transcript content, generate SRT/VTT files, or edit another Skill's results.
+This skill does not download media or edit another Skill's results.
 
 ## Main Steps
 
@@ -41,3 +41,5 @@ The manifest and its public artifacts belong to this Skill. Other Skills may ret
 ## Failure Boundary
 
 Do not claim a transcript was produced unless a complete manifest is present and validates successfully. Once the command resolves a model, later loading, inference, or alignment failures stop the run; do not silently switch providers.
+
+For maintainer details, use [references/architecture.md](references/architecture.md) for pipeline and artifact contracts, and [references/error-handling.md](references/error-handling.md) for setup, model, cache, and validation failures.

@@ -18,6 +18,15 @@ def canonical_json_bytes(value: Any) -> bytes:
         allow_nan=False,
     ).encode("utf-8")
 
+def pretty_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
+        allow_nan=False,
+    ).encode("utf-8")
+
 
 def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
@@ -48,7 +57,7 @@ def write_bytes_atomic(path: Path, data: bytes) -> None:
 
 
 def write_json_atomic(path: Path, value: Any) -> None:
-    write_bytes_atomic(path, canonical_json_bytes(value) + b"\n")
+    write_bytes_atomic(path, pretty_json_bytes(value) + b"\n")
 
 
 def read_json(path: Path) -> Any:

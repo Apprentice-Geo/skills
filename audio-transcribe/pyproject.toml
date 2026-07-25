@@ -17,6 +17,7 @@ qwen3 = [
     "accelerate",
     "huggingface-hub",
     "librosa",
+    "numba>=0.59.1",
     "qwen-asr",
     "soundfile",
     "transformers",

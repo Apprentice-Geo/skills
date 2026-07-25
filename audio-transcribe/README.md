@@ -1,6 +1,6 @@
 # audio-transcribe
 
-`audio-transcribe` 接受本地音频文件，使用 faster-whisper 或 Qwen3 生成可复用的转写 artifact。它不下载在线视频，不读取 Bilibili 信息，也不负责总结或生成 SRT/VTT。
+`audio-transcribe` 接受本地音频文件，使用 faster-whisper 或 Qwen3 生成可复用的转写 artifact。
 
 ## 环境准备
 
@@ -63,6 +63,11 @@ results/<audio-id>/<provider>-<language>-<64位variant-id>/
 - `transcribe.log`：首次成功调用日志。
 
 `workspace/` 是内部缓存与恢复目录，不是其他 Skill 的公开读取接口。complete manifest 发布后保持不可变；公开 artifact 缺失或损坏时，命令只会在 workspace 能够确定性重建出相同 digest 时恢复成功入口。
+
+## 维护参考
+
+- [Architecture](references/architecture.md)：当前转写流程、result identity、cache 和公开 artifact 合同。
+- [Error Handling](references/error-handling.md)：常见 setup、模型、推理、alignment、cache 和 artifact 失败处理。
 
 ## 验证
 

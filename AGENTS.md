@@ -1,29 +1,40 @@
-# Repository Guide
+# 仓库说明
 
-This repository stores personal-use agent skills (个人使用 skills). These skills are not neutral generic templates; they encode strong personal preferences (较强个人偏好) about how agents should collaborate, edit, review, and verify work.
+本仓库存放个人使用的 [Agent Skills](https://agentskills.io/home)。这些 Skill 不是中立的通用模板；它们记录了用户对 Agent 如何协作、编辑、审查和验证工作的明确个人偏好。
 
-## Repository Definition
+## 仓库定位
 
-- Treat this repository as a personal skill collection (个人 skill 集合), not a general-purpose public standard library.
-- Skills should capture behavior the agent may not know by default: personal workflows, recurring corrections, preferred boundaries, and failure modes observed in practice.
-- Avoid over-explaining common knowledge unless the user has explicitly added it because agents repeatedly get it wrong.
-- Broad triggering can be acceptable for personal-use skills when the user wants that behavior to apply often.
+- 本仓库是个人 Skill 集合，而不是通用公共标准 Skill 库。
+- Skill 应记录 Agent 默认未必知道的行为：个人工作流、反复纠正过的问题、领域特定知识、偏好的边界，以及实践中观察到的失败模式。
+- 除非用户明确补充过某项内容是因为 Agent 反复出错，否则避免解释常识。
+- 当用户希望某类行为经常生效时，个人用 Skill 可以接受较宽的触发范围。
 
-## Writing Style
+## 语言规则
 
-- Write skill bodies in English.
-- Add Chinese only as parenthetical annotations next to the corresponding English term, for example `plan-first mode (先讨论计划)`.
-- Keep instructions concise and operational. Prefer specific behavior rules over long background explanation.
+- Skill.md 正文、references 文档使用英文，但是允许示例及模板使用其他语言。
+- README.md、AGENTS.md 使用中文。
+- 仅在 Skill.md 中 YAML 头的 `description` 中，把中文以对应英文术语旁边的括注的形式标注，例如 `Markdown formatting(格式调整)`。
 
-## Editing Rules
+## Skill 组织规则
 
-- Preserve unrelated local edits and untracked files.
-- Do not rewrite a skill into a generic best-practices document if it is meant to preserve the user's personal workflow.
-- When changing one skill, do not modify other skills unless the user explicitly asks.
-- For documentation-only edits (仅文档修改), avoid changing runtime code, scripts, tests, or dependencies.
+- Skill.md 正文使用结构化组织方式，依次包含对应 Skill 的适用范围、核心规则、执行流程、输出模板等 Skill 正常使用的必需信息。
+- 指令保持简洁、可执行，并优先使用表格和“场景-正确行为-禁止行为”的描述结构。
+- 优先写具体情景下的具体行为规则，不写冗长的背景或通用知识说明。
+- 代码架构及行为、常见错误处理方式等非必需信息放在 references 文件夹的文档中，在 Skill.md 正文只简单说明并引用对应文档。
+- 模板、图片、字体、指令等资源统一放在 assets 文件夹下。
 
-## Current Skill Notes
 
-- `coding-guidelines` is the baseline coding-collaboration skill. It may be combined with more specific skills when a task also matches a domain workflow.
-- `article-format-correction` is a light Markdown correction skill. It should preserve the author's meaning, structure, expression style, and explicit edit scope.
-- `anti-sycophancy-review` is a rigorous review skill. It should challenge unsupported assumptions without turning every answer into hostile disagreement or unreadable tagging.
+## 编辑规则
+
+- 保留无关的本地修改和未跟踪文件，保留代码中的正确注释。
+- 如果某个 Skill 是为了保留用户个人工作流，不要把它改写成泛泛的最佳实践文档。
+- 修改一个 Skill 时，除非用户明确要求，不要修改其他 Skill。
+- 仅文档修改时，避免改动运行时代码，脚本，测试或依赖。
+
+## 当前 Skill 说明
+
+- `coding-guidelines` 是基础代码协作 Skill。任务同时匹配更具体的领域工作流时，可以组合使用。
+- `article-format-correction` 是轻量 Markdown 修正 Skill。它应保留作者的含义、结构、表达风格和明确编辑范围。
+- `anti-sycophancy-review` 是严格审查 Skill。它应质疑缺乏支撑的假设，但不要把每个回答都变成敌意反驳或难以阅读的标签堆叠。
+- `audio-transcribe` 是本地音频转写 Skill。它接收本地音频路径并完成转写，不处理音频下载或转写后的其它处理流程，它可以和其它 Skill 组合使用达成对音频的综合处理。
+- `bili-audiosummary` 是B站视频总结 Skill。它接收B站视频 URL 并完成视频下载等流程，然后等待音频转写结果并生成总结指令，最后由 Agent 阅读指令完成总结。

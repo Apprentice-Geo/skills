@@ -5,6 +5,7 @@ import importlib.util
 import math
 import os
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -22,8 +23,9 @@ from scripts.artifacts import (
 )
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import provider_model_identity
-from scripts.process_logging import LoggingSession, get_logger
+from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
 
+# 采样率 16kHz
 SAMPLE_RATE = 16_000
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS_DIR = SKILL_ROOT / "results"
@@ -111,7 +113,7 @@ def _detect_language(samples: Any) -> str:
     )
     if classifier is None:
         raise RuntimeError("Language identification model could not be loaded.")
-    signal = torch.from_numpy(samples[: 30 * SAMPLE_RATE]).unsqueeze(0)
+    signal = torch.from_numpy(samples[: 60 * SAMPLE_RATE]).unsqueeze(0)
     _posterior, score, _index, labels = classifier.classify_batch(signal)
     probability = float(score.reshape(-1)[0].exp().item())
     if not labels or not math.isfinite(probability):
@@ -548,22 +550,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _format_elapsed(seconds: float) -> str:
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours >= 1:
+        return f"{int(hours)}h {int(minutes)}m {seconds:05.2f}s"
+    if minutes >= 1:
+        return f"{int(minutes)}m {seconds:05.2f}s"
+    return f"{seconds:.2f}s"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    started = time.perf_counter()
     try:
-        manifest_path = run_transcribe(
-            args.audio_path,
-            language=args.language,
-            model=args.model,
-            beam_size=args.beam_size,
-            compute_type=args.compute_type,
-            cpu_threads=args.cpu_threads,
-            num_workers=args.num_workers,
-        )
+        with filtered_log_messages():
+            manifest_path = run_transcribe(
+                args.audio_path,
+                language=args.language,
+                model=args.model,
+                beam_size=args.beam_size,
+                compute_type=args.compute_type,
+                cpu_threads=args.cpu_threads,
+                num_workers=args.num_workers,
+            )
     except Exception as exc:
         logger.exception("Transcription failed.")
         print(f"Transcription failed: {exc}", file=sys.stderr)
         return 1
+    elapsed = time.perf_counter() - started
+    print(f"[Stage] Transcribe completed in {_format_elapsed(elapsed)}")
     print(f"result_manifest: {manifest_path}")
     return 0
 

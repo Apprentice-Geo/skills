@@ -30,7 +30,7 @@
 - Bilibili 的语言参数只用于字幕选择，不得传给转写 Skill，也不得在本项目暴露 ASR 模型参数。
 - `failed` 只用于 prepare 已写入 `preparing` 后的致命失败。continue 失败保持或回到 `needs_transcription`；summary 校验失败保持 `prompt_ready`。
 - 状态和 JSON artifact 使用唯一同目录临时文件与原子 replace 发布。不要通过只修改状态字符串绕过对应 artifact 校验。
-- 对实验性效率或正确性结论，不要在结果尚未确认时同步到固定文档。
+- 对于实验性代码或临时脚本，在确认增加到项目中前，不要为它们编写测试或同步文档。
 - `.cache/`、`.venv/`、`results/`、`tmp/`、cookie 文件和音频均为本地或生成内容，不应纳入提交。
 - 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `uv run python -m scripts.<module>` 形式运行。
 

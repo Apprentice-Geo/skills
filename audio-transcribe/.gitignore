@@ -7,3 +7,5 @@ __pycache__/
 models/
 results/
 tmp/
+.agents/
+.cache/

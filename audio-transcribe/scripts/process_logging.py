@@ -7,18 +7,47 @@ import subprocess
 import sys
 import traceback
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Iterator, Mapping, Sequence
 
 LOGGER_NAME = "audio_transcribe"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+FILTERED_MESSAGE_PREFIXES = {
+    "speechbrain.dataio.encoder": "CategoricalEncoder.expect_len was never called",
+    "transformers.generation.utils": "Setting `pad_token_id` to `eos_token_id`",
+}
 
 
 class TerminalFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return bool(getattr(record, "terminal", False))
+
+
+class MessagePrefixFilter(logging.Filter):
+    def __init__(self, prefix: str) -> None:
+        super().__init__()
+        self.prefix = prefix
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith(self.prefix)
+
+
+@contextmanager
+def filtered_log_messages() -> Iterator[None]:
+    installed: list[tuple[logging.Logger, MessagePrefixFilter]] = []
+    try:
+        for logger_name, prefix in FILTERED_MESSAGE_PREFIXES.items():
+            external_logger = logging.getLogger(logger_name)
+            message_filter = MessagePrefixFilter(prefix)
+            external_logger.addFilter(message_filter)
+            installed.append((external_logger, message_filter))
+        yield
+    finally:
+        for external_logger, message_filter in reversed(installed):
+            external_logger.removeFilter(message_filter)
 
 
 class ForwardingHandler(logging.Handler):
