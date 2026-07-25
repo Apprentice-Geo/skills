@@ -130,7 +130,6 @@ Cookie 文件包含登录凭据，不应提交到版本控制，也不应复制�
 
 - [项目架构](references/architecture.md)：prepare/continue/complete 数据流、job 状态和 artifact 边界。
 - [错误处理](references/error-handling.md)：setup、下载、Cookie、job 恢复和总结校验故障。
-- [拆分设计](docs/audio-transcription-skill-split-design.md)：独立转写 Skill 与 Bilibili Skill 的职责和交接契约。
 
 ## 主要第三方依赖
 
