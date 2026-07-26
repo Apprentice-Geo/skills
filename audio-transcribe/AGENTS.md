@@ -36,7 +36,7 @@
 - `audio_id` 是输入音频字节的 SHA-256，独立于输入路径和文件名。
 - `variant_id` 来自规范化 resolved request，包含 Provider、语言、固定模型 revision、执行策略、VAD、规划和断句相关身份；不应包含输入路径、输出路径或日志级别。
 - 公开 Provider 值只允许 `faster-whisper` 和 `qwen3`。
-- 如果用户显式指定 `--model`，只使用该 Provider；如果自动选择 Provider，一旦解析完成，后续加载、推理、alignment、merge 或发布失败不得静默切换 Provider。
+- 如果用户显式指定 `--provider`，只使用该 Provider；如果自动选择 Provider，一旦解析完成，后续加载、推理、alignment、merge 或发布失败不得静默切换 Provider。
 - 公共 transcript 文本保持 Provider 原文，不执行 OpenCC、简繁转换、重写或其他文本规范化。
 - 不要把第三方模型对象、原始 Provider 大对象或大型内部 metadata 写入公开 artifact。
 - 不要手工修复 `result_manifest.json`、`transcript.json`、`raw_timestamps.json` 或 `workspace/` 内容；需要恢复时 rerun CLI，让 artifact 层按 digest 确定性重建。

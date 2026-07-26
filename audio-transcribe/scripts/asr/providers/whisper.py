@@ -27,7 +27,7 @@ class WhisperProvider:
             raise ValueError("WhisperProvider requires a resolved language.")
         self.options = options
         self.language = options.language
-        self.model_path = options.model or path_to_posix(DEFAULT_WHISPER_MODEL_DIR)
+        self.model_path = options.model_path or path_to_posix(DEFAULT_WHISPER_MODEL_DIR)
 
     def request_identity(self) -> dict[str, Any]:
         return {
@@ -41,7 +41,7 @@ class WhisperProvider:
         }
 
     def prepare(self, execution_identity: dict[str, Any]) -> Any:
-        if not self.options.model and not model_has_weights(
+        if not self.options.model_path and not model_has_weights(
             DEFAULT_WHISPER_MODEL_DIR, WHISPER_WEIGHT_PATTERNS
         ):
             raise RuntimeError(

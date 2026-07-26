@@ -8,7 +8,7 @@ from typing import Iterable
 
 from scripts.asr.chunking.timeline import Timeline
 
-_EXHAUSTIVE_HARD_POINT_LIMIT = 1_000
+_EXHAUSTIVE_HARD_POINT_LIMIT = 10_000
 
 
 @dataclass(frozen=True)
@@ -706,6 +706,7 @@ def _hard_candidates_by_stage(
                 maximum,
             )
 
+    # 如果硬切点总数不大，直接穷举所有可能的硬切点
     if hard_span <= _EXHAUSTIVE_HARD_POINT_LIMIT:
         for stage in range(1, chunk_count):
             exhaustive: set[int] = set()

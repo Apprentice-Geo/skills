@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -63,7 +64,7 @@ def test_whisper_provider_forces_word_timestamps_and_preserves_probability() -> 
         return original(samples, **kwargs)
 
     model.transcribe = capture
-    provider = WhisperProvider(TranscribeOptions(language="en", model="model"))
+    provider = WhisperProvider(TranscribeOptions(language="en", model_path="model"))
     transcript = provider.transcribe_one(
         model,
         np.zeros(16_000, dtype=np.float32),
@@ -102,7 +103,7 @@ def test_whisper_prepare_logs_only_safe_model_configuration(
     provider = WhisperProvider(
         TranscribeOptions(
             language="en",
-            model="custom-whisper",
+            model_path="custom-whisper",
             device="cpu",
             compute_type="int8",
         )
@@ -190,7 +191,7 @@ def test_qwen_provider_rejects_large_last_word_end_overrun() -> None:
 
 
 def test_whisper_preserves_provider_text_in_returned_segment_copy() -> None:
-    provider = WhisperProvider(TranscribeOptions(language="zh", model="model"))
+    provider = WhisperProvider(TranscribeOptions(language="zh", model_path="model"))
     source = [{"id": 0, "start": 0.0, "end": 1.0, "text": "後臺"}]
 
     copied = provider.postprocess_segments(source)
@@ -198,6 +199,14 @@ def test_whisper_preserves_provider_text_in_returned_segment_copy() -> None:
     assert source[0]["text"] == "後臺"
     assert copied[0]["text"] == "後臺"
     assert copied is not source
+
+
+def test_transcribe_options_from_args_reads_model_path() -> None:
+    options = TranscribeOptions.from_args(
+        argparse.Namespace(language="en", model_path="custom-whisper")
+    )
+
+    assert options.model_path == "custom-whisper"
 
 
 def test_whisper_policy_logs_retry_traceback_then_succeeds(

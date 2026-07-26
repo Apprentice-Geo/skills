@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import transcribe
+from scripts import benchmark, transcribe
 from scripts.process_logging import filtered_log_messages
 
 
@@ -73,7 +73,9 @@ def test_main_reports_elapsed_time_before_manifest(
     manifest = Path("result_manifest.json")
     times = iter((10.0, 10.0 + elapsed))
     monkeypatch.setattr(transcribe.time, "perf_counter", lambda: next(times))
-    monkeypatch.setattr(transcribe, "run_transcribe", lambda *_args, **_kwargs: manifest)
+    monkeypatch.setattr(
+        transcribe, "run_transcribe", lambda *_args, **_kwargs: manifest
+    )
 
     assert transcribe.main(["audio.wav"]) == 0
 
@@ -99,3 +101,47 @@ def test_main_does_not_report_completion_when_transcription_fails(
     captured = capsys.readouterr()
     assert "Transcribe completed" not in captured.out
     assert "Transcription failed: boom" in captured.err
+
+
+def test_transcribe_parse_args_uses_provider() -> None:
+    args = transcribe.parse_args(["audio.wav", "--provider", "qwen3"])
+
+    assert args.provider == "qwen3"
+    assert not hasattr(args, "model")
+
+
+def test_transcribe_parse_args_rejects_model_provider_alias() -> None:
+    with pytest.raises(SystemExit):
+        transcribe.parse_args(["audio.wav", "--model", "qwen3"])
+
+
+def test_benchmark_parse_args_uses_provider() -> None:
+    args = benchmark.parse_args(["audio.wav", "--provider", "faster-whisper"])
+
+    assert args.provider == "faster-whisper"
+    assert not hasattr(args, "model")
+
+
+def test_benchmark_parse_args_rejects_model_provider_alias() -> None:
+    with pytest.raises(SystemExit):
+        benchmark.parse_args(["audio.wav", "--model", "qwen3"])
+
+
+def test_benchmark_report_records_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        benchmark,
+        "run_transcribe",
+        lambda _audio_path, **kwargs: Path(kwargs["provider"] + ".json"),
+    )
+
+    report = benchmark.benchmark_audio(
+        [tmp_path / "audio.wav"],
+        provider="qwen3",
+        language="zh",
+        output_path=tmp_path / "benchmark.json",
+    )
+
+    assert report["provider"] == "qwen3"
+    assert "model" not in report

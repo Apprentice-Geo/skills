@@ -12,14 +12,14 @@ from scripts.transcribe import run_transcribe
 def benchmark_audio(
     audio_paths: list[Path],
     *,
-    model: str,
+    provider: str,
     language: str | None,
     output_path: Path,
 ) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     for audio_path in audio_paths:
         started = time.perf_counter()
-        manifest = run_transcribe(audio_path, language=language, model=model)
+        manifest = run_transcribe(audio_path, language=language, provider=provider)
         results.append(
             {
                 "audio_path": str(audio_path.resolve()),
@@ -27,7 +27,7 @@ def benchmark_audio(
                 "elapsed_seconds": round(time.perf_counter() - started, 3),
             }
         )
-    report = {"model": model, "language": language, "results": results}
+    report = {"provider": provider, "language": language, "results": results}
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
@@ -41,7 +41,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Benchmark transcription on ordinary local audio files."
     )
     parser.add_argument("audio_path", nargs="+", type=Path)
-    parser.add_argument("--model", choices=("faster-whisper", "qwen3"), required=True)
+    parser.add_argument(
+        "--provider", choices=("faster-whisper", "qwen3"), required=True
+    )
     parser.add_argument("--language")
     parser.add_argument(
         "--output",
@@ -55,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     benchmark_audio(
         args.audio_path,
-        model=args.model,
+        provider=args.provider,
         language=args.language,
         output_path=args.output,
     )

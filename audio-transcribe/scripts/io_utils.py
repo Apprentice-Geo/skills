@@ -18,6 +18,7 @@ def canonical_json_bytes(value: Any) -> bytes:
         allow_nan=False,
     ).encode("utf-8")
 
+
 def pretty_json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,

@@ -63,9 +63,9 @@ The language-identification model is required when `--language` is omitted. If i
 ## Provider Selection
 
 - Supported public Providers are `faster-whisper` and `qwen3`.
-- If `--model` names an unsupported Provider, stop.
-- If `--model qwen3` is used with an unsupported language, stop and report the supported language set.
-- If no model is specified, select only from Providers that are ready in the current environment.
+- If `--provider` names an unsupported Provider, stop.
+- If `--provider qwen3` is used with an unsupported language, stop and report the supported language set.
+- If no Provider is specified, select only from Providers that are ready in the current environment.
 - If no Provider is ready, stop and ask the user to install Qwen3 or faster-whisper.
 - Once a Provider is resolved, do not silently switch Providers after a loading, inference, alignment, or artifact failure.
 

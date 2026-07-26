@@ -24,7 +24,7 @@ This skill does not download media or edit another Skill's results.
 uv run --no-sync python -m scripts.transcribe "<absolute-or-relative-audio-path>"
 ```
 
-Pass `--language` or `--model faster-whisper|qwen3` only when the user explicitly requests that choice. Otherwise let the command detect one language and select a ready model.
+Pass `--language` or `--provider faster-whisper|qwen3` only when the user explicitly requests that choice. Otherwise let the command detect one language and select a ready Provider.
 
 3. Read the absolute `result_manifest.json` path printed by the command.
 4. Validate `schema_version` and `status` before using artifact paths from the manifest.
@@ -40,6 +40,6 @@ The manifest and its public artifacts belong to this Skill. Other Skills may ret
 
 ## Failure Boundary
 
-Do not claim a transcript was produced unless a complete manifest is present and validates successfully. Once the command resolves a model, later loading, inference, or alignment failures stop the run; do not silently switch providers.
+Do not claim a transcript was produced unless a complete manifest is present and validates successfully. Once the command resolves a Provider, later loading, inference, or alignment failures stop the run; do not silently switch Providers.
 
 For maintainer details, use [references/architecture.md](references/architecture.md) for pipeline and artifact contracts, and [references/error-handling.md](references/error-handling.md) for setup, model, cache, and validation failures.

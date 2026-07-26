@@ -184,7 +184,7 @@ def _whisper_ready() -> bool:
 def _select_provider(requested: str | None, language: str) -> str:
     if requested is not None:
         if requested not in SUPPORTED_PROVIDERS:
-            raise ValueError(f"Unsupported transcription model: {requested}")
+            raise ValueError(f"Unsupported transcription provider: {requested}")
         if requested == "qwen3" and language not in QWEN3_LANGUAGES:
             supported = ", ".join(sorted(QWEN3_LANGUAGES))
             raise ValueError(
@@ -196,7 +196,7 @@ def _select_provider(requested: str | None, language: str) -> str:
     if _whisper_ready():
         return "faster-whisper"
     raise RuntimeError(
-        "No transcription model is ready. Install Qwen3 or faster-whisper first."
+        "No transcription Provider is ready. Install Qwen3 or faster-whisper first."
     )
 
 
@@ -388,7 +388,7 @@ def run_transcribe(
     audio_path: Path,
     *,
     language: str | None = None,
-    model: str | None = None,
+    provider: str | None = None,
     beam_size: int = 5,
     compute_type: str = "float32",
     cpu_threads: int | None = None,
@@ -435,7 +435,7 @@ def run_transcribe(
     )
     if not resolved_language:
         raise ValueError("Resolved language must not be empty.")
-    provider = _select_provider(model, resolved_language)
+    provider = _select_provider(provider, resolved_language)
     from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
     from scripts.asr.providers import Qwen3Provider, WhisperProvider
     from scripts.runtime_options import TranscribeOptions
@@ -542,7 +542,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Transcribe a local audio file.")
     parser.add_argument("audio_path", type=Path)
     parser.add_argument("--language")
-    parser.add_argument("--model", choices=SUPPORTED_PROVIDERS)
+    parser.add_argument("--provider", choices=SUPPORTED_PROVIDERS)
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument("--compute-type", default="float32")
     parser.add_argument("--cpu-threads", type=int)
@@ -568,7 +568,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest_path = run_transcribe(
                 args.audio_path,
                 language=args.language,
-                model=args.model,
+                provider=args.provider,
                 beam_size=args.beam_size,
                 compute_type=args.compute_type,
                 cpu_threads=args.cpu_threads,

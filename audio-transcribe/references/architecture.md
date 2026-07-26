@@ -115,7 +115,7 @@ For a new result, `transcript.json` and `raw_timestamps.json` are written first.
 
 ## Provider Resolution
 
-If the user passes `--model`, that Provider must be supported and ready for the resolved language and runtime environment. If the user omits `--model`, Qwen3 is selected only when the resolved language is supported and the CUDA model environment is ready; otherwise faster-whisper is selected when ready.
+If the user passes `--provider`, that Provider must be supported and ready for the resolved language and runtime environment. If the user omits `--provider`, Qwen3 is selected only when the resolved language is supported and the CUDA model environment is ready; otherwise faster-whisper is selected when ready.
 
 Once a Provider is resolved, later loading, inference, alignment, merge, artifact, or publication failures stop the run. The command does not silently switch Providers after resolution, because doing so would change result identity and reproducibility.
 

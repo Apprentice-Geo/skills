@@ -125,7 +125,7 @@ def test_content_identity_reuses_result_after_input_rename(
     first_manifest = run_transcribe(
         first,
         language="zh",
-        model="faster-whisper",
+        provider="faster-whisper",
         results_dir=results,
         decoder=lambda _path: _samples(),
         engine=_engine_calls(calls),
@@ -134,7 +134,7 @@ def test_content_identity_reuses_result_after_input_rename(
     second_manifest = run_transcribe(
         second,
         language="zh",
-        model="faster-whisper",
+        provider="faster-whisper",
         results_dir=results,
         decoder=lambda _path: _samples(),
         engine=_engine_calls(calls),
@@ -169,7 +169,7 @@ def test_first_success_log_is_complete_and_cache_calls_do_not_modify_it(
 
     kwargs = {
         "language": "zh",
-        "model": "faster-whisper",
+        "provider": "faster-whisper",
         "results_dir": results,
         "decoder": lambda _path: _samples(),
         "engine": engine,
@@ -197,7 +197,7 @@ def test_failed_attempt_log_is_replaced_by_first_success(
 
     kwargs = {
         "language": "zh",
-        "model": "faster-whisper",
+        "provider": "faster-whisper",
         "results_dir": results,
         "decoder": lambda _path: _samples(),
     }
@@ -217,7 +217,7 @@ def test_malformed_manifest_is_hidden_before_recovery(
     audio.write_bytes(b"audio")
     kwargs = {
         "language": "zh",
-        "model": "faster-whisper",
+        "provider": "faster-whisper",
         "results_dir": workspace_tmp_path / "results",
         "decoder": lambda _path: _samples(),
         "engine": _engine_calls([]),
@@ -298,7 +298,7 @@ def test_preprocessing_decodes_and_runs_vad_once_before_language_resolution(
 
     run_transcribe(
         audio,
-        model="faster-whisper",
+        provider="faster-whisper",
         results_dir=workspace_tmp_path / "results",
         decoder=decode,
         vad_detector=vad,
@@ -317,7 +317,7 @@ def test_missing_public_artifact_is_rebuilt_without_inference(
     calls: list[int] = []
     kwargs = {
         "language": "zh",
-        "model": "faster-whisper",
+        "provider": "faster-whisper",
         "results_dir": workspace_tmp_path / "results",
         "decoder": lambda _path: _samples(),
         "engine": _engine_calls(calls),
@@ -388,7 +388,7 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
     audio.write_bytes(b"audio")
     kwargs = {
         "language": "zh",
-        "model": "faster-whisper",
+        "provider": "faster-whisper",
         "results_dir": workspace_tmp_path / "results",
         "decoder": lambda _path: _samples(),
         "engine": _engine_calls([]),
@@ -421,7 +421,7 @@ def test_empty_result_never_publishes_complete_manifest(
         run_transcribe(
             audio,
             language="en",
-            model="faster-whisper",
+            provider="faster-whisper",
             results_dir=results,
             decoder=lambda _path: _samples(),
             engine=lambda *_args: EngineResult("", []),

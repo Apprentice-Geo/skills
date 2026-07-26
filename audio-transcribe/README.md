@@ -31,10 +31,10 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3
 uv run --no-sync python -m scripts.transcribe ".\audio.m4a"
 ```
 
-显式指定语言或模型：
+显式指定语言或 Provider：
 
 ```powershell
-uv run --no-sync python -m scripts.transcribe ".\audio.m4a" --language zh --model faster-whisper
+uv run --no-sync python -m scripts.transcribe ".\audio.m4a" --language zh --provider faster-whisper
 ```
 
 Whisper CPU 参数：
@@ -42,7 +42,7 @@ Whisper CPU 参数：
 ```powershell
 uv run --no-sync python -m scripts.transcribe ".\audio.m4a" `
   --language zh `
-  --model faster-whisper `
+  --provider faster-whisper `
   --num-workers 4 `
   --cpu-threads 3
 ```
@@ -53,7 +53,7 @@ uv run --no-sync python -m scripts.transcribe ".\audio.m4a" `
 results/<audio-id>/<provider>-<language>-<64位variant-id>/
 ```
 
-同一音频改名或移动后仍使用相同 `audio_id`；语言、模型、固定模型 revision、执行策略、VAD、规划或断句配置变化时会使用不同 `variant_id`。
+同一音频改名或移动后仍使用相同 `audio_id`；语言、Provider、固定模型 revision、执行策略、VAD、规划或断句配置变化时会使用不同 `variant_id`。
 
 ## 公开 artifact
 

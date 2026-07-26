@@ -39,6 +39,9 @@ def legal_chunk_count_range(
     sample_count: int,
     parameters: PlanningParameters = DEFAULT_PLANNING_PARAMETERS,
 ) -> tuple[int, int]:
+    """
+    返回合法的切片数量范围 (min, max)
+    """
     if (
         isinstance(sample_count, bool)
         or not isinstance(sample_count, int)

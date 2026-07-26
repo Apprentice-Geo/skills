@@ -12,7 +12,7 @@ from scripts.config import (
 
 @dataclass
 class TranscribeOptions:
-    model: str | None = None
+    model_path: str | None = None
     language: str | None = None
     device: str = DEFAULT_TRANSCRIBE_DEVICE
     compute_type: str = DEFAULT_TRANSCRIBE_COMPUTE_TYPE
@@ -28,7 +28,7 @@ class TranscribeOptions:
         if isinstance(args, cls):
             return args
         return cls(
-            model=getattr(args, "model", None),
+            model_path=getattr(args, "model_path", None),
             language=getattr(args, "language", None),
             device=getattr(args, "device", DEFAULT_TRANSCRIBE_DEVICE),
             compute_type=getattr(args, "compute_type", DEFAULT_TRANSCRIBE_COMPUTE_TYPE),

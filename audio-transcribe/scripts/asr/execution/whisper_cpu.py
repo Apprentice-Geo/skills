@@ -77,11 +77,14 @@ class WhisperCpuPolicy:
                 )
             workers = requested_workers
         else:
+            # 最小切片数 后续会得到保守的 worker 数
+            # 但是对于最大化 worker 数会不会效率更优以及会不会导致更多硬切有待实验
             minimum_chunks = math.ceil(
                 sample_count / self.planning_parameters.max_chunk_samples
             )
             workers = 0
             threads = 0
+            # 从最大 worker 数开始尝试
             for candidate in range(min(budget, max(1, minimum_chunks)), 0, -1):
                 if requested_threads is None and budget % candidate:
                     continue
