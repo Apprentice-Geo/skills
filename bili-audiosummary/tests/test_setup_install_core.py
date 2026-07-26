@@ -28,7 +28,7 @@ def test_verify_core_imports_checks_installed_runtime_modules(
 ) -> None:
     modules_dir = workspace_tmp_path / "modules"
     modules_dir.mkdir()
-    for name in ("yt_dlp", "faster_whisper", "ffmpeg_binaries"):
+    for name in ("yt_dlp", "ffmpeg_binaries"):
         (modules_dir / f"{name}.py").write_text("", encoding="utf-8")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(modules_dir)

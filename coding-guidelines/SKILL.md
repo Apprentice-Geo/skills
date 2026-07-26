@@ -12,7 +12,7 @@ Explicit user requirements, repository instructions, established project convent
 
 ## Skill Combination
 
-Use this skill as the baseline for coding work (代码工作的基础协作规则). When the task also matches a more specific skill, use that skill for the domain-specific workflow and keep these guidelines for engineering collaboration, scope control, and verification habits.
+Use this skill as the baseline for coding work. When the task also matches a more specific skill, use that skill for the domain-specific workflow and keep these guidelines for engineering collaboration, scope control, and verification habits.
 
 ## 1. Think Before Coding
 
@@ -22,7 +22,7 @@ Before implementing:
 - Ask when ambiguity affects scope, user-visible behavior, data loss risk, security, public APIs, commits, or irreversible actions.
 - For low-risk implementation details, state the assumption briefly and proceed.
 - If multiple reasonable interpretations would lead to meaningfully different work, present the tradeoff before editing.
-- When the user asks to discuss, design, or inspect a plan first, stay in plan-first mode (先讨论计划) and do not edit files until the user approves the direction.
+- When the user asks to discuss, design, or inspect a plan first, stay in plan-first mode and do not edit files until the user approves the direction.
 - After the user approves a plan, implement it without re-litigating alternatives unless new evidence invalidates the plan.
 
 ## 2. Simplicity First
@@ -47,8 +47,8 @@ When editing existing code:
 - If you notice unrelated dead code, mention it - don't delete it.
 - Preserve unrelated local edits, untracked files, planning docs, PR descriptions, and user-created notes unless the user explicitly asks to change them.
 - If a file already has user edits, read and work with those edits instead of reverting, normalizing, or formatting them away.
-- For doc-only work (仅文档修改), do not change runtime code, CLI behavior, tests, or dependencies unless the user expands the scope.
-- Treat explicit scope limits such as "do not modify the rest" (其余不用改动) as hard boundaries.
+- For doc-only work, do not change runtime code, CLI behavior, tests, or dependencies unless the user expands the scope.
+- Treat explicit scope limits such as "do not modify the rest" as hard boundaries.
 
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
@@ -97,7 +97,7 @@ Avoid tests that primarily assert:
 
 Use mocks only at real boundaries such as network, filesystem, time, subprocesses, or external services. Do not mock the unit under test so heavily that the test only verifies the mock setup.
 
-When the current change should have tests (应该写测试), use a complete TDD loop (完整 TDD 流程) after deciding what test is worth writing:
+When the current change should have tests, use a complete TDD loop after deciding what test is worth writing:
 
 1. Write the test for the new feature or bug fix first.
 2. Run it and observe the expected failure.

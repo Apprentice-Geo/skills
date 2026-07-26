@@ -14,9 +14,9 @@ The corrected article should preserve the author's expression style. Do not impr
 
 ## Default Editing Mode
 
-Use light correction mode (轻量校对) by default. Fix only clear errors that are visible from the text itself.
+Use light correction mode by default. Fix only clear errors that are visible from the text itself.
 
-If the user specifies a heading, section, paragraph, range, or "do not modify the rest" (其余不用改动), edit only that scope. Treat explicit scope limits as hard boundaries.
+If the user specifies a heading, section, paragraph, range, or "do not modify the rest", edit only that scope. Treat explicit scope limits as hard boundaries.
 
 Do not expand, summarize, translate, add examples, add background knowledge, or convert the article into formal documentation unless the user explicitly asks for that kind of rewrite.
 
@@ -40,7 +40,7 @@ Preserve:
 - original paragraph boundaries unless Markdown syntax is clearly broken
 - code logic, commands, paths, URLs, logs, version numbers, and formulas
 - the author's uncertainty level, wording habits, and original tone
-- user-specified edit scope, including section-only edits and "do not modify the rest" (其余不用改动)
+- user-specified edit scope, including section-only edits and "do not modify the rest"
 
 Do not add facts, examples, explanations, conclusions, or background knowledge.
 
@@ -109,33 +109,6 @@ zip（）返回一个包含一些元组的迭代器
 └--> 递推公式为 $dp_i = dp_{i-1} + dp_{i-2}, i \ge 2$
 ```
 
-## Output
-
-If editing a file, update the original file. If the user pasted text directly, return the corrected text.
-
-Keep the revision note concise. Do not list every punctuation, spacing, or formatting change one by one.
-
-Tell the user revision note using this structure:
-
-```markdown
-**修改说明**
-
-- 简短说明修改了哪些类型的问题。
-- 只列出有意义的修改，不逐个列出所有标点和空格调整。
-
-**需确认项**
-
-- 如果没有需确认项，写“无”。
-```
-
-Good summary items:
-
-- 修正错别字。
-- 修正 Markdown 标题或列表格式。
-- 调整中英文间空格。
-- 将未标记公式改为 LaTeX 公式。
-- 保留疑似术语并列入需确认项。
-
 ## Protected Content
 
 Do not modify these unless there is an explicit formatting error:
@@ -174,3 +147,30 @@ Before finishing, verify:
 - No facts or conclusions were added.
 - No technical conclusion changed.
 - The article still reads like the author's personal blog, not formal documentation.
+
+## Output
+
+If editing a file, update the original file. If the user pasted text directly, return the corrected text.
+
+Keep the revision note concise. Do not list every punctuation, spacing, or formatting change one by one.
+
+Tell the user revision note using this structure:
+
+```markdown
+**修改说明**
+
+- 简短说明修改了哪些类型的问题。
+- 只列出有意义的修改，不逐个列出所有标点和空格调整。
+
+**需确认项**
+
+- 如果没有需确认项，写“无”。
+```
+
+Good summary items:
+
+- 修正错别字。
+- 修正 Markdown 标题或列表格式。
+- 调整中英文间空格。
+- 将未标记公式改为 LaTeX 公式。
+- 保留疑似术语并列入需确认项。

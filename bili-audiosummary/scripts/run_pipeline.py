@@ -1,12 +1,13 @@
 import argparse
+import os
+import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
-from scripts import fetch_audio, subtitle_transcript, transcribe
+from scripts import fetch_audio, subtitle_transcript
 from scripts.config import (
-    DEFAULT_ASR_PROVIDER,
-    DEFAULT_TRANSCRIBE_LANGUAGE,
     RESULTS_DIR,
     SKILL_ROOT,
     SUMMARY_INSTRUCTIONS_PATH,
@@ -18,8 +19,20 @@ from scripts.process_logging import (
     get_logger,
     terminal_info,
 )
-from scripts.runtime_options import FetchOptions, PipelineOptions, TranscribeOptions
-from scripts.utils import ensure_dir, path_to_posix, read_json
+from scripts.runtime_options import FetchOptions, PipelineOptions
+from scripts.summary_job import (
+    JOB_FILENAME,
+    job_lock,
+    load_job,
+    publish_job,
+    relative_path,
+)
+from scripts.utils import (
+    ensure_dir,
+    normalize_bilibili_video_url,
+    path_to_posix,
+    read_json,
+)
 
 logger = get_logger(__name__)
 
@@ -37,10 +50,6 @@ def format_duration(seconds: float) -> str:
     return f"{hours}h {remaining_minutes}m {remaining_seconds:05.2f}s"
 
 
-def resolve_transcribe_language(options: PipelineOptions) -> str:
-    return options.language or DEFAULT_TRANSCRIBE_LANGUAGE
-
-
 def make_fetch_args(options: PipelineOptions) -> FetchOptions:
     return FetchOptions(
         url=options.url,
@@ -49,7 +58,7 @@ def make_fetch_args(options: PipelineOptions) -> FetchOptions:
         playlist=False,
         skip_audio=False,
         skip_subtitles=options.skip_subtitles,
-        language=resolve_transcribe_language(options),
+        language=options.language,
         write_auto_subs=True,
         subtitle_langs=[],
         subtitle_format="srt/best",
@@ -59,35 +68,6 @@ def make_fetch_args(options: PipelineOptions) -> FetchOptions:
         retries=10,
         socket_timeout=30,
         quiet=False,
-    )
-
-
-def make_transcribe_args(
-    options: PipelineOptions,
-    manifest_path: Path,
-    output_dir: Path | None,
-) -> TranscribeOptions:
-    return TranscribeOptions(
-        input=None,
-        manifest=manifest_path,
-        audio=None,
-        output_dir=output_dir,
-        asr_provider=options.asr_provider,
-        model=None,
-        language=resolve_transcribe_language(options),
-        device=transcribe.DEFAULT_TRANSCRIBE_DEVICE,
-        compute_type=transcribe.DEFAULT_TRANSCRIBE_COMPUTE_TYPE,
-        beam_size=transcribe.DEFAULT_TRANSCRIBE_BEAM_SIZE,
-        cpu_threads=None,
-        num_workers=None,
-    )
-
-
-def require_audio_for_stt(audio_files: list[Path]) -> None:
-    if audio_files:
-        return
-    raise RuntimeError(
-        "No usable audio files available. Download or reuse at least one audio file before running ASR."
     )
 
 
@@ -191,41 +171,6 @@ def write_summary_prompt(
     }
 
 
-def write_prompt_for_transcript(
-    fetch_result: dict[str, Any],
-    transcript_result: dict[str, Any],
-    summary_language: str | None = None,
-) -> dict[str, Path]:
-    return write_summary_prompt(
-        result_dir=fetch_result["paths"]["result"],
-        video_id=fetch_result["video_id"],
-        transcript_markdown_path=transcript_result["markdown_path"],
-        transcript_json_path=transcript_result["json_path"],
-        summary_language=summary_language,
-    )
-
-
-def run_asr_transcript(
-    options: PipelineOptions,
-    fetch_result: dict[str, Any],
-    audio_files: list[Path],
-) -> dict[str, Any]:
-    require_audio_for_stt(audio_files)
-    transcribe_args = make_transcribe_args(
-        options,
-        fetch_result["manifest_path"],
-        fetch_result["paths"]["result"],
-    )
-    transcribe_started_at = time.perf_counter()
-    result = transcribe.run_transcribe(transcribe_args)
-    terminal_info(
-        logger,
-        "[Stage] Transcribe completed in %s",
-        format_duration(time.perf_counter() - transcribe_started_at),
-    )
-    return result
-
-
 def select_usable_subtitle(
     subtitle_files: list[Path],
     preferred_languages: list[str],
@@ -243,130 +188,283 @@ def select_usable_subtitle(
             path_to_posix(candidate_path),
             error,
         )
-
     return None
+
+
+def _job_base(
+    fetch_result: dict[str, Any],
+    result_dir: Path,
+    options: PipelineOptions,
+) -> dict[str, Any]:
+    manifest = read_json(fetch_result["manifest_path"])
+    metadata = read_json(fetch_result["metadata_path"])
+    audio_files = [
+        Path(path).resolve() for path in fetch_result.get("audio_files") or []
+    ]
+    return {
+        "schema_version": 1,
+        "status": "preparing",
+        "video": {
+            "bvid": str(fetch_result["video_id"]),
+            "title": str(manifest.get("title") or fetch_result["video_id"]),
+            "url": str(manifest.get("url") or options.url),
+            "uploader": metadata.get("uploader"),
+            "summary_language": options.summary_language,
+        },
+        "resources": {
+            "fetch_manifest": relative_path(
+                Path(fetch_result["manifest_path"]), result_dir
+            ),
+            "subtitle": None,
+            "audio": (
+                relative_path(audio_files[0], result_dir) if audio_files else None
+            ),
+            "subtitle_skipped": bool(options.skip_subtitles),
+        },
+        "transcript": None,
+        "transcription_manifest": None,
+        "prompt": None,
+        "error": None,
+    }
+
+
+def _video_id_from_normalized_url(normalized_url: str) -> str:
+    match = re.search(r"/video/(BV[0-9A-Za-z]+)", normalized_url)
+    if match is None:
+        raise ValueError(
+            "A canonical Bilibili BV video URL is required to create the summary job."
+        )
+
+    video_id = match.group(1)
+    page_values = parse_qs(urlsplit(normalized_url).query).get("p", [])
+    if page_values:
+        return f"{video_id}_p{page_values[-1]}"
+    return video_id
+
+
+def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
+    normalized_url = normalize_bilibili_video_url(options.url)
+    video_id = _video_id_from_normalized_url(normalized_url)
+    result_dir = (RESULTS_DIR / video_id).resolve()
+    return result_dir / JOB_FILENAME, {
+        "schema_version": 1,
+        "status": "preparing",
+        "video": {
+            "bvid": video_id,
+            "title": video_id,
+            "url": normalized_url,
+            "uploader": None,
+            "summary_language": options.summary_language,
+        },
+        "resources": {
+            "fetch_manifest": "resource/fetch_manifest.json",
+            "subtitle": None,
+            "audio": None,
+            "subtitle_skipped": bool(options.skip_subtitles),
+        },
+        "transcript": None,
+        "transcription_manifest": None,
+        "prompt": None,
+        "error": None,
+    }
+
+
+def _failed_job(payload: dict[str, Any], stage: str, exc: Exception) -> dict[str, Any]:
+    safe_messages = {"No usable audio file is available for external transcription."}
+    message = (
+        str(exc)
+        if str(exc) in safe_messages
+        else "Bilibili resource preparation failed."
+        if stage == "fetch"
+        else "Summary preparation failed."
+    )
+    return {
+        **payload,
+        "status": "failed",
+        "transcript": None,
+        "transcription_manifest": None,
+        "prompt": None,
+        "error": {
+            "stage": stage,
+            "type": type(exc).__name__,
+            "message": message,
+        },
+    }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the full Bilibili audio summary preparation pipeline: fetch subtitles and audio, prefer usable subtitles, fall back to STT when needed, then build a summary prompt."
+        description="Prepare a resumable Bilibili summary job from subtitles and audio."
     )
     parser.add_argument("url", help="Bilibili video URL.")
     parser.add_argument(
         "--cookies", type=Path, help="Path to a Netscape-format cookies.txt file."
     )
-    parser.add_argument("--language", choices=("zh", "en"), required=True)
+    parser.add_argument(
+        "--language",
+        choices=("zh", "en"),
+        required=True,
+        help="Language used only to select Bilibili subtitles.",
+    )
     parser.add_argument(
         "--summary-language",
         choices=("zh", "en"),
-        help="Language for the final summary template. Defaults to the transcript language.",
-    )
-    parser.add_argument(
-        "--asr-provider",
-        choices=("whisper", "qwen3"),
-        default=DEFAULT_ASR_PROVIDER,
-        help="Strict ASR provider. qwen3 requires available CUDA and does not fall back to whisper.",
+        help="Language for the final summary template. Defaults to transcript language.",
     )
     parser.add_argument(
         "--skip-subtitles",
         action="store_true",
-        help="Skip subtitle reuse/download and force ASR from audio.",
+        help="Skip subtitle reuse/download and prepare a transcription job.",
     )
     return parser.parse_args()
 
 
-def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
+def _run_pipeline_unlocked(
+    options: PipelineOptions,
+) -> dict[str, Any]:
     pipeline_started_at = time.perf_counter()
-    options = PipelineOptions.from_args(args)
     fetch_args = make_fetch_args(options)
+    job_path, job = _preparing_job(options)
+    preparing_job_path = job_path
+    if job_path.exists():
+        existing_job = load_job(job_path)
+        if existing_job["status"] in {"prompt_ready", "complete"}:
+            raise RuntimeError(
+                f"Refusing to overwrite existing {existing_job['status']} job: {job_path}"
+            )
+    publish_job(job_path, job)
+
     fetch_started_at = time.perf_counter()
-    fetch_result = fetch_audio.run_fetch(fetch_args)
+    try:
+        fetch_result = fetch_audio.run_fetch(fetch_args)
+    except Exception as exc:
+        publish_job(job_path, _failed_job(job, "fetch", exc))
+        raise
     terminal_info(
         logger,
         "[Stage] Fetch completed in %s",
         format_duration(time.perf_counter() - fetch_started_at),
     )
-    manifest_path = fetch_result["manifest_path"]
-    result_dir = fetch_result["paths"]["result"]
 
-    transcript_result = None
-    prompt_result = None
+    result_dir = Path(fetch_result["paths"]["result"]).resolve()
+    fetched_job_path = result_dir / JOB_FILENAME
+    if fetched_job_path != job_path and fetched_job_path.exists():
+        existing_job = load_job(fetched_job_path)
+        if existing_job["status"] in {"prompt_ready", "complete"}:
+            raise RuntimeError(
+                f"Refusing to overwrite existing {existing_job['status']} job: {fetched_job_path}"
+            )
+    job_path = fetched_job_path
+    job = _job_base(fetch_result, result_dir, options)
+    publish_job(job_path, job)
+    if preparing_job_path != job_path and preparing_job_path.is_file():
+        os.unlink(preparing_job_path)
+    stage = "prepare_transcript"
+    try:
+        subtitle_path = None
+        if not options.skip_subtitles:
+            subtitle_files = [
+                Path(path)
+                for path in (fetch_result.get("subtitle_files") or [])
+                if fetch_audio.is_usable_subtitle(Path(path))
+            ]
+            subtitle_path = select_usable_subtitle(
+                subtitle_files,
+                fetch_audio.resolve_subtitle_langs(fetch_args),
+            )
 
-    subtitle_files = fetch_result.get("subtitle_files") or []
-    audio_files = [Path(path) for path in (fetch_result.get("audio_files") or [])]
-    usable_subtitle_files = [
-        Path(path)
-        for path in subtitle_files
-        if fetch_audio.is_usable_subtitle(Path(path))
-    ]
-    if options.skip_subtitles:
-        logger.info("Skipping subtitles; using ASR from audio.")
-        transcript_result = run_asr_transcript(options, fetch_result, audio_files)
-    elif usable_subtitle_files:
-        subtitle_path = select_usable_subtitle(
-            usable_subtitle_files,
-            fetch_audio.resolve_subtitle_langs(fetch_args),
-        )
-        if subtitle_path is not None:
+        if subtitle_path is None:
+            audio_path = job["resources"]["audio"]
+            if audio_path is None:
+                raise RuntimeError(
+                    "No usable audio file is available for external transcription."
+                )
+            job = {**job, "status": "needs_transcription"}
+        else:
             transcript_result = subtitle_transcript.subtitle_to_transcript(
                 subtitle_path=subtitle_path,
-                manifest=read_json(manifest_path),
+                manifest=read_json(fetch_result["manifest_path"]),
                 metadata=read_json(fetch_result["metadata_path"]),
                 output_dir=result_dir,
             )
-        else:
-            logger.warning("Subtitle SRT is empty or invalid; falling back to STT.")
-            transcript_result = run_asr_transcript(options, fetch_result, audio_files)
-    else:
-        if subtitle_files:
-            logger.warning("No usable SRT subtitles found; falling back to STT.")
-        transcript_result = run_asr_transcript(options, fetch_result, audio_files)
+            stage = "build_prompt"
+            terminal_info(logger, "[Stage] Build summary prompt")
+            prompt_result = write_summary_prompt(
+                result_dir=result_dir,
+                video_id=fetch_result["video_id"],
+                transcript_markdown_path=transcript_result["markdown_path"],
+                transcript_json_path=transcript_result["json_path"],
+                summary_language=options.summary_language,
+            )
+            job = {
+                **job,
+                "status": "prompt_ready",
+                "resources": {
+                    **job["resources"],
+                    "subtitle": relative_path(subtitle_path, result_dir),
+                },
+                "transcript": {
+                    "source": "bilibili_subtitle",
+                    "path": relative_path(transcript_result["json_path"], result_dir),
+                },
+                "prompt": {
+                    "path": relative_path(prompt_result["prompt_path"], result_dir),
+                    "summary_path": relative_path(
+                        prompt_result["summary_path"], result_dir
+                    ),
+                },
+            }
+        publish_job(job_path, job)
+    except Exception as exc:
+        publish_job(job_path, _failed_job(job, stage, exc))
+        raise
 
-    terminal_info(logger, "[Stage] Build summary prompt")
-    prompt_result = write_prompt_for_transcript(
-        fetch_result,
-        transcript_result,
-        options.summary_language,
-    )
     terminal_info(
         logger,
-        "Pipeline completed in %s",
+        "Pipeline prepared in %s",
         format_duration(time.perf_counter() - pipeline_started_at),
     )
-    terminal_info(logger, "Result: %s", path_to_posix(result_dir))
-    logger.info("Manifest: %s", path_to_posix(manifest_path))
-    if transcript_result:
-        logger.info(
-            "Transcript JSON: %s",
-            path_to_posix(transcript_result["json_path"]),
+    terminal_info(logger, "Summary Job: %s", path_to_posix(job_path))
+    if job["status"] == "needs_transcription":
+        terminal_info(
+            logger,
+            "Transcription required for audio: %s",
+            job["resources"]["audio"],
         )
-        logger.info(
-            "Transcript Markdown: %s",
-            path_to_posix(transcript_result["markdown_path"]),
-        )
-    if prompt_result:
+    else:
         terminal_info(
             logger,
             "Summary Prompt: %s",
-            path_to_posix(prompt_result["prompt_path"]),
-        )
-        terminal_info(
-            logger,
-            "Final Summary Path: %s",
-            path_to_posix(prompt_result["summary_path"]),
-        )
-        terminal_info(
-            logger,
-            "Agent should read the summary prompt file above to generate the final summary.",
+            path_to_posix(result_dir / job["prompt"]["path"]),
         )
 
     session = LoggingSession.current()
     return {
         "fetch": fetch_result,
-        "transcript": transcript_result,
-        "prompt": prompt_result,
+        "job": job,
+        "job_path": job_path,
         "log_path": session.log_path if session is not None else None,
     }
+
+
+def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
+    options = PipelineOptions.from_args(args)
+    preparing_job_path, _ = _preparing_job(options)
+    with job_lock(preparing_job_path):
+        try:
+            return _run_pipeline_unlocked(options)
+        except Exception as exc:
+            if preparing_job_path.is_file():
+                try:
+                    preparing = load_job(preparing_job_path)
+                except (OSError, ValueError):
+                    preparing = None
+                if preparing is not None and preparing["status"] == "preparing":
+                    publish_job(
+                        preparing_job_path,
+                        _failed_job(preparing, "prepare", exc),
+                    )
+            raise
 
 
 def main() -> int:
