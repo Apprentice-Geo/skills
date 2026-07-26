@@ -11,7 +11,6 @@ from scripts.process_logging import (
     create_timestamped_log_path,
 )
 
-DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
 PYTHON_VERSION = (3, 12)
 
 
@@ -21,36 +20,23 @@ class SetupPaths:
     cache_dir: Path
     logs_dir: Path
     uv_cache_dir: Path
-    hf_home: Path
-    hf_hub_cache: Path
-    models_dir: Path
     results_dir: Path
     venv_dir: Path
     venv_python: Path
-    whisper_model_dir: Path
-    qwen3_asr_model_dir: Path
-    qwen3_aligner_model_dir: Path
 
     @classmethod
     def from_root(cls, root: Path) -> "SetupPaths":
         root = root.resolve()
         cache_dir = root / ".cache"
-        models_dir = root / "models"
         venv_dir = root / ".venv"
         return cls(
             root=root,
             cache_dir=cache_dir,
             logs_dir=cache_dir / "logs",
             uv_cache_dir=cache_dir / "uv",
-            hf_home=cache_dir / "huggingface",
-            hf_hub_cache=cache_dir / "huggingface" / "hub",
-            models_dir=models_dir,
             results_dir=root / "results",
             venv_dir=venv_dir,
             venv_python=venv_dir / "Scripts" / "python.exe",
-            whisper_model_dir=models_dir / "faster-whisper-small",
-            qwen3_asr_model_dir=models_dir / "qwen3-asr-0.6b",
-            qwen3_aligner_model_dir=models_dir / "qwen3-forcedaligner-0.6b",
         )
 
 
@@ -62,21 +48,11 @@ def configure_environment(
         paths.cache_dir,
         paths.logs_dir,
         paths.uv_cache_dir,
-        paths.models_dir,
         paths.results_dir,
     ):
         path.mkdir(parents=True, exist_ok=True)
 
     environ.setdefault("UV_CACHE_DIR", str(paths.uv_cache_dir))
-    environ.setdefault("HF_HOME", str(paths.hf_home))
-    environ.setdefault(
-        "HUGGINGFACE_HUB_CACHE",
-        str(Path(environ["HF_HOME"]) / "hub"),
-    )
-    environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
-
-    Path(environ["HF_HOME"]).mkdir(parents=True, exist_ok=True)
-    Path(environ["HUGGINGFACE_HUB_CACHE"]).mkdir(parents=True, exist_ok=True)
 
 
 def create_log_path(paths: SetupPaths) -> Path:

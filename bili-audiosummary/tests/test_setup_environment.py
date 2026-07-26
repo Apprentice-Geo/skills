@@ -19,30 +19,25 @@ def test_configure_environment_uses_project_local_caches(
     workspace_tmp_path: Path,
 ) -> None:
     paths = SetupPaths.from_root(workspace_tmp_path)
-    environ = {"HF_ENDPOINT": "https://example.invalid/hf"}
+    environ: dict[str, str] = {}
 
     configure_environment(paths, environ)
 
     assert environ["UV_CACHE_DIR"] == str(paths.uv_cache_dir)
-    assert environ["HF_HOME"] == str(paths.hf_home)
-    assert environ["HUGGINGFACE_HUB_CACHE"] == str(paths.hf_hub_cache)
-    assert environ["HF_ENDPOINT"] == "https://example.invalid/hf"
     assert paths.logs_dir.is_dir()
-    assert paths.models_dir.is_dir()
     assert paths.results_dir.is_dir()
 
 
-def test_configure_environment_derives_hub_cache_from_explicit_hf_home(
+def test_configure_environment_preserves_explicit_uv_cache(
     workspace_tmp_path: Path,
 ) -> None:
     paths = SetupPaths.from_root(workspace_tmp_path)
-    custom_hf_home = workspace_tmp_path / "custom-hf"
-    environ = {"HF_HOME": str(custom_hf_home)}
+    custom_uv_cache = workspace_tmp_path / "custom-uv"
+    environ = {"UV_CACHE_DIR": str(custom_uv_cache)}
 
     configure_environment(paths, environ)
 
-    assert environ["HF_HOME"] == str(custom_hf_home)
-    assert environ["HUGGINGFACE_HUB_CACHE"] == str(custom_hf_home / "hub")
+    assert environ["UV_CACHE_DIR"] == str(custom_uv_cache)
 
 
 def test_assert_python_312_rejects_other_minor_versions() -> None:
@@ -62,24 +57,14 @@ def test_create_log_path_uses_setup_timestamp_name(
     assert log_path.name.endswith(".log")
 
 
-def test_pyproject_sets_default_uv_index_without_affecting_pytorch_index() -> None:
+def test_pyproject_uses_only_the_default_uv_index() -> None:
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text("utf-8"))
 
     indexes = pyproject["tool"]["uv"]["index"]
-    default_indexes = [index for index in indexes if index.get("default")]
-    pytorch_indexes = [index for index in indexes if index["name"] == "pytorch-cu126"]
-
-    assert default_indexes == [
+    assert indexes == [
         {
             "name": "tsinghua-pypi",
             "url": DEFAULT_UV_INDEX,
             "default": True,
-        }
-    ]
-    assert pytorch_indexes == [
-        {
-            "name": "pytorch-cu126",
-            "url": "https://download.pytorch.org/whl/cu126",
-            "explicit": True,
         }
     ]

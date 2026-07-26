@@ -1,0 +1,25 @@
+from pathlib import Path
+
+from scripts.model_identity import MODEL_REVISIONS
+
+SKILL_ROOT = Path(__file__).resolve().parents[1]
+RESULTS_DIR = SKILL_ROOT / "results"
+MODELS_DIR = SKILL_ROOT / "models"
+DEFAULT_WHISPER_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
+LANGUAGE_ID_MODEL_DIR = MODELS_DIR / "lang-id-voxlingua107-ecapa"
+QWEN3_ASR_MODEL_DIR = MODELS_DIR / "qwen3-asr-0.6b"
+QWEN3_ALIGNER_MODEL_DIR = MODELS_DIR / "qwen3-forcedaligner-0.6b"
+
+DEFAULT_TRANSCRIBE_LANGUAGE = "zh"
+DEFAULT_TRANSCRIBE_DEVICE = "cpu"
+DEFAULT_TRANSCRIBE_COMPUTE_TYPE = "float32"
+DEFAULT_TRANSCRIBE_BEAM_SIZE = 5
+DEFAULT_ASR_PROVIDER = "faster-whisper"
+
+DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+QWEN3_ASR_MODEL_REPO = str(MODEL_REVISIONS["qwen3"]["repo"])
+QWEN3_ALIGNER_MODEL_REPO = str(MODEL_REVISIONS["qwen3"]["aligner_repo"])
+QWEN3_DEVICE_MAP = "cuda:0"
+QWEN3_DTYPE = "bfloat16"
+QWEN3_MAX_INFERENCE_BATCH_SIZE = 4
+QWEN3_MAX_NEW_TOKENS = 1024
