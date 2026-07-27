@@ -20,6 +20,13 @@ def test_model_check_requires_revision_marker_and_required_files(
     assert result["status"] == "pass"
 
 
+def test_qwen_import_check_runs_in_a_clean_process() -> None:
+    imported, actual, error = check_dependencies.check_module_import("qwen_asr")
+    assert imported is True
+    assert actual
+    assert error == ""
+
+
 def test_report_has_provider_statuses_and_stable_shape() -> None:
     report = check_dependencies.run_check(Path(__file__).resolve().parents[1])
     assert report["schema_version"] == 1

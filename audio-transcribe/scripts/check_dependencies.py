@@ -60,6 +60,17 @@ def run_command(command: list[str]) -> tuple[int, str, str]:
         return 1, "", str(exc)
 
 
+def check_module_import(module: str) -> tuple[bool, str, str]:
+    """Import one dependency in a clean interpreter process."""
+    statement = (
+        "import importlib; "
+        f"module = importlib.import_module({module!r}); "
+        "print(getattr(module, '__version__', 'importable'))"
+    )
+    code, stdout, stderr = run_command([sys.executable, "-c", statement])
+    return code == 0, (stdout or stderr)[:300], stderr[:300]
+
+
 def model_check(
     check_id: str,
     directory: Path,
@@ -257,27 +268,27 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         "torch",
         "torchaudio",
     ):
-        try:
-            imported = __import__(module)
+        imported_ok, actual, stderr = check_module_import(module)
+        if imported_ok:
             import_status[module] = True
             checks.append(
                 item(
                     f"import:{module}",
                     "pass",
                     "module imports",
-                    str(getattr(imported, "__version__", "importable")),
+                    actual,
                     "Module imported successfully.",
                 )
             )
-        except Exception as exc:
+        else:
             import_status[module] = False
             checks.append(
                 item(
                     f"import:{module}",
                     "fail",
                     "module imports",
-                    type(exc).__name__,
-                    str(exc),
+                    actual or "import failed",
+                    stderr or actual,
                     "uv sync --python 3.12",
                 )
             )
@@ -323,18 +334,18 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     checks.extend((qwen_asr, qwen_aligner))
     qwen_optional_imports: dict[str, bool] = {}
     for module in ("qwen_asr", "transformers"):
-        try:
-            __import__(module)
+        imported_ok, actual, stderr = check_module_import(module)
+        if imported_ok:
             qwen_optional_imports[module] = True
-        except Exception as exc:
+        else:
             qwen_optional_imports[module] = False
             checks.append(
                 item(
                     f"import:{module}",
                     "warn",
                     "Qwen3 optional module imports",
-                    type(exc).__name__,
-                    str(exc),
+                    actual or "import failed",
+                    stderr or actual,
                     "uv sync --python 3.12 --no-dev --extra qwen3",
                 )
             )
