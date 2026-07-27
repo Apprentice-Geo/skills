@@ -1,22 +1,28 @@
 ---
 name: article-format-correction
-description: Corrects Markdown technical articles(技术博客), notes, algorithm writeups(算法题解), and debugging records(调试记录) by fixing obvious writing, punctuation, Markdown formatting(格式调整), and formula markup errors while preserving the author's meaning, structure, and expression style. Use when the user asks to revise(修正), correct, format, proofread(校对), or polish clear errors(润色) in Markdown articles.
+description: Corrects Markdown technical articles(技术博客), notes, algorithm writeups(算法题解), and debugging records(调试记录) by fixing obvious writing, punctuation, Markdown formatting(格式调整), and formula markup errors while applying the skill author's documented personal formatting preferences and preserving the author's meaning, structure, and expression style. Use when the user asks to revise(修正), correct, format, or proofread(校对) in Markdown articles.
 license: Apache-2.0
 ---
 
 # article-format-correction
 
-Correct Markdown technical articles with a light hand.
+Correct Markdown technical articles with a light hand and apply the skill author's documented personal formatting preferences.
 
-This skill fixes clear errors in writing, punctuation, Markdown syntax, and formula markup. It must not rewrite the article into a textbook, official document, marketing article, beginner tutorial, or knowledge-base article.
+This skill fixes clear errors in writing, punctuation, Markdown syntax, and formula markup. When the user does not specify otherwise, it also applies the personal formatting preferences documented below. It must not rewrite the article into a textbook, official document, marketing article, beginner tutorial, or knowledge-base article.
 
-The corrected article should preserve the author's expression style. Do not improve, normalize, or rewrite style beyond clear error correction.
+The corrected article should preserve the author's expression style. Do not apply general stylistic polishing, normalization, or rewriting beyond clear error correction and the personal formatting preferences defined in this skill.
 
 ## Default Editing Mode
 
 Use light correction mode by default. Fix only clear errors that are visible from the text itself.
 
 If the user specifies a heading, section, paragraph, range, or "do not modify the rest", edit only that scope. Treat explicit scope limits as hard boundaries.
+
+## Rule Priority
+
+User instructions take precedence over the rules in this skill. If the user's explicit requirements conflict with this skill's editing scope, personal formatting preferences, protected-content rules, or default correction mode, follow the user's requirements.
+
+When the user does not specify otherwise, follow this skill's rules, including its personal formatting preferences.
 
 Do not expand, summarize, translate, add examples, add background knowledge, or convert the article into formal documentation unless the user explicitly asks for that kind of rewrite.
 
@@ -38,7 +44,7 @@ Preserve:
 - original section order and explanation order
 - original heading hierarchy unless clearly malformed
 - original paragraph boundaries unless Markdown syntax is clearly broken
-- code logic, commands, paths, URLs, logs, version numbers, and formulas
+- code logic, commands, paths, URLs, logs, version numbers, and mathematical meaning
 - the author's uncertainty level, wording habits, and original tone
 - user-specified edit scope, including section-only edits and "do not modify the rest"
 
@@ -46,21 +52,15 @@ Do not add facts, examples, explanations, conclusions, or background knowledge.
 
 ## Preserve Expression Style
 
-Correct only clear errors. Do not improve the article's expression style.
+Correct only clear errors. Do not apply general stylistic polishing, normalization, or rewriting beyond clear error correction and the personal formatting preferences defined in this skill:
 
-Do not rewrite sentences that are understandable but stylistically imperfect.
-
-Do not replace informal notes with formal documentation language.
-
-Do not reorder the author's explanation, problem-solving path, or argument structure.
-
-Do not normalize terms, examples, or wording choices just because another style would be more polished.
-
-Do not make uncertain judgments sound certain. 
-
-Do not soften direct conclusions without reason. 
-
-Do not replace the author's problem-solving order with a knowledge-system order.
+- Do not rewrite sentences that are understandable but stylistically imperfect.
+- Do not replace informal notes with formal documentation language.
+- Do not reorder the author's explanation, problem-solving path, or argument structure.
+- Do not normalize terms, examples, or wording choices just because another style would be more polished.
+- Do not make uncertain judgments sound certain.
+- Do not soften direct conclusions without reason.
+- Do not replace the author's problem-solving order with a knowledge-system order.
 
 ## Safe Corrections
 
@@ -81,47 +81,64 @@ Symbols examples:
 - Chinese： `，。、：`
 - English: `,.:`
 
-**Exceptionally**, use `「」[]` and ` ` (half-width space)  instead of `“”【】` and `　` (full width space) for Chinese sentences.
+**Exceptionally**, use `「」[]` and ` ` (half-width space) instead of `“”【】` and `　` (full width space) for Chinese sentences.
 
-For formulas or codes:
+## Markdown Format Rules
 
-- Keep valid existing LaTeX and code block unchanged.
-- Use "$...$" for short inline formulas.
-- Use "$$...$$" for standalone formulas.
-- Use "`...`" for short inline code block.
-- Use "```...```" with correct language for standalone code block.
-- Use English half-width punctuation instead of Chinese full-width punctuation.
+### Emphasis and Links
+
+- Put a space between the bold markers and the surrounding text, but do not put spaces between the markers and their content. For example, use `这是 **重点内容**。`, not `这是**重点内容**。` or `这是 ** 重点内容 **。`.
+- Put angle brackets around every Markdown link destination, including image-link destinations and reference definitions. For example, use `[示例](<https://example.com>)`, `![示例](<https://example.com/image.png>)`, and `[id]: <https://example.com>`.
+
+### Formulas and Code
+
+- Keep valid existing LaTeX unchanged.
+- Use `$...$` for short inline formulas.
+- Use `$$...$$` for long or large standalone formulas.
+- Do not leave spaces between `$` and the formula content.
+- Use `` `...` `` for short inline code.
+- Use fenced code blocks with the correct language for genuine standalone code.
+- Use English half-width punctuation instead of Chinese full-width punctuation in formulas and code.
 - Preserve variables, notation, and mathematical meaning.
-- Do not derive, simplify, or reinterpret formulas or codes.
+- Do not derive, simplify, or reinterpret formulas or code.
+- Rewrite text with clear mathematical meaning as LaTeX, even when it is written as a code block. This includes dynamic programming recurrences, variable ranges, sums, products, set operations, and simple assignments such as `N = duration_samples`. Convert formula-like fenced blocks and inline code to the appropriate inline or independent LaTeX format when they clearly express mathematical formulas.
+- Keep genuine program code, commands, logs, and other non-mathematical code unchanged.
+- When converting an identifier containing an underscore into LaTeX, preserve the identifier as text, such as `$N = \text{duration\_samples}$`.
 
-Example:
+Examples:
 
-```text
-时间复杂度为 O(n log n)
-└--> 时间复杂度为 $O \left (n \log n \right )$
-zip（）返回一个包含一些元组的迭代器
-└--> `zip()` 返回一个包含一些元组的迭代器
-统计满足x*y=k的x，y数量
-└--> 统计满足 $x \times y = k$ 的数对 $x,y$ 数量
-统计满足x《=y《=z的数对（x，y，z）数量
-└--> 统计满足 $x \le y \le z$ 的数对 $\left ( x,y,z \right )$ 数量
-递推公式为dpi=dpi-1+dpi-2，i》=2
-└--> 递推公式为 $dp_i = dp_{i-1} + dp_{i-2}, i \ge 2$
+| Before                                | After                                              | Rule                                                                                |
+| ------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `时间复杂度为 O(n log n)`             | `时间复杂度为 $O(n \log n)$`                       | Rewrite unmarked mathematical expressions as LaTeX.                                 |
+| `统计满足 x*y=k 的 x，y 数量`         | `统计满足 $x \times y = k$ 的数对 $x, y$ 数量`     | Rewrite mathematical expressions as LaTeX.                                          |
+| `递推公式为 dpi=dpi-1+dpi-2，i>=2`    | `递推公式为 $dp_i = dp_{i-1} + dp_{i-2}, i \ge 2$` | Rewrite recurrences as LaTeX.                                                       |
+| `N = duration_samples`                | `$N = \text{duration\_samples}$`                   | Rewrite formula-like assignment blocks as LaTeX.                                    |
+| `N ∈ dp[K][j]`                        | `$N \in dp[K][j]$`                                 | Rewrite set-membership expressions as LaTeX while preserving array-access notation. |
+| `score = Σ loadᵢ²`                    | `$score = \sum_i load_i^2$`                        | Rewrite summation expressions as LaTeX without inventing missing bounds.            |
+| `zip（）返回一个包含一些元组的迭代器` | `` `zip()` 返回一个包含一些元组的迭代器 ``         | Use inline code for code identifiers.                                               |
+| `[示例](https://example.com)`         | `[示例](<https://example.com>)`                    | Put angle brackets around link destinations.                                        |
+
+For a long or large formula, use an independent display block:
+
+```markdown
+$$
+dp_i = \sum_{j=0}^{i-1} dp_j \times w_{j,i}, \quad i \ge 1
+$$
 ```
 
 ## Protected Content
 
 Do not modify these unless there is an explicit formatting error:
 
-- fenced code blocks and inline code
+- genuine fenced code blocks and genuine inline code
 - command lines, terminal output, error logs
-- file paths, URLs, Markdown links, image links
-- Markdown tables
+- file paths and URL contents; apply the link-destination rule above to Markdown links and image links
+- Markdown table structure; apply the Markdown Format Rules to content inside table cells
 - version numbers and project-specific names
 - existing valid LaTeX formulas
 - technical terms whose correctness is uncertain
 
-Do not reformat code inside fenced code blocks, change indentation, normalize code style, or rewrite comments unless the user explicitly asks or the fenced block itself has a clear Markdown formatting error.
+Do not reformat genuine code inside fenced code blocks or genuine inline code, change indentation, normalize code style, or rewrite comments unless the user explicitly asks or the fenced block itself has a clear Markdown formatting error. A fenced block or inline code span that clearly expresses a mathematical formula is not protected and must be rewritten as LaTeX according to the Markdown Format Rules.
 
 If protected content looks suspicious but is not clearly wrong, keep it unchanged and list it under `需确认项`.
 
@@ -142,7 +159,7 @@ Before finishing, verify:
 - Markdown is still valid.
 - Code fence count and fence boundaries are still correct.
 - Markdown tables still keep their row and separator structure.
-- Code blocks, inline code, URLs, logs, tables, and valid formulas were not changed accidentally.
+- Genuine code blocks, inline code, URLs, logs, tables, and valid formulas were not changed accidentally; formula-like code blocks and inline code were converted intentionally when required.
 - Commands, file paths, version numbers, and project-specific names were not normalized or rewritten accidentally.
 - No facts or conclusions were added.
 - No technical conclusion changed.
