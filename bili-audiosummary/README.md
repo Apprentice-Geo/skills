@@ -34,6 +34,14 @@
 
 setup 准备本 Skill 的 Python 环境、Bilibili 下载依赖以及打包的 `ffmpeg`/`ffprobe`。它不安装 ASR 模型。
 
+运行流程第一步是只读依赖检查：
+
+```powershell
+.\scripts\check_dependencies.bat
+```
+
+检查器同时输出终端摘要、`.cache/logs/dependency-check-*.json` 报告和日志，返回 `0` 表示可运行，`1` 表示依赖不完整，`2` 表示平台或检查器配置错误。它不会安装依赖、下载模型或修改环境。需要外部转写时，必须另外运行 `audio-transcribe` 的检查器并阅读摘要。
+
 ## 可恢复总结流程
 
 ### 1. 准备资源和任务

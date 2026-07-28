@@ -38,7 +38,7 @@ Use this reference only when Bilibili resource preparation, job continuation, or
 ## HTTP 412 and Cookies
 
 - If Bilibili returns `HTTP 412`, stop the current run. Do not query another source or generate a summary.
-- Ask the user for a Netscape-format cookie file. Tested Chrome and Edge export procedures are in [README.md](../README.md#cookies-导出).
+- Ask the user for a Netscape-format cookie file. Tested Chrome and Edge export procedures are in the Cookies section of [README.md](../README.md).
 - The pipeline auto-detects `cookies.txt`, `www.bilibili.com_cookies.txt`, and `bilibili_cookies.txt` in the Skill root.
 - For another filename or location:
 
