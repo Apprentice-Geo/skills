@@ -10,6 +10,14 @@
 .\scripts\setup\setup_windows.bat
 ```
 
+每次运行转写前先执行只读依赖检查并阅读摘要：
+
+```powershell
+.\scripts\check_dependencies.bat
+```
+
+检查器会同时生成 `.cache/logs/dependency-check-*.json` 和日志，返回 `0` 表示 `ready` 或 `degraded`，`1` 表示 `not_ready`，`2` 表示平台、参数或检查器配置错误。它只报告状态，不安装依赖、不下载模型、不修复模型。自动转写依据 Provider 状态选择；显式指定不可用 Provider 时应立即停止。
+
 首次使用前安装至少一个转写模型。安装命令同时准备固定 revision 的语言识别模型：
 
 ```powershell
