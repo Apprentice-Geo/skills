@@ -1,0 +1,4 @@
+interface:
+  display_name: "Subtitle Creator"
+  short_description: "Create SRT subtitles with optional text correction"
+  default_prompt: "Use $subtitle-creator to create an SRT subtitle from a local audio file."
