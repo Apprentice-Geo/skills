@@ -32,6 +32,7 @@ def test_complete_accepts_warning_and_is_idempotent(
     job = continue_summary.continue_summary(job_path, manifest_path.resolve())
     summary_path = job_path.parent / job["prompt"]["summary_path"]
     summary_path.write_text("# Summary\n\nEnglish only text.\n", encoding="utf-8")
+    (manifest_path.parent / "transcript.json").unlink()
 
     completed, result = complete_summary.complete_summary(job_path)
     repeated, repeated_result = complete_summary.complete_summary(job_path)
@@ -40,48 +41,6 @@ def test_complete_accepts_warning_and_is_idempotent(
     assert completed["status"] == "complete"
     assert repeated == completed
     assert repeated_result.ok
-
-
-def test_complete_revalidates_external_artifacts_and_rolls_back(
-    workspace_tmp_path: Path,
-) -> None:
-    job_path, audio_path = make_needs_job(workspace_tmp_path)
-    manifest_path = make_transcription(workspace_tmp_path, audio_path)
-    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
-    summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("# 总结\n\n有效内容。\n", encoding="utf-8")
-    (manifest_path.parent / "raw_timestamps.json").write_text(
-        "tampered", encoding="utf-8"
-    )
-
-    with pytest.raises(ValueError, match="digest mismatch"):
-        complete_summary.complete_summary(job_path)
-
-    rolled_back = read_json(job_path)
-    assert rolled_back["status"] == "needs_transcription"
-    assert summary_path.exists()
-    assert not (job_path.parent / job["prompt"]["path"]).exists()
-
-
-def test_external_invalidation_never_deletes_unrelated_job_file(
-    workspace_tmp_path: Path,
-) -> None:
-    job_path, audio_path = make_needs_job(workspace_tmp_path)
-    manifest_path = make_transcription(workspace_tmp_path, audio_path)
-    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
-    unrelated = job_path.parent / "notes.md"
-    unrelated.write_text("keep me", encoding="utf-8")
-    job["prompt"]["path"] = "notes.md"
-    write_json(job_path, job)
-    (manifest_path.parent / "raw_timestamps.json").write_text(
-        "tampered", encoding="utf-8"
-    )
-
-    with pytest.raises(ValueError, match="digest mismatch"):
-        complete_summary.complete_summary(job_path)
-
-    assert unrelated.read_text(encoding="utf-8") == "keep me"
-    assert read_json(job_path)["status"] == "needs_transcription"
 
 
 @pytest.mark.parametrize(

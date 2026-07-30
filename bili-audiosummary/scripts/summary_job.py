@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import hashlib
-import json
-import math
 import os
-import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -30,8 +26,6 @@ STABLE_STATUSES = {
     "complete",
     "failed",
 }
-PUBLIC_PROVIDERS = {"faster-whisper", "qwen3"}
-SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 class JobValidationError(ValueError):
@@ -113,14 +107,6 @@ def resolve_manifest_artifact(
             f"transcription manifest artifact {name!r} escapes its directory"
         )
     return resolved
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for block in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def _require_mapping(value: Any, field: str) -> dict[str, Any]:
@@ -243,154 +229,9 @@ def publish_job(job_path: Path, payload: dict[str, Any]) -> None:
     write_json_atomic(job_path, payload)
 
 
-def _finite_nonnegative(value: Any) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and math.isfinite(value)
-        and value >= 0
-    )
-
-
-def _validate_transcript(
-    payload: Any,
-    audio_id: str,
-    variant_id: str,
-    provider: str,
-    language: str,
-    duration: float,
-) -> None:
-    if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
-        raise TranscriptionValidationError("unsupported transcript schema_version")
-    if payload.get("audio_id") != audio_id:
-        raise TranscriptionValidationError(
-            "transcript audio_id does not match manifest"
-        )
-    if payload.get("variant_id") != variant_id:
-        raise TranscriptionValidationError(
-            "transcript variant_id does not match manifest"
-        )
-    if payload.get("provider") != provider:
-        raise TranscriptionValidationError(
-            "transcript provider does not match manifest"
-        )
-    if payload.get("language") != language:
-        raise TranscriptionValidationError(
-            "transcript language does not match manifest"
-        )
-    if (
-        not _finite_nonnegative(payload.get("duration"))
-        or payload["duration"] != duration
-    ):
-        raise TranscriptionValidationError("transcript duration is invalid")
-
-    segments = payload.get("segments")
-    if not isinstance(segments, list) or not segments:
-        raise TranscriptionValidationError("transcript segments must be non-empty")
-    previous_end = 0.0
-    for expected_id, segment in enumerate(segments):
-        if not isinstance(segment, dict):
-            raise TranscriptionValidationError("transcript segment must be an object")
-        if segment.get("id") != expected_id:
-            raise TranscriptionValidationError(
-                "transcript segment ids must be continuous"
-            )
-        start = segment.get("start")
-        end = segment.get("end")
-        if (
-            not isinstance(start, (int, float))
-            or isinstance(start, bool)
-            or not isinstance(end, (int, float))
-            or isinstance(end, bool)
-            or not _finite_nonnegative(start)
-            or not _finite_nonnegative(end)
-        ):
-            raise TranscriptionValidationError("transcript timestamps are invalid")
-        numeric_start = float(start)
-        numeric_end = float(end)
-        if numeric_start < previous_end or numeric_end < numeric_start:
-            raise TranscriptionValidationError(
-                "transcript timestamps must be monotonic"
-            )
-        if not isinstance(segment.get("text"), str) or not segment["text"].strip():
-            raise TranscriptionValidationError(
-                "transcript segment text must be non-empty"
-            )
-        previous_end = numeric_end
-
-
-def _validate_raw_timestamps(
-    payload: Any,
-    audio_id: str,
-    variant_id: str,
-    provider: str,
-    language: str,
-    duration: float,
-) -> None:
-    if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
-        raise TranscriptionValidationError("unsupported raw_timestamps schema_version")
-    expected = {
-        "audio_id": audio_id,
-        "variant_id": variant_id,
-        "provider": provider,
-        "language": language,
-        "duration": duration,
-    }
-    for field, value in expected.items():
-        if payload.get(field) != value:
-            raise TranscriptionValidationError(
-                f"raw_timestamps {field} does not match manifest"
-            )
-    items = payload.get("items")
-    if not isinstance(items, list):
-        raise TranscriptionValidationError("raw_timestamps items must be an array")
-    previous_end = 0.0
-    for item in items:
-        if not isinstance(item, dict) or set(item) != {
-            "text",
-            "start",
-            "end",
-            "probability",
-        }:
-            raise TranscriptionValidationError(
-                "raw_timestamps item has an invalid shape"
-            )
-        if not isinstance(item["text"], str) or not item["text"]:
-            raise TranscriptionValidationError(
-                "raw_timestamps item text must be non-empty"
-            )
-        start = item["start"]
-        end = item["end"]
-        if (
-            not _finite_nonnegative(start)
-            or not _finite_nonnegative(end)
-            or start < previous_end
-            or end < start
-        ):
-            raise TranscriptionValidationError(
-                "raw_timestamps timestamps must be monotonic"
-            )
-        probability = item["probability"]
-        if probability is not None and (
-            not isinstance(probability, (int, float))
-            or isinstance(probability, bool)
-            or not math.isfinite(probability)
-            or probability < 0
-            or probability > 1
-        ):
-            raise TranscriptionValidationError("raw_timestamps probability is invalid")
-        if provider == "qwen3" and probability is not None:
-            raise TranscriptionValidationError(
-                "Qwen3 raw_timestamps probability must remain null"
-            )
-        previous_end = end
-
-
-def validate_transcription_manifest(
-    manifest_path: Path, expected_audio_path: Path
-) -> tuple[dict[str, Any], Path]:
+def load_transcription(manifest_path: Path) -> tuple[Path, dict[str, Any]]:
     manifest_path = manifest_path.resolve()
-    if not manifest_path.is_absolute() or not manifest_path.is_file():
+    if not manifest_path.is_file():
         raise TranscriptionValidationError(
             f"transcription manifest does not exist: {manifest_path}"
         )
@@ -400,206 +241,22 @@ def validate_transcription_manifest(
         raise TranscriptionValidationError(
             f"cannot read transcription manifest: {exc}"
         ) from exc
-    if (
-        not isinstance(manifest, dict)
-        or manifest.get("schema_version") != SCHEMA_VERSION
-    ):
-        raise TranscriptionValidationError(
-            "unsupported transcription manifest schema_version"
-        )
-    if manifest.get("status") != "complete":
-        raise TranscriptionValidationError("transcription manifest is not complete")
-
-    audio = manifest.get("audio")
-    request = manifest.get("request")
+    if not isinstance(manifest, dict):
+        raise TranscriptionValidationError("transcription manifest must be an object")
     artifacts = manifest.get("artifacts")
-    artifact_sha256 = manifest.get("artifact_sha256")
-    if (
-        not isinstance(audio, dict)
-        or not isinstance(request, dict)
-        or not isinstance(artifacts, dict)
-        or not isinstance(artifact_sha256, dict)
-    ):
+    if not isinstance(artifacts, dict):
         raise TranscriptionValidationError(
-            "transcription manifest is missing required objects"
+            "transcription manifest artifacts must be an object"
         )
-
-    audio_id = audio.get("id")
-    audio_size = audio.get("size")
-    sample_count = audio.get("sample_count")
-    sample_rate = audio.get("sample_rate")
-    variant_id = request.get("variant_id")
-    provider = request.get("provider")
-    language = request.get("language")
-    duration = audio.get("duration")
-    if not isinstance(audio_id, str) or SHA256_PATTERN.fullmatch(audio_id) is None:
-        raise TranscriptionValidationError("transcription manifest audio.id is invalid")
-    if (
-        not isinstance(audio_size, int)
-        or isinstance(audio_size, bool)
-        or audio_size < 0
-    ):
+    transcript_path = resolve_manifest_artifact(manifest_path, artifacts, "transcript")
+    if not transcript_path.is_file():
         raise TranscriptionValidationError(
-            "transcription manifest audio.size is invalid"
-        )
-    for field, value in (("sample_count", sample_count), ("sample_rate", sample_rate)):
-        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            raise TranscriptionValidationError(
-                f"transcription manifest audio.{field} is invalid"
-            )
-    if not isinstance(variant_id, str) or SHA256_PATTERN.fullmatch(variant_id) is None:
-        raise TranscriptionValidationError(
-            "transcription manifest request.variant_id is invalid"
+            f"transcription artifact does not exist: {transcript_path}"
         )
     try:
-        canonical_request = {
-            key: value for key, value in request.items() if key != "variant_id"
-        }
-        canonical_bytes = json.dumps(
-            canonical_request,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
-        raise TranscriptionValidationError(
-            "transcription manifest request is not canonicalizable"
-        ) from exc
-    if hashlib.sha256(canonical_bytes).hexdigest() != variant_id:
-        raise TranscriptionValidationError(
-            "transcription manifest request.variant_id does not match request"
-        )
-    for field in (
-        "provider_identity",
-        "execution_policy",
-        "vad_parameters",
-        "planning_parameters",
-    ):
-        if not isinstance(request.get(field), dict):
-            raise TranscriptionValidationError(
-                f"transcription manifest request.{field} is invalid"
-            )
-    if request.get("segmentation_schema_version") != 1:
-        raise TranscriptionValidationError(
-            "transcription manifest segmentation schema is invalid"
-        )
-    if not isinstance(provider, str) or provider not in PUBLIC_PROVIDERS:
-        raise TranscriptionValidationError(
-            "transcription manifest request.provider is invalid"
-        )
-    if not isinstance(language, str) or not language:
-        raise TranscriptionValidationError(
-            "transcription manifest request.language is invalid"
-        )
-    if (
-        not isinstance(duration, (int, float))
-        or isinstance(duration, bool)
-        or not _finite_nonnegative(duration)
-    ):
-        raise TranscriptionValidationError(
-            "transcription manifest audio.duration is invalid"
-        )
-    numeric_duration = float(duration)
-
-    expected_audio_path = expected_audio_path.resolve()
-    if not expected_audio_path.is_file():
-        raise TranscriptionValidationError(
-            f"job audio does not exist: {expected_audio_path}"
-        )
-    if expected_audio_path.stat().st_size != audio_size:
-        raise TranscriptionValidationError(
-            "transcription audio size does not match job audio"
-        )
-    if sha256_file(expected_audio_path) != audio_id:
-        raise TranscriptionValidationError(
-            "transcription audio hash does not match job audio"
-        )
-
-    resolved_artifacts: dict[str, Path] = {}
-    log_path = resolve_manifest_artifact(manifest_path, artifacts, "log")
-    workspace_path = resolve_manifest_artifact(manifest_path, artifacts, "workspace")
-    if not log_path.is_file() or not workspace_path.is_dir():
-        raise TranscriptionValidationError(
-            "transcription manifest log or workspace is missing"
-        )
-    for name in ("transcript", "raw_timestamps"):
-        artifact_path = resolve_manifest_artifact(manifest_path, artifacts, name)
-        if not artifact_path.is_file():
-            raise TranscriptionValidationError(
-                f"transcription artifact does not exist: {name}"
-            )
-        expected_digest = artifact_sha256.get(name)
-        if (
-            not isinstance(expected_digest, str)
-            or SHA256_PATTERN.fullmatch(expected_digest) is None
-        ):
-            raise TranscriptionValidationError(
-                f"transcription artifact digest is invalid: {name}"
-            )
-        if sha256_file(artifact_path) != expected_digest:
-            raise TranscriptionValidationError(
-                f"transcription artifact digest mismatch: {name}"
-            )
-        resolved_artifacts[name] = artifact_path
-
-    try:
-        transcript = read_json(resolved_artifacts["transcript"])
+        transcript = read_json(transcript_path)
     except Exception as exc:
         raise TranscriptionValidationError(f"cannot read transcript: {exc}") from exc
-    try:
-        raw_timestamps = read_json(resolved_artifacts["raw_timestamps"])
-    except Exception as exc:
-        raise TranscriptionValidationError(
-            f"cannot read raw_timestamps: {exc}"
-        ) from exc
-    _validate_transcript(
-        transcript,
-        audio_id,
-        variant_id,
-        provider,
-        language,
-        numeric_duration,
-    )
-    _validate_raw_timestamps(
-        raw_timestamps,
-        audio_id,
-        variant_id,
-        provider,
-        language,
-        numeric_duration,
-    )
-    return manifest, resolved_artifacts["transcript"]
-
-
-def invalidate_external_transcription(
-    job_path: Path, payload: dict[str, Any]
-) -> dict[str, Any]:
-    prompt_path: Path | None = None
-    prompt = payload.get("prompt")
-    if isinstance(prompt, dict):
-        prompt_value = prompt.get("path")
-        if isinstance(prompt_value, str):
-            try:
-                prompt_path = resolve_local_path(job_path, prompt_value, "prompt.path")
-            except JobValidationError:
-                prompt_path = None
-
-    rolled_back = {
-        **payload,
-        "status": "needs_transcription",
-        "transcript": None,
-        "transcription_manifest": None,
-        "prompt": None,
-        "error": None,
-    }
-    publish_job(job_path, rolled_back)
-    expected_prompt = job_path.resolve().parent / (
-        f"{payload['video']['bvid']}_summary_prompt.md"
-    )
-    if prompt_path is not None and prompt_path == expected_prompt:
-        try:
-            prompt_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-    return rolled_back
+    if not isinstance(transcript, dict):
+        raise TranscriptionValidationError("transcript must be an object")
+    return transcript_path, transcript

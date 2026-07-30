@@ -12,7 +12,7 @@
 
 ## 能力边界
 
-- 总结仅依据原生字幕或已校验的外部 transcript，不分析视频画面。
+- 总结仅依据原生字幕或 `audio-transcribe` 发布的外部 transcript，不分析视频画面。
 - 不适合主要信息来自画面、图表、动作、屏幕文字或视觉演示的视频。
 - 目前仅支持 Bilibili 视频 URL。
 - `--language` 只选择 Bilibili 字幕语言组，不控制外部转写语言或模型。
@@ -84,16 +84,11 @@ uv run --no-sync python -m scripts.continue_summary `
   --transcription-manifest "<absolute-result-manifest-path>"
 ```
 
-继续命令只接受绝对 manifest 路径，并校验：
-
-- manifest 的 schema 和 `complete` 状态；
-- `transcript.json` 的相对路径没有逃逸 manifest 目录；
-- transcript digest、结构、非空 segments 和跨文件身份；
-- job 音频与转写 manifest 的 SHA-256 和大小一致。
+继续命令只接受绝对 manifest 路径，要求 transcript 路径为 manifest 目录内的相对路径，并读取该 JSON。当前由本 Skill 信任 `audio-transcribe` 发布的公共产物语义，不重复校验 manifest schema/status、digest、音频身份、variant/provider/language、segments 或 raw timestamps。
 
 成功后，job 记录外部 manifest 的绝对路径，生成只引用 job、manifest 和 transcript JSON 的 prompt，并原子进入 `prompt_ready`。外部 transcript、时间戳、日志和 workspace 不会复制到 Bilibili 结果目录。
 
-对同一 manifest 重复调用只会重新校验并返回现有结果；已绑定其他 manifest 时会拒绝覆盖。
+对同一 manifest 重复调用会幂等返回现有结果；已绑定其他 manifest 时会拒绝覆盖。
 
 ### 3. 写入并完成总结
 
@@ -105,14 +100,13 @@ uv run --no-sync python -m scripts.continue_summary `
 uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>"
 ```
 
-完成命令会重新校验外部转写引用和最终总结。总结内容校验失败时 job 保持 `prompt_ready`；外部转写失效时回退到 `needs_transcription`；全部通过后才进入 `complete`。对有效的 complete job 重复执行会成功返回。
+完成命令保留原生字幕来源校验、prompt 存在性校验和最终总结校验，但不重新校验外部转写产物。总结内容校验失败时 job 保持 `prompt_ready`；通过后进入 `complete`。对有效的 complete job 重复执行会成功返回。
 
 ### 恢复语义
 
 - `needs_transcription` 可在任意中断后重新读取并继续，不需要重新下载资源。
-- continue 失败时 job 保持或回到 `needs_transcription`，不得带着无效 transcript 生成 prompt。
-- prompt-ready 后若外部 manifest 或 transcript 缺失、损坏或 digest 不匹配，本 Skill 会删除仅由旧引用生成的内部 prompt、清空外部引用并原子回到 `needs_transcription`。
-- 回退不会修改外部转写目录，也不会删除用户已经写出的 summary。
+- continue 在发布前失败时 job 保持 `needs_transcription`。
+- prompt-ready 后不会因外部转写产物变化自动回退；当前公共产物语义由 `audio-transcribe` 负责。
 - summary 校验失败只保留 `prompt_ready`，便于修正原文件后重试。
 - 已有 `prompt_ready` 或 `complete` job 不会被准备命令静默覆盖。
 

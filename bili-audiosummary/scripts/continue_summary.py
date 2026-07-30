@@ -11,15 +11,13 @@ from scripts.run_pipeline import read_text, select_summary_template
 from scripts.summary_job import (
     JobValidationError,
     TranscriptionValidationError,
-    invalidate_external_transcription,
     job_lock,
     load_job,
+    load_transcription,
     publish_job,
     relative_path,
-    resolve_local_path,
-    validate_transcription_manifest,
 )
-from scripts.utils import path_to_posix, read_json
+from scripts.utils import path_to_posix
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -41,8 +39,8 @@ def _write_external_prompt(
     job: dict[str, Any],
     manifest_path: Path,
     transcript_path: Path,
+    transcript: dict[str, Any],
 ) -> dict[str, str]:
-    transcript = read_json(transcript_path)
     requested_language = job["video"].get("summary_language")
     template_language, template_path = select_summary_template(
         requested_language or transcript.get("language")
@@ -127,49 +125,24 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
                 f"cannot attach transcription to {job['transcript']['source']} job"
             )
         recorded_manifest = Path(job["transcription_manifest"]).resolve()
-        audio_path = resolve_local_path(
-            job_path, job["resources"]["audio"], "resources.audio"
-        )
-        try:
-            _, transcript_path = validate_transcription_manifest(
-                recorded_manifest, audio_path
+        if recorded_manifest != manifest_path:
+            raise JobValidationError(
+                "summary job already references a different transcription manifest"
             )
-            if transcript_path.resolve() != Path(job["transcript"]["path"]).resolve():
-                raise TranscriptionValidationError(
-                    "job transcript path does not match transcription manifest"
-                )
-            prompt_path = resolve_local_path(
-                job_path, job["prompt"]["path"], "prompt.path"
-            )
-            if not prompt_path.is_file():
-                raise JobValidationError(
-                    f"summary prompt does not exist: {prompt_path}"
-                )
-        except (JobValidationError, TranscriptionValidationError):
-            job = invalidate_external_transcription(job_path, job)
-            if recorded_manifest == manifest_path:
-                raise
-        else:
-            if recorded_manifest != manifest_path:
-                raise JobValidationError(
-                    "summary job already references a different transcription manifest"
-                )
-            return job
+        return job
 
     if job["status"] != "needs_transcription":
         raise JobValidationError(
             f"cannot continue summary job from status {job['status']!r}"
         )
 
-    audio_path = resolve_local_path(
-        job_path, job["resources"]["audio"], "resources.audio"
-    )
-    _, transcript_path = validate_transcription_manifest(manifest_path, audio_path)
+    transcript_path, transcript = load_transcription(manifest_path)
     prompt = _write_external_prompt(
         job_path,
         job,
         manifest_path,
         transcript_path,
+        transcript,
     )
     updated = {
         **job,
