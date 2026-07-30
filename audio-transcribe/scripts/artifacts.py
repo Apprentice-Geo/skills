@@ -66,7 +66,7 @@ def _finite_nonnegative(value: Any, field: str) -> float:
     return parsed
 
 
-def _validate_common(payload: Any, *, audio_id: str, variant_id: str) -> None:
+def _validate_common(payload: Any, *, audio_id: str, variant_id: str) -> float:
     if not isinstance(payload, dict) or payload.get("schema_version") != 1:
         raise ArtifactContractError("Invalid public artifact schema_version.")
     if payload.get("audio_id") != audio_id or payload.get("variant_id") != variant_id:
@@ -75,13 +75,13 @@ def _validate_common(payload: Any, *, audio_id: str, variant_id: str) -> None:
         raise ArtifactContractError("Invalid public provider.")
     if not isinstance(payload.get("language"), str) or not payload["language"]:
         raise ArtifactContractError("Invalid public language.")
-    _finite_nonnegative(payload.get("duration"), "duration")
+    return _finite_nonnegative(payload.get("duration"), "duration")
 
 
 def validate_transcript(
     payload: Any, *, audio_id: str, variant_id: str
 ) -> dict[str, Any]:
-    _validate_common(payload, audio_id=audio_id, variant_id=variant_id)
+    duration = _validate_common(payload, audio_id=audio_id, variant_id=variant_id)
     segments = payload.get("segments")
     if not isinstance(segments, list) or not segments:
         raise ArtifactContractError("Transcript segments must be non-empty.")
@@ -94,8 +94,10 @@ def validate_transcript(
             raise ArtifactContractError("Transcript segment text must be non-empty.")
         start = _finite_nonnegative(segment.get("start"), "segment.start")
         end = _finite_nonnegative(segment.get("end"), "segment.end")
-        if start < previous_end or end < start:
-            raise ArtifactContractError("Transcript segment times must be monotonic.")
+        if start < previous_end or end <= start or end > duration:
+            raise ArtifactContractError(
+                "Transcript segment times must satisfy 0 <= start < end <= duration."
+            )
         previous_end = end
     return payload
 

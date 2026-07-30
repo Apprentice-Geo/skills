@@ -97,7 +97,7 @@ The `workspace/` directory is internal cache and recovery state. `result_manifes
 - `artifacts`: manifest-relative paths for transcript, raw timestamps, log, and workspace;
 - `artifact_sha256`: SHA-256 digests for public transcript artifacts.
 
-`transcript.json` uses schema version 1 and contains ordered sentence segments. Segment IDs are continuous from zero. Segment text is non-empty. Segment times are finite, non-negative, and monotonic.
+`transcript.json` uses schema version 1 and contains ordered sentence segments. Segment IDs are continuous from zero. Segment text is non-empty. Segments do not overlap, and each segment satisfies `0 <= start < end <= duration`.
 
 `raw_timestamps.json` uses schema version 1 and contains standardized alignment items with exactly `text`, `start`, `end`, and `probability`. Item text is non-empty. Item times are finite, non-negative, and monotonic. Qwen3 items always use `probability: null`.
 

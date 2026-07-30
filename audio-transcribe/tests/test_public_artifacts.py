@@ -14,6 +14,7 @@ from scripts.artifacts import (
     resolve_artifact_path,
     validate_manifest,
     validate_raw_timestamps,
+    validate_transcript,
 )
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
@@ -273,6 +274,32 @@ def test_qwen_probability_and_overlapping_timestamps_are_rejected() -> None:
             audio_id=common["audio_id"],
             variant_id=common["variant_id"],
         )
+
+
+def test_transcript_segment_times_are_positive_and_within_duration() -> None:
+    payload = {
+        "schema_version": 1,
+        "audio_id": "a" * 64,
+        "variant_id": "b" * 64,
+        "provider": "faster-whisper",
+        "language": "zh",
+        "duration": 1.0,
+        "segments": [{"id": 0, "text": "词", "start": 0.5, "end": 0.5}],
+    }
+    identity = {
+        "audio_id": payload["audio_id"],
+        "variant_id": payload["variant_id"],
+    }
+
+    with pytest.raises(ArtifactContractError):
+        validate_transcript(payload, **identity)
+
+    payload["segments"][0]["end"] = 1.1
+    with pytest.raises(ArtifactContractError):
+        validate_transcript(payload, **identity)
+
+    payload["segments"][0]["end"] = 1.0
+    assert validate_transcript(payload, **identity) is payload
 
 
 def test_preprocessing_decodes_and_runs_vad_once_before_language_resolution(
