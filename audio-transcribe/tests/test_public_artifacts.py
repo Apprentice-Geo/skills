@@ -11,10 +11,12 @@ from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
     ArtifactContractError,
     publish_result,
+    recover_public_artifacts,
     resolve_artifact_path,
     validate_manifest,
     validate_raw_timestamps,
     validate_transcript,
+    write_workspace_result,
 )
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
@@ -300,6 +302,55 @@ def test_transcript_segment_times_are_positive_and_within_duration() -> None:
 
     payload["segments"][0]["end"] = 1.0
     assert validate_transcript(payload, **identity) is payload
+
+
+def test_segment_end_is_clamped_to_duration_and_recovers_identically(
+    workspace_tmp_path: Path,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    workspace_path = variant_dir / "workspace" / "result.json"
+    duration = 1.0004
+    audio_id = "a" * 64
+    canonical_request = {
+        "provider": "faster-whisper",
+        "language": "zh",
+    }
+    variant_id = canonical_sha256(canonical_request)
+    write_workspace_result(
+        workspace_path,
+        text="末",
+        items=[AlignmentItem("末", 0.0, 1.0006, None)],
+        duration=duration,
+        provider="faster-whisper",
+        language="zh",
+    )
+    (variant_dir / "transcribe.log").write_text("test\n", encoding="utf-8")
+
+    manifest_path = publish_result(
+        variant_dir,
+        audio={
+            "id": audio_id,
+            "size": 10,
+            "sample_count": 10_004,
+            "sample_rate": 10_000,
+            "duration": duration,
+        },
+        request={"variant_id": variant_id, **canonical_request},
+    )
+    transcript_path = variant_dir / "transcript.json"
+    original_manifest = manifest_path.read_bytes()
+    original_transcript = transcript_path.read_bytes()
+    manifest = read_json(manifest_path)
+
+    assert read_json(transcript_path)["segments"][0]["end"] == duration
+    assert read_json(variant_dir / "raw_timestamps.json")["items"][0]["end"] == 1.0006
+
+    transcript_path.unlink()
+    recover_public_artifacts(manifest_path)
+
+    assert transcript_path.read_bytes() == original_transcript
+    assert manifest_path.read_bytes() == original_manifest
+    assert read_json(manifest_path)["artifact_sha256"] == manifest["artifact_sha256"]
 
 
 def test_preprocessing_decodes_and_runs_vad_once_before_language_resolution(

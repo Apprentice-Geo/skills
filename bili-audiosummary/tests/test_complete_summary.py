@@ -43,6 +43,33 @@ def test_complete_accepts_warning_and_is_idempotent(
     assert repeated_result.ok
 
 
+def test_continue_rebuilds_missing_prompt_before_completion(
+    workspace_tmp_path: Path,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = make_transcription(workspace_tmp_path, audio_path)
+    job = continue_summary.continue_summary(job_path, manifest_path.resolve())
+    prompt_path = job_path.parent / job["prompt"]["path"]
+    prompt_path.unlink()
+    (manifest_path.parent / "transcript.json").unlink()
+
+    restored = continue_summary.continue_summary(job_path, manifest_path.resolve())
+
+    assert restored["status"] == "prompt_ready"
+    assert restored["transcription_manifest"] == job["transcription_manifest"]
+    assert restored["transcript"] == job["transcript"]
+    assert prompt_path.is_file()
+
+    summary_path = job_path.parent / restored["prompt"]["summary_path"]
+    summary_path.write_text(
+        "# Summary\n\nRestored prompt completed.\n", encoding="utf-8"
+    )
+    completed, result = complete_summary.complete_summary(job_path)
+
+    assert result.ok
+    assert completed["status"] == "complete"
+
+
 @pytest.mark.parametrize(
     "segments",
     [

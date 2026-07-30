@@ -121,7 +121,7 @@ The Bilibili result stores only the manifest reference and its own derived promp
 
 ## Completion and Idempotency
 
-Calling continue again with the same manifest returns the existing prompt-ready result. A different manifest cannot replace an already bound manifest. Preparation cannot silently overwrite an existing `prompt_ready` or `complete` job.
+Calling continue again with the same manifest returns the existing `prompt_ready` or `complete` result when its internal prompt exists. If that prompt is missing, continue rebuilds it from the job's bound manifest, transcript, and output paths, then atomically republishes the job without revalidating or modifying external transcription artifacts. A different manifest cannot replace an already bound manifest. Preparation cannot silently overwrite an existing `prompt_ready` or `complete` job.
 
 `complete_summary` reads the expected summary path from the job. It retains native subtitle validation, prompt existence checks, and summary validation, but does not revalidate external transcription artifacts. Summary-content validation failure leaves the job `prompt_ready`. Success atomically publishes `complete`. Repeating completion on a valid complete job succeeds without rewriting the job.
 

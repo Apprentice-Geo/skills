@@ -88,7 +88,7 @@ uv run --no-sync python -m scripts.continue_summary `
 
 成功后，job 记录外部 manifest 的绝对路径，生成只引用 job、manifest 和 transcript JSON 的 prompt，并原子进入 `prompt_ready`。外部 transcript、时间戳、日志和 workspace 不会复制到 Bilibili 结果目录。
 
-对同一 manifest 重复调用会幂等返回现有结果；已绑定其他 manifest 时会拒绝覆盖。
+对同一 manifest 重复调用时，内部 prompt 存在则幂等返回现有结果；prompt 缺失则使用 job 已绑定的 manifest、transcript 和输出路径重新生成，并原子更新 job。恢复过程不重新校验或修改外部转写产物。已绑定其他 manifest 时仍会拒绝覆盖。
 
 ### 3. 写入并完成总结
 
@@ -106,6 +106,7 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 - `needs_transcription` 可在任意中断后重新读取并继续，不需要重新下载资源。
 - continue 在发布前失败时 job 保持 `needs_transcription`。
+- 对同一 manifest 重复 continue 会修复缺失的内部 prompt，同时保持现有 job 状态和外部转写绑定。
 - prompt-ready 后不会因外部转写产物变化自动回退；当前公共产物语义由 `audio-transcribe` 负责。
 - summary 校验失败只保留 `prompt_ready`，便于修正原文件后重试。
 - 已有 `prompt_ready` 或 `complete` job 不会被准备命令静默覆盖。

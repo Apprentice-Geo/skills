@@ -16,6 +16,7 @@ from scripts.summary_job import (
     load_transcription,
     publish_job,
     relative_path,
+    resolve_local_path,
 )
 from scripts.utils import path_to_posix
 
@@ -41,14 +42,24 @@ def _write_external_prompt(
     transcript_path: Path,
     transcript: dict[str, Any],
 ) -> dict[str, str]:
-    requested_language = job["video"].get("summary_language")
-    template_language, template_path = select_summary_template(
-        requested_language or transcript.get("language")
-    )
     result_dir = job_path.resolve().parent
-    video_id = job["video"]["bvid"]
-    prompt_path = result_dir / f"{video_id}_summary_prompt.md"
-    summary_path = result_dir / f"{video_id}_summary_{template_language}.md"
+    if job["prompt"] is None:
+        requested_language = job["video"].get("summary_language")
+        template_language, template_path = select_summary_template(
+            requested_language or transcript.get("language")
+        )
+        video_id = job["video"]["bvid"]
+        prompt_path = result_dir / f"{video_id}_summary_prompt.md"
+        summary_path = result_dir / f"{video_id}_summary_{template_language}.md"
+    else:
+        prompt_path = resolve_local_path(job_path, job["prompt"]["path"], "prompt.path")
+        summary_path = resolve_local_path(
+            job_path, job["prompt"]["summary_path"], "prompt.summary_path"
+        )
+        _, template_path = select_summary_template(
+            job["video"].get("summary_language")
+            or summary_path.stem.rsplit("_", maxsplit=1)[-1]
+        )
 
     sections = [
         "# Summary Task",
@@ -129,7 +140,19 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
             raise JobValidationError(
                 "summary job already references a different transcription manifest"
             )
-        return job
+        prompt_path = resolve_local_path(job_path, job["prompt"]["path"], "prompt.path")
+        if prompt_path.is_file():
+            return job
+        prompt = _write_external_prompt(
+            job_path,
+            job,
+            recorded_manifest,
+            Path(job["transcript"]["path"]).resolve(),
+            {},
+        )
+        updated = {**job, "prompt": prompt}
+        publish_job(job_path, updated)
+        return updated
 
     if job["status"] != "needs_transcription":
         raise JobValidationError(
