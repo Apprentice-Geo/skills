@@ -58,7 +58,7 @@ def _validate_source(job_path: Path, job: dict[str, Any]) -> None:
                 or not math.isfinite(end)
                 or start < 0
                 or start < previous_end
-                or end < start
+                or end <= start
             ):
                 raise JobValidationError("subtitle transcript timestamps are invalid")
             if not isinstance(segment.get("text"), str) or not segment["text"].strip():

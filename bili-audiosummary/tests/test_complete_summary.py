@@ -75,6 +75,7 @@ def test_continue_rebuilds_missing_prompt_before_completion(
     [
         [None],
         [{"id": 1, "start": 0.0, "end": 1.0, "text": "bad"}],
+        [{"id": 0, "start": 1.0, "end": 1.0, "text": "bad"}],
         [{"id": 0, "start": 1.0, "end": 0.5, "text": "bad"}],
         [{"id": 0, "start": 0.0, "end": 1.0, "text": "  "}],
     ],

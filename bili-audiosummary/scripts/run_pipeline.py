@@ -28,10 +28,10 @@ from scripts.summary_job import (
     relative_path,
 )
 from scripts.utils import (
-    ensure_dir,
     normalize_bilibili_video_url,
     path_to_posix,
     read_json,
+    write_text_atomic,
 )
 
 logger = get_logger(__name__)
@@ -108,15 +108,10 @@ def write_summary_prompt(
     result_dir: Path,
     video_id: str,
     transcript_markdown_path: Path,
-    transcript_json_path: Path,
     summary_language: str | None = None,
 ) -> dict[str, Path]:
     result_dir = result_dir.resolve()
     transcript_markdown_path = transcript_markdown_path.resolve()
-    transcript_json_path = transcript_json_path.resolve()
-    if summary_language is None:
-        transcript_payload = read_json(transcript_json_path)
-        summary_language = transcript_payload.get("language")
     template_language, template_path = select_summary_template(summary_language)
 
     prompt_path = result_dir / f"{video_id}_summary_prompt.md"
@@ -162,8 +157,7 @@ def write_summary_prompt(
         "<!-- FINAL SUMMARY PATH END -->",
     ]
 
-    ensure_dir(prompt_path.parent)
-    prompt_path.write_text("\n".join(sections).rstrip() + "\n", encoding="utf-8")
+    write_text_atomic(prompt_path, "\n".join(sections).rstrip() + "\n")
     return {
         "prompt_path": prompt_path,
         "summary_path": summary_path,
@@ -180,7 +174,10 @@ def select_usable_subtitle(
         preferred_languages,
     )
     for candidate_path in sorted_subtitle_files:
-        segments, error = subtitle_transcript.probe_srt(candidate_path)
+        segments, error = subtitle_transcript.probe_srt(
+            candidate_path,
+            report_zero_duration=False,
+        )
         if segments is not None:
             return candidate_path
         logger.warning(
@@ -386,6 +383,7 @@ def _run_pipeline_unlocked(
                 manifest=read_json(fetch_result["manifest_path"]),
                 metadata=read_json(fetch_result["metadata_path"]),
                 output_dir=result_dir,
+                report_zero_duration=False,
             )
             stage = "build_prompt"
             terminal_info(logger, "[Stage] Build summary prompt")
@@ -393,8 +391,10 @@ def _run_pipeline_unlocked(
                 result_dir=result_dir,
                 video_id=fetch_result["video_id"],
                 transcript_markdown_path=transcript_result["markdown_path"],
-                transcript_json_path=transcript_result["json_path"],
-                summary_language=options.summary_language,
+                summary_language=(
+                    options.summary_language
+                    or transcript_result["payload"].get("language")
+                ),
             )
             job = {
                 **job,

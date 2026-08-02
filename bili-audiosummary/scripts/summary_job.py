@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from audio_transcribe_contract import ResultValidationError
+
 from scripts.utils import read_json, write_json_atomic
 
 SCHEMA_VERSION = 1
@@ -26,13 +28,10 @@ STABLE_STATUSES = {
     "complete",
     "failed",
 }
+TranscriptionValidationError = ResultValidationError
 
 
 class JobValidationError(ValueError):
-    pass
-
-
-class TranscriptionValidationError(ValueError):
     pass
 
 
@@ -84,28 +83,6 @@ def resolve_local_path(job_path: Path, value: Any, field: str) -> Path:
     resolved = (job_dir / raw_path).resolve()
     if not resolved.is_relative_to(job_dir):
         raise JobValidationError(f"{field} escapes the job directory")
-    return resolved
-
-
-def resolve_manifest_artifact(
-    manifest_path: Path, artifacts: dict[str, Any], name: str
-) -> Path:
-    value = artifacts.get(name)
-    if not isinstance(value, str) or not value:
-        raise TranscriptionValidationError(
-            f"transcription manifest artifact {name!r} is missing"
-        )
-    raw_path = Path(value)
-    if raw_path.is_absolute():
-        raise TranscriptionValidationError(
-            f"transcription manifest artifact {name!r} must be relative"
-        )
-    manifest_dir = manifest_path.resolve().parent
-    resolved = (manifest_dir / raw_path).resolve()
-    if not resolved.is_relative_to(manifest_dir):
-        raise TranscriptionValidationError(
-            f"transcription manifest artifact {name!r} escapes its directory"
-        )
     return resolved
 
 
@@ -227,36 +204,3 @@ def load_job(job_path: Path) -> dict[str, Any]:
 def publish_job(job_path: Path, payload: dict[str, Any]) -> None:
     validate_job(job_path, payload)
     write_json_atomic(job_path, payload)
-
-
-def load_transcription(manifest_path: Path) -> tuple[Path, dict[str, Any]]:
-    manifest_path = manifest_path.resolve()
-    if not manifest_path.is_file():
-        raise TranscriptionValidationError(
-            f"transcription manifest does not exist: {manifest_path}"
-        )
-    try:
-        manifest = read_json(manifest_path)
-    except Exception as exc:
-        raise TranscriptionValidationError(
-            f"cannot read transcription manifest: {exc}"
-        ) from exc
-    if not isinstance(manifest, dict):
-        raise TranscriptionValidationError("transcription manifest must be an object")
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise TranscriptionValidationError(
-            "transcription manifest artifacts must be an object"
-        )
-    transcript_path = resolve_manifest_artifact(manifest_path, artifacts, "transcript")
-    if not transcript_path.is_file():
-        raise TranscriptionValidationError(
-            f"transcription artifact does not exist: {transcript_path}"
-        )
-    try:
-        transcript = read_json(transcript_path)
-    except Exception as exc:
-        raise TranscriptionValidationError(f"cannot read transcript: {exc}") from exc
-    if not isinstance(transcript, dict):
-        raise TranscriptionValidationError("transcript must be an object")
-    return transcript_path, transcript

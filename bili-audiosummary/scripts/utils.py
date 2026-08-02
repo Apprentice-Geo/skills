@@ -85,6 +85,18 @@ def write_json_atomic(path: Path, data: Any) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def write_text_atomic(path: Path, text: str) -> None:
+    ensure_dir(path.parent)
+    temporary_path = path.with_name(
+        f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        temporary_path.write_text(text, encoding="utf-8")
+        os.replace(temporary_path, path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 

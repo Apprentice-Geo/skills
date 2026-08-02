@@ -22,6 +22,7 @@ Use this reference only when Bilibili resource preparation, job continuation, or
 - If `.venv` is incomplete, remove or repair it only with explicit user approval, then rerun setup.
 - Use `uv run --no-sync python` for commands after setup.
 - If dependency sync fails, inspect the setup log and `pyproject.toml` / `uv.lock`.
+- If `audio_transcribe_contract` cannot import, rerun setup; do not replace the pinned contract with copied Skill source.
 - `ffmpeg-binaries-compat` is the supported ffmpeg source. If `ffmpeg` or `ffprobe` cannot be resolved, rerun setup rather than relying on system PATH.
 - This setup does not install ASR dependencies or models. Follow `audio-transcribe` documentation when the job needs transcription.
 
@@ -54,6 +55,7 @@ uv run --no-sync python -m scripts.run_pipeline `
 ## Subtitle Selection
 
 - Only `.srt` files in the requested Bilibili language group and parsing into non-empty segments are reusable.
+- A cue whose start and end timestamps are equal is logged and skipped. Other valid cues remain usable; if none remain, try another subtitle or fall back to audio transcription.
 - Other subtitle files do not block a fresh target-language download attempt.
 - An empty, malformed, or unreadable cached SRT should be logged and replaced when possible.
 - `--skip-subtitles` intentionally bypasses both cached and downloaded subtitles and requires audio.
@@ -84,7 +86,7 @@ uv run --no-sync python -m scripts.continue_summary `
   --transcription-manifest "<absolute-result-manifest-path>"
 ```
 
-The transcription manifest must be absolute. The named transcript must use a relative path contained within the manifest directory, exist, and be readable as a JSON object. This Skill currently trusts the public artifact semantics published by `audio-transcribe` and does not duplicate its schema, status, digest, identity, segment, or raw-timestamp validation.
+The transcription manifest must be absolute. The pinned `audio-transcribe-contract` validates its complete status, schema, contained artifact paths, digests, identities, transcript segments, and raw timestamps. Continue then compares the SHA-256 of job `resources.audio` with `manifest.audio.id`. A contract or audio-identity failure must not publish `transcript.md`, a prompt, or an updated job.
 
 On continue failure:
 
@@ -92,7 +94,7 @@ On continue failure:
 - do not edit, delete, or attempt to repair the external transcription directory;
 - report the loading or path-safety reason and let the user or `audio-transcribe` workflow provide a usable result.
 
-Calling continue again with the same manifest is idempotent. Passing a different manifest to an already bound job is rejected rather than silently replacing it.
+Calling continue again with the same manifest is idempotent when `transcript.md` and the prompt exist. A missing prompt is rebuilt from existing Markdown without external revalidation; missing Markdown requires contract and audio-identity validation before it is rendered again. Passing a different manifest to an already bound job is rejected rather than silently replacing it. Existing ready or complete jobs are updated only when continue is explicitly called.
 
 ## Summary Completion
 
