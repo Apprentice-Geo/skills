@@ -11,13 +11,12 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 import numpy as np
+from audio_transcribe_contract import load_result
 
 from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
-    ArtifactContractError,
     publish_result,
     recover_public_artifacts,
-    validate_manifest,
     variant_lock,
     write_workspace_result,
 )
@@ -30,7 +29,7 @@ SAMPLE_RATE = 16_000
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS_DIR = SKILL_ROOT / "results"
 MODELS_DIR = SKILL_ROOT / "models"
-SUPPORTED_PROVIDERS = ("faster-whisper", "qwen3")
+SUPPORTED_PROVIDERS = ("faster-whisper", "qwen3-asr")
 QWEN3_LANGUAGES = frozenset(
     {"de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "yue", "zh"}
 )
@@ -185,14 +184,14 @@ def _select_provider(requested: str | None, language: str) -> str:
     if requested is not None:
         if requested not in SUPPORTED_PROVIDERS:
             raise ValueError(f"Unsupported transcription provider: {requested}")
-        if requested == "qwen3" and language not in QWEN3_LANGUAGES:
+        if requested == "qwen3-asr" and language not in QWEN3_LANGUAGES:
             supported = ", ".join(sorted(QWEN3_LANGUAGES))
             raise ValueError(
                 f"Qwen3 does not support language '{language}'. Supported: {supported}."
             )
         return requested
     if language in QWEN3_LANGUAGES and _qwen3_ready():
-        return "qwen3"
+        return "qwen3-asr"
     if _whisper_ready():
         return "faster-whisper"
     raise RuntimeError(
@@ -206,7 +205,7 @@ def _execution_identity(
     cpu_threads: int | None,
     num_workers: int | None,
 ) -> dict[str, Any]:
-    if provider == "qwen3":
+    if provider == "qwen3-asr":
         return {
             "policy": "qwen3-cuda",
             "batch_size": 4,
@@ -480,8 +479,8 @@ def run_transcribe(
     with variant_lock(variant_dir):
         if manifest_path.exists():
             try:
-                validate_manifest(manifest_path)
-            except (ArtifactContractError, OSError, UnicodeError, ValueError):
+                load_result(manifest_path)
+            except ValueError:
                 recover_public_artifacts(manifest_path)
             return manifest_path.resolve()
 

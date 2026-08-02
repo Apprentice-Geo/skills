@@ -42,7 +42,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("audio_path", nargs="+", type=Path)
     parser.add_argument(
-        "--provider", choices=("faster-whisper", "qwen3"), required=True
+        "--provider", choices=("faster-whisper", "qwen3-asr"), required=True
     )
     parser.add_argument("--language")
     parser.add_argument(

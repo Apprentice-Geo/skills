@@ -57,7 +57,7 @@ def adapt_qwen_timestamp_items(items: list[Any]) -> list[TranscriptWord]:
 
 
 class Qwen3Provider:
-    name = "qwen3"
+    name = "qwen3-asr"
     source = "qwen3-asr"
     supported_languages = frozenset(QWEN3_LANGUAGE_NAMES)
 

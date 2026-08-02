@@ -17,7 +17,8 @@
 - `scripts/asr/chunking/`：音频分块、时间线和规划优化。
 - `scripts/asr/alignment.py`：chunk 级文本与时间戳 alignment 校验。
 - `scripts/asr/merge.py`：把有序 chunk transcript 合并为 workspace result。
-- `scripts/artifacts.py`：公开 artifact 与 manifest 的校验、发布和恢复。
+- `scripts/artifacts.py`：公开 artifact 与 manifest 的发布、锁和恢复。
+- `packages/audio-transcribe-contract/`：公开结果的严格读取与校验包。
 - `scripts/model_identity.py`：固定模型 revision 与 `variant_id` 相关身份。
 - `scripts/model_artifacts.py`：本地模型 artifact 就绪性检查。
 - `scripts/process_logging.py`：转写日志归档。
@@ -35,7 +36,7 @@
 - 公开 artifact 路径以 manifest 所在目录为基准，必须校验 schema、status、identity、路径逃逸和 SHA-256 digest 后再读取。
 - `audio_id` 是输入音频字节的 SHA-256，独立于输入路径和文件名。
 - `variant_id` 来自规范化 resolved request，包含 Provider、语言、固定模型 revision、执行策略、VAD、规划和断句相关身份；不应包含输入路径、输出路径或日志级别。
-- 公开 Provider 值只允许 `faster-whisper` 和 `qwen3`。
+- 公开 Provider 值只允许 `faster-whisper` 和 `qwen3-asr`。
 - 如果用户显式指定 `--provider`，只使用该 Provider；如果自动选择 Provider，一旦解析完成，后续加载、推理、alignment、merge 或发布失败不得静默切换 Provider。
 - 公共 transcript 文本保持 Provider 原文，不执行 OpenCC、简繁转换、重写或其他文本规范化。
 - 不要把第三方模型对象、原始 Provider 大对象或大型内部 metadata 写入公开 artifact。

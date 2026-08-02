@@ -28,6 +28,6 @@ MODEL_REVISIONS = {
 
 def provider_model_identity(provider: str) -> dict[str, Any]:
     try:
-        return dict(MODEL_REVISIONS[provider])
+        return dict(MODEL_REVISIONS["qwen3" if provider == "qwen3-asr" else provider])
     except KeyError as exc:
         raise ValueError(f"Unsupported provider: {provider}") from exc

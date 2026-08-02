@@ -90,6 +90,7 @@ def test_qwen_provider_parses_probability_as_none() -> None:
 
     assert transcript.words[0].probability is None
     identity = provider.request_identity()
+    assert identity["provider"] == "qwen3-asr"
     assert identity["max_new_tokens"] > 0
     assert identity["return_time_stamps"] is True
 
@@ -153,7 +154,7 @@ def test_qwen_prepare_logs_only_safe_model_configuration(
         provider.prepare({"policy": "qwen3-cuda", "batch_size": 4})
 
     log_text = log_path.read_text(encoding="utf-8")
-    assert "provider=qwen3" in log_text
+    assert "provider=qwen3-asr" in log_text
     assert f"device={QWEN3_DEVICE_MAP} compute_type={QWEN3_DTYPE}" in log_text
     assert "policy=qwen3-cuda batch_size=4" in log_text
 
@@ -289,7 +290,7 @@ def test_qwen_policy_logs_batch_and_isolated_failure_tracebacks(
         ChunkLayout(1, 1, 2, "audio_end", 0),
     ]
     audio = NormalizedAudio(np.zeros(2, dtype=np.float32))
-    provider = SimpleNamespace(name="qwen3", prepare=lambda identity: object())
+    provider = SimpleNamespace(name="qwen3-asr", prepare=lambda identity: object())
     provider.transcribe_batch = lambda *_args: (_ for _ in ()).throw(
         RuntimeError("batch")
     )
@@ -316,11 +317,11 @@ def test_qwen_policy_logs_batch_and_isolated_failure_tracebacks(
     assert str(failures["chunk_001"]) == "bad"
     log_text = log_path.read_text(encoding="utf-8")
     assert (
-        "provider=qwen3 policy=qwen3-cuda batch=1 "
+        "provider=qwen3-asr policy=qwen3-cuda batch=1 "
         "chunks=chunk_000..chunk_001 attempt=batch action=isolate"
     ) in log_text
     assert (
-        "provider=qwen3 policy=qwen3-cuda batch=1 "
+        "provider=qwen3-asr policy=qwen3-cuda batch=1 "
         "chunk=chunk_001 attempt=isolation action=fail"
     ) in log_text
     assert "RuntimeError: batch" in log_text

@@ -6,16 +6,12 @@ import time
 from pathlib import Path
 
 import pytest
+from audio_transcribe_contract import ResultValidationError, load_result
 
 from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
-    ArtifactContractError,
     publish_result,
     recover_public_artifacts,
-    resolve_artifact_path,
-    validate_manifest,
-    validate_raw_timestamps,
-    validate_transcript,
     write_workspace_result,
 )
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
@@ -145,7 +141,7 @@ def test_content_identity_reuses_result_after_input_rename(
 
     assert first_manifest == second_manifest
     assert calls == [1]
-    manifest = validate_manifest(first_manifest)
+    manifest = load_result(first_manifest).manifest
     assert manifest["request"]["provider"] == "faster-whisper"
     assert len(manifest["request"]["variant_id"]) == 64
     assert first_manifest.parent.name.endswith(manifest["request"]["variant_id"])
@@ -234,76 +230,6 @@ def test_malformed_manifest_is_hidden_before_recovery(
     assert not manifest_path.exists()
 
 
-def test_qwen_probability_and_overlapping_timestamps_are_rejected() -> None:
-    common = {
-        "schema_version": 1,
-        "audio_id": "a" * 64,
-        "variant_id": "b" * 64,
-        "provider": "qwen3",
-        "language": "zh",
-        "duration": 1.0,
-    }
-    with pytest.raises(ArtifactContractError, match="probability"):
-        validate_raw_timestamps(
-            {
-                **common,
-                "items": [
-                    {
-                        "text": "词",
-                        "start": 0.0,
-                        "end": 0.5,
-                        "probability": 0.9,
-                    }
-                ],
-            },
-            audio_id=common["audio_id"],
-            variant_id=common["variant_id"],
-        )
-    with pytest.raises(ArtifactContractError, match="monotonic"):
-        validate_raw_timestamps(
-            {
-                **common,
-                "items": [
-                    {"text": "前", "start": 0.0, "end": 0.5, "probability": None},
-                    {
-                        "text": "后",
-                        "start": 0.4995,
-                        "end": 0.8,
-                        "probability": None,
-                    },
-                ],
-            },
-            audio_id=common["audio_id"],
-            variant_id=common["variant_id"],
-        )
-
-
-def test_transcript_segment_times_are_positive_and_within_duration() -> None:
-    payload = {
-        "schema_version": 1,
-        "audio_id": "a" * 64,
-        "variant_id": "b" * 64,
-        "provider": "faster-whisper",
-        "language": "zh",
-        "duration": 1.0,
-        "segments": [{"id": 0, "text": "词", "start": 0.5, "end": 0.5}],
-    }
-    identity = {
-        "audio_id": payload["audio_id"],
-        "variant_id": payload["variant_id"],
-    }
-
-    with pytest.raises(ArtifactContractError):
-        validate_transcript(payload, **identity)
-
-    payload["segments"][0]["end"] = 1.1
-    with pytest.raises(ArtifactContractError):
-        validate_transcript(payload, **identity)
-
-    payload["segments"][0]["end"] = 1.0
-    assert validate_transcript(payload, **identity) is payload
-
-
 def test_segment_end_is_clamped_to_duration_and_recovers_identically(
     workspace_tmp_path: Path,
 ) -> None:
@@ -343,7 +269,7 @@ def test_segment_end_is_clamped_to_duration_and_recovers_identically(
     manifest = read_json(manifest_path)
 
     assert read_json(transcript_path)["segments"][0]["end"] == duration
-    assert read_json(variant_dir / "raw_timestamps.json")["items"][0]["end"] == 1.0006
+    assert read_json(variant_dir / "raw_timestamps.json")["items"][0]["end"] == duration
 
     transcript_path.unlink()
     recover_public_artifacts(manifest_path)
@@ -407,7 +333,7 @@ def test_missing_public_artifact_is_rebuilt_without_inference(
     assert run_transcribe(audio, **kwargs) == manifest_path
     assert calls == [1]
     assert manifest_path.read_bytes() == original_manifest
-    validate_manifest(manifest_path)
+    load_result(manifest_path)
 
 
 def test_migrated_pipeline_workspace_is_adapted_to_public_schema(
@@ -454,7 +380,7 @@ def test_migrated_pipeline_workspace_is_adapted_to_public_schema(
         request={"variant_id": variant_id, **canonical_request},
     )
 
-    validate_manifest(manifest_path)
+    load_result(manifest_path)
     transcript = read_json(variant_dir / "transcript.json")
     assert transcript["segments"][0]["text"] == "原文。"
 
@@ -482,7 +408,7 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
     write_json_atomic(workspace_path, workspace)
     (manifest_path.parent / "transcript.json").unlink()
 
-    with pytest.raises(ArtifactContractError, match="does not match"):
+    with pytest.raises(ResultValidationError, match="does not match"):
         run_transcribe(audio, **kwargs)
 
     assert not manifest_path.exists()
@@ -495,7 +421,7 @@ def test_empty_result_never_publishes_complete_manifest(
     audio.write_bytes(b"audio")
     results = workspace_tmp_path / "results"
 
-    with pytest.raises(ArtifactContractError, match="must contain"):
+    with pytest.raises(ResultValidationError, match="must contain"):
         run_transcribe(
             audio,
             language="en",
@@ -506,13 +432,3 @@ def test_empty_result_never_publishes_complete_manifest(
         )
 
     assert not list(results.rglob("result_manifest.json"))
-
-
-@pytest.mark.parametrize("unsafe", ["../outside.json", "/absolute.json"])
-def test_manifest_artifact_path_cannot_escape_result_directory(
-    workspace_tmp_path: Path, unsafe: str
-) -> None:
-    manifest_path = workspace_tmp_path / "result" / "result_manifest.json"
-
-    with pytest.raises(ArtifactContractError):
-        resolve_artifact_path(manifest_path, unsafe)

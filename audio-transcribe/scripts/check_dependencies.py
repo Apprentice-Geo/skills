@@ -260,6 +260,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
 
     import_status: dict[str, bool] = {}
     for module in (
+        "audio_transcribe_contract",
         "faster_whisper",
         "ffmpeg_binaries",
         "numpy",
@@ -314,7 +315,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     checks.extend((language, whisper))
     qwen_asr = model_check(
-        "provider:qwen3:asr-model",
+        "provider:qwen3-asr:asr-model",
         QWEN3_ASR_MODEL_DIR,
         QWEN3_WEIGHT_PATTERNS,
         {
@@ -323,7 +324,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         },
     )
     qwen_aligner = model_check(
-        "provider:qwen3:forced-aligner",
+        "provider:qwen3-asr:forced-aligner",
         QWEN3_ALIGNER_MODEL_DIR,
         QWEN3_WEIGHT_PATTERNS,
         {
@@ -362,7 +363,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             pass
     checks.append(
         item(
-            "provider:qwen3:cuda",
+            "provider:qwen3-asr:cuda",
             "pass" if cuda else "warn",
             "CUDA is available",
             str(cuda),
@@ -374,7 +375,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     checks.append(
         item(
-            "provider:qwen3:imports",
+            "provider:qwen3-asr:imports",
             "pass" if qwen_imports else "warn",
             "Qwen3 optional imports",
             "available" if qwen_imports else "missing",
@@ -408,7 +409,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     providers = {
         "faster-whisper": {"status": "ready" if whisper_ready else "not_ready"},
-        "qwen3": {"status": "ready" if qwen_ready else "not_ready"},
+        "qwen3-asr": {"status": "ready" if qwen_ready else "not_ready"},
     }
     core_ids = {
         "platform",
@@ -423,6 +424,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     } | {
         f"import:{name}"
         for name in (
+            "audio_transcribe_contract",
             "faster_whisper",
             "ffmpeg_binaries",
             "numpy",

@@ -45,7 +45,8 @@ The command prints the absolute `result_manifest.json` path only after a complet
 
 ### Public Artifacts and Helpers
 
-- `scripts/artifacts.py`: owns public schema validation, manifest-relative path containment, SHA-256 checks, variant locking, manifest-last publication, and digest-preserving recovery.
+- `packages/audio-transcribe-contract/`: owns strict public result reading. Its `_types.py`, `_validation.py`, and `_loader.py` modules define contract types, validate schema and identity including path containment and SHA-256 checks, and orchestrate loading, respectively.
+- `scripts/artifacts.py`: owns variant locking, manifest-last publication, and digest-preserving recovery, then uses the contract package for self-validation.
 - `scripts/alignment.py`: builds public sentence segments from normalized alignment items. Punctuation boundaries are `，,；;。.!！？?`.
 - `scripts/io_utils.py`: provides canonical JSON, atomic file writes, JSON reads, and SHA-256 helpers.
 - `scripts/model_identity.py`: stores fixed upstream model revision identity used in `variant_id`.
@@ -61,7 +62,7 @@ The command prints the absolute `result_manifest.json` path only after a complet
 
 `variant_id` is the SHA-256 digest of the canonical resolved request JSON. The request includes:
 
-- Provider value: `faster-whisper` or `qwen3`;
+- Provider value: `faster-whisper` or `qwen3-asr`;
 - resolved language;
 - fixed Provider model identity and upstream revision;
 - execution policy;
@@ -86,9 +87,11 @@ results/<audio_id>/
       └─ result.json
 ```
 
-The `workspace/` directory is internal cache and recovery state. `result_manifest.json` is the public entrypoint. Consumers resolve artifact paths relative to the manifest directory and validate schema, status, digests, and identity before reading transcript data.
+The `workspace/` directory is internal cache and recovery state. `result_manifest.json` is the public entrypoint. Consumers use `audio_transcribe_contract.load_result` before reading transcript data.
 
 ## Public Artifact Contract
+
+The zero-runtime-dependency `audio-transcribe-contract` package exports `ResultManifest`, `Transcript`, `RawTimestamps`, `ResultValidationError`, the frozen `TranscriptionResult`, and `load_result(path)`. A successful load returns validated in-memory manifest, transcript, and raw timestamp snapshots plus their absolute public paths. The log and workspace are checked for existence but are not exposed as readable result fields.
 
 `result_manifest.json` uses schema version 1 and must have `status: "complete"`. It records:
 
@@ -102,6 +105,8 @@ The `workspace/` directory is internal cache and recovery state. `result_manifes
 `raw_timestamps.json` uses schema version 1 and contains standardized alignment items with exactly `text`, `start`, `end`, and `probability`. Item text is non-empty. Item times are finite, non-negative, and monotonic. Qwen3 items always use `probability: null`.
 
 Provider text is preserved in public artifacts. The publication path does not run OpenCC, simplification, rewriting, or other text normalization over transcript text.
+
+`load_result` rejects non-object or non-strict JSON, duplicate keys, non-finite numbers, invalid lowercase SHA-256 identities, non-canonical `variant_id`, path and symlink escapes, wrong file types, digest mismatches, cross-file identity mismatches, and invalid segment or timestamp ordering. It never repairs or modifies artifacts, returns no partial result, and does not include transcript text in validation errors.
 
 ## Cache and Publication
 
@@ -118,6 +123,8 @@ For a new result, `transcript.json` and `raw_timestamps.json` are written first.
 If the user passes `--provider`, that Provider must be supported and ready for the resolved language and runtime environment. If the user omits `--provider`, Qwen3 is selected only when the resolved language is supported and the CUDA model environment is ready; otherwise faster-whisper is selected when ready.
 
 Once a Provider is resolved, later loading, inference, alignment, merge, artifact, or publication failures stop the run. The command does not silently switch Providers after resolution, because doing so would change result identity and reproducibility.
+
+The public Qwen3 identifier changed incompatibly from `qwen3` to `qwen3-asr`. Since Provider identity contributes to `variant_id` and the result directory name, new runs intentionally do not reuse old `qwen3` cache entries. The `qwen3` extra, model installation argument, model directories, internal module names, and `qwen3-cuda` execution policy remain unchanged.
 
 ## Logging
 

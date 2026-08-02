@@ -104,10 +104,15 @@ def test_main_does_not_report_completion_when_transcription_fails(
 
 
 def test_transcribe_parse_args_uses_provider() -> None:
-    args = transcribe.parse_args(["audio.wav", "--provider", "qwen3"])
+    args = transcribe.parse_args(["audio.wav", "--provider", "qwen3-asr"])
 
-    assert args.provider == "qwen3"
+    assert args.provider == "qwen3-asr"
     assert not hasattr(args, "model")
+
+
+def test_transcribe_parse_args_rejects_old_qwen_provider() -> None:
+    with pytest.raises(SystemExit):
+        transcribe.parse_args(["audio.wav", "--provider", "qwen3"])
 
 
 def test_transcribe_parse_args_rejects_model_provider_alias() -> None:
@@ -138,10 +143,10 @@ def test_benchmark_report_records_provider(
 
     report = benchmark.benchmark_audio(
         [tmp_path / "audio.wav"],
-        provider="qwen3",
+        provider="qwen3-asr",
         language="zh",
         output_path=tmp_path / "benchmark.json",
     )
 
-    assert report["provider"] == "qwen3"
+    assert report["provider"] == "qwen3-asr"
     assert "model" not in report

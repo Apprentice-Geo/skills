@@ -31,6 +31,8 @@ uv sync --python 3.12 --no-dev --extra qwen3
 uv run --no-sync python -m scripts.setup.install_model --model qwen3
 ```
 
+Qwen3 的公开 Provider 标识是 `qwen3-asr`，不接受旧值 `qwen3`；安装参数和 `qwen3` extra 保持不变。该标识参与 `variant_id`，因此不会复用旧 `qwen3` 结果目录。
+
 ## 转写本地音频
 
 自动检测语言并选择已经就绪的模型：
@@ -69,6 +71,8 @@ results/<audio-id>/<provider>-<language>-<64位variant-id>/
 - `transcript.json`：有序短句及时间范围；文本保持 Provider 原文，不执行简繁转换。
 - `raw_timestamps.json`：标准化的 `text/start/end/probability` alignment items。
 - `transcribe.log`：首次成功调用日志。
+
+使用零运行时依赖的 `audio-transcribe-contract` 包从 `result_manifest.json` 读取并严格校验完整结果；包根目录导出 `ResultManifest`、`Transcript`、`RawTimestamps`、`TranscriptionResult`、`ResultValidationError` 和 `load_result`。包内由 `_types.py`、`_validation.py` 和 `_loader.py` 分别承载类型、校验与加载流程；不要自行重复实现 schema、路径、digest 或 identity 校验。
 
 `workspace/` 是内部缓存与恢复目录，不是其他 Skill 的公开读取接口。complete manifest 发布后保持不可变；公开 artifact 缺失或损坏时，命令只会在 workspace 能够确定性重建出相同 digest 时恢复成功入口。
 
