@@ -13,11 +13,28 @@ import pytest
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
-VARIANT_ID = "b" * 64
 
 
 def json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
+
+
+def canonical_sha256(value: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def update_artifact_digests(manifest_path: Path, manifest: dict[str, Any]) -> None:
+    for name in ("transcript", "raw_timestamps"):
+        artifact_path = manifest_path.parent / manifest["artifacts"][name]
+        manifest["artifact_sha256"][name] = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    manifest_path.write_bytes(json_bytes(manifest))
 
 
 def run_attach(job_path: Path | str, manifest_path: Path | str) -> subprocess.CompletedProcess[str]:
@@ -62,37 +79,68 @@ def transcription(
 
     result_dir = tmp_path / "upstream"
     result_dir.mkdir()
+    (result_dir / "workspace").mkdir()
+    (result_dir / "transcription.log").write_text("complete\n", encoding="utf-8")
+    request = {"provider": "faster-whisper", "language": "zh"}
+    variant_id = canonical_sha256(request)
     transcript_path = result_dir / "transcript.json"
     transcript = {
         "schema_version": 1,
         "audio_id": audio_id,
-        "variant_id": VARIANT_ID,
+        "variant_id": variant_id,
         "provider": "faster-whisper",
         "language": "zh",
         "duration": 12.3,
         "segments": [
             {"id": 0, "start": 0.0, "end": 1.2, "text": "  第一段\n  文本  "},
             {"id": 1, "start": 1.2, "end": 2.5, "text": "第二\t\t段"},
+            {"id": 2, "start": 2.5, "end": 3.0, "text": "   "},
         ],
     }
     transcript_path.write_bytes(json_bytes(transcript))
+    raw_path = result_dir / "raw_timestamps.json"
+    raw_path.write_bytes(
+        json_bytes(
+            {
+                "schema_version": 1,
+                "audio_id": audio_id,
+                "variant_id": variant_id,
+                "provider": "faster-whisper",
+                "language": "zh",
+                "duration": 12.3,
+                "items": [
+                    {
+                        "text": "第一段文本第二段",
+                        "start": 0.0,
+                        "end": 3.0,
+                        "probability": 0.9,
+                    }
+                ],
+            }
+        )
+    )
     manifest_path = result_dir / "result_manifest.json"
     manifest = {
         "schema_version": 1,
         "status": "complete",
-        "audio": {"id": audio_id, "duration": 12.3},
-        "request": {
-            "variant_id": VARIANT_ID,
-            "provider": "faster-whisper",
-            "language": "zh",
+        "audio": {
+            "id": audio_id,
+            "size": len(audio_content),
+            "sample_count": 123,
+            "sample_rate": 10,
+            "duration": 12.3,
         },
+        "request": {"variant_id": variant_id, **request},
         "artifacts": {
             "transcript": "transcript.json",
-            "raw_timestamps": "../must-not-be-read.json",
-            "log": "missing.log",
-            "workspace": "missing-workspace",
+            "raw_timestamps": "raw_timestamps.json",
+            "log": "transcription.log",
+            "workspace": "workspace",
         },
-        "artifact_sha256": {"transcript": hashlib.sha256(transcript_path.read_bytes()).hexdigest()},
+        "artifact_sha256": {
+            "transcript": hashlib.sha256(transcript_path.read_bytes()).hexdigest(),
+            "raw_timestamps": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        },
     }
     manifest_path.write_bytes(json_bytes(manifest))
     yield job_path, manifest_path, transcript_path, audio_id, manifest
@@ -102,7 +150,7 @@ def transcription(
 def test_attach_normalizes_and_publishes_editable(
     transcription: tuple[Path, Path, Path, str, dict[str, Any]],
 ) -> None:
-    job_path, manifest_path, transcript_path, audio_id, _manifest = transcription
+    job_path, manifest_path, transcript_path, audio_id, manifest = transcription
     upstream_bytes = transcript_path.read_bytes()
 
     result = run_attach(job_path.resolve(), manifest_path.resolve())
@@ -114,7 +162,7 @@ def test_attach_normalizes_and_publishes_editable(
         "source": {
             "manifest_path": str(manifest_path.resolve()),
             "audio_id": audio_id,
-            "variant_id": VARIANT_ID,
+            "variant_id": manifest["request"]["variant_id"],
         },
         "provider": "faster-whisper",
         "language": "zh",
@@ -136,7 +184,7 @@ def test_attach_normalizes_and_publishes_editable(
     assert job["status"] == "editable"
     assert job["transcription"] == {
         "manifest_path": str(manifest_path.resolve()),
-        "variant_id": VARIANT_ID,
+        "variant_id": manifest["request"]["variant_id"],
     }
     assert job["artifacts"] == {
         "normalized_transcript": str(normalized_path.resolve()),
@@ -149,105 +197,41 @@ def test_attach_normalizes_and_publishes_editable(
     assert job["changed_segment_ids"] == []
 
 
-@pytest.mark.parametrize("artifact_path", ["../transcript.json", "ABSOLUTE"])
-def test_attach_rejects_unsafe_transcript_path(
+def test_attach_propagates_contract_error_without_publishing(
     transcription: tuple[Path, Path, Path, str, dict[str, Any]],
-    artifact_path: str,
 ) -> None:
     job_path, manifest_path, _transcript_path, _audio_id, manifest = transcription
-    manifest["artifacts"]["transcript"] = (
-        str((manifest_path.parent / "transcript.json").resolve())
-        if artifact_path == "ABSOLUTE"
-        else artifact_path
-    )
-    manifest_path.write_bytes(json_bytes(manifest))
+    raw_path = manifest_path.parent / manifest["artifacts"]["raw_timestamps"]
+    raw_path.write_text('{"schema_version": 1}\n', encoding="utf-8")
 
     result = run_attach(job_path.resolve(), manifest_path.resolve())
 
     assert result.returncode == 1
     assert result.stdout == ""
+    assert "raw_timestamps artifact digest mismatch" in result.stderr
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "needs_transcription"
 
 
-def test_attach_rejects_missing_transcript(
+def test_attach_rejects_transcription_for_different_audio(
     transcription: tuple[Path, Path, Path, str, dict[str, Any]],
-) -> None:
-    job_path, manifest_path, transcript_path, _audio_id, _manifest = transcription
-    transcript_path.unlink()
-
-    result = run_attach(job_path.resolve(), manifest_path.resolve())
-
-    assert result.returncode == 1
-    assert result.stdout == ""
-
-
-@pytest.mark.parametrize(
-    ("target", "value"),
-    [
-        ("manifest_schema", 2),
-        ("manifest_status", "failed"),
-        ("manifest_audio_id", "a" * 64),
-        ("transcript_digest", "0" * 64),
-        ("transcript_audio_id", "a" * 64),
-        ("transcript_variant_id", "c" * 64),
-        ("transcript_provider", "qwen3"),
-        ("transcript_language", "en"),
-        ("transcript_duration", 10.0),
-        ("transcript_segments", "invalid"),
-    ],
-)
-def test_attach_rejects_invalid_public_contract(
-    transcription: tuple[Path, Path, Path, str, dict[str, Any]],
-    target: str,
-    value: object,
 ) -> None:
     job_path, manifest_path, transcript_path, _audio_id, manifest = transcription
-    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
-    if target == "manifest_schema":
-        manifest["schema_version"] = value
-    elif target == "manifest_status":
-        manifest["status"] = value
-    elif target == "manifest_audio_id":
-        manifest["audio"]["id"] = value
-    elif target == "transcript_digest":
-        manifest["artifact_sha256"]["transcript"] = value
-    else:
-        transcript[target.removeprefix("transcript_")] = value
-        transcript_path.write_bytes(json_bytes(transcript))
-        manifest["artifact_sha256"]["transcript"] = hashlib.sha256(
-            transcript_path.read_bytes()
-        ).hexdigest()
-    manifest_path.write_bytes(json_bytes(manifest))
+    other_audio_id = "a" * 64
+    manifest["audio"]["id"] = other_audio_id
+    for artifact_name in ("transcript", "raw_timestamps"):
+        artifact_path = manifest_path.parent / manifest["artifacts"][artifact_name]
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["audio_id"] = other_audio_id
+        artifact_path.write_bytes(json_bytes(artifact))
+    update_artifact_digests(manifest_path, manifest)
 
     result = run_attach(job_path.resolve(), manifest_path.resolve())
 
     assert result.returncode == 1
     assert result.stdout == ""
+    assert "audio identity does not match" in result.stderr
+    assert transcript_path.is_file()
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "needs_transcription"
-
-
-@pytest.mark.parametrize("which", ["manifest", "transcript"])
-def test_attach_rejects_duplicate_keys_and_nan(
-    transcription: tuple[Path, Path, Path, str, dict[str, Any]],
-    which: str,
-) -> None:
-    job_path, manifest_path, transcript_path, _audio_id, manifest = transcription
-    if which == "manifest":
-        manifest_path.write_text(
-            '{"schema_version":1,"schema_version":1,"status":"complete"}',
-            encoding="utf-8",
-        )
-    else:
-        transcript_path.write_text('{"schema_version":1,"duration":NaN}', encoding="utf-8")
-        manifest["artifact_sha256"]["transcript"] = hashlib.sha256(
-            transcript_path.read_bytes()
-        ).hexdigest()
-        manifest_path.write_bytes(json_bytes(manifest))
-
-    result = run_attach(job_path.resolve(), manifest_path.resolve())
-
-    assert result.returncode == 1
-    assert result.stdout == ""
 
 
 def test_attach_requires_absolute_input_paths(
@@ -321,7 +305,7 @@ def test_attach_rejects_invalid_job_identity_and_artifact_paths(
 def test_attach_same_variant_reuses_without_overwriting_corrections(
     transcription: tuple[Path, Path, Path, str, dict[str, Any]],
 ) -> None:
-    job_path, manifest_path, transcript_path, _audio_id, manifest = transcription
+    job_path, manifest_path, _transcript_path, _audio_id, manifest = transcription
     assert run_attach(job_path.resolve(), manifest_path.resolve()).returncode == 0
     normalized_path = job_path.parent / "normalized_transcript.json"
     normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
@@ -334,17 +318,20 @@ def test_attach_same_variant_reuses_without_overwriting_corrections(
     assert reused.stdout == f"normalized_transcript: {normalized_path.resolve()}\n"
     assert normalized_path.read_bytes() == corrected_bytes
 
-    manifest["request"]["variant_id"] = "c" * 64
-    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
-    transcript["variant_id"] = "c" * 64
-    transcript_path.write_bytes(json_bytes(transcript))
-    manifest["artifact_sha256"]["transcript"] = hashlib.sha256(
-        transcript_path.read_bytes()
-    ).hexdigest()
-    manifest_path.write_bytes(json_bytes(manifest))
+    request = {"provider": "faster-whisper", "language": "en"}
+    variant_id = canonical_sha256(request)
+    manifest["request"] = {"variant_id": variant_id, **request}
+    for artifact_name in ("transcript", "raw_timestamps"):
+        artifact_path = manifest_path.parent / manifest["artifacts"][artifact_name]
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["variant_id"] = variant_id
+        artifact["language"] = "en"
+        artifact_path.write_bytes(json_bytes(artifact))
+    update_artifact_digests(manifest_path, manifest)
 
     rejected = run_attach(job_path.resolve(), manifest_path.resolve())
     assert rejected.returncode == 1
+    assert "different transcription variant" in rejected.stderr
     assert normalized_path.read_bytes() == corrected_bytes
 
 

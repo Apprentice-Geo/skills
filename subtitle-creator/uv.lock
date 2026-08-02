@@ -3,6 +3,11 @@ revision = 3
 requires-python = "==3.12.*"
 
 [[package]]
+name = "audio-transcribe-contract"
+version = "0.1.0"
+source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.0#781819b90eb70bfe1a642aa8f7fe4bf998bffb97" }
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -114,6 +119,9 @@ wheels = [
 name = "subtitle-creator"
 version = "0.1.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "audio-transcribe-contract" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -123,6 +131,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "audio-transcribe-contract", git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.0" }]
 
 [package.metadata.requires-dev]
 dev = [

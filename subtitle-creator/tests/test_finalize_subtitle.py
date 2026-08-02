@@ -13,11 +13,25 @@ import pytest
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
-VARIANT_ID = "b" * 64
+REQUEST = {"provider": "faster-whisper", "language": "zh"}
 
 
 def json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
+
+
+def canonical_sha256(value: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+VARIANT_ID = canonical_sha256(REQUEST)
 
 
 def run_finalize(job_path: Path | str) -> subprocess.CompletedProcess[str]:
@@ -61,6 +75,8 @@ def correction_job(
 
     result_dir = tmp_path / "upstream"
     result_dir.mkdir()
+    (result_dir / "workspace").mkdir()
+    (result_dir / "transcription.log").write_text("complete\n", encoding="utf-8")
     transcript_path = result_dir / "transcript.json"
     transcript = {
         "schema_version": 1,
@@ -80,18 +96,49 @@ def correction_job(
         ],
     }
     transcript_path.write_bytes(json_bytes(transcript))
+    raw_path = result_dir / "raw_timestamps.json"
+    raw_path.write_bytes(
+        json_bytes(
+            {
+                "schema_version": 1,
+                "audio_id": audio_id,
+                "variant_id": VARIANT_ID,
+                "provider": "faster-whisper",
+                "language": "zh",
+                "duration": 360062,
+                "items": [
+                    {
+                        "text": "第一段 Second line --> x",
+                        "start": 0.0004,
+                        "end": 360061.9995,
+                        "probability": 0.9,
+                    }
+                ],
+            }
+        )
+    )
     manifest_path = result_dir / "result_manifest.json"
     manifest = {
         "schema_version": 1,
         "status": "complete",
-        "audio": {"id": audio_id, "duration": 360062},
-        "request": {
-            "variant_id": VARIANT_ID,
-            "provider": "faster-whisper",
-            "language": "zh",
+        "audio": {
+            "id": audio_id,
+            "size": len(audio_content),
+            "sample_count": 360062,
+            "sample_rate": 1,
+            "duration": 360062,
         },
-        "artifacts": {"transcript": "transcript.json"},
-        "artifact_sha256": {"transcript": hashlib.sha256(transcript_path.read_bytes()).hexdigest()},
+        "request": {"variant_id": VARIANT_ID, **REQUEST},
+        "artifacts": {
+            "transcript": "transcript.json",
+            "raw_timestamps": "raw_timestamps.json",
+            "log": "transcription.log",
+            "workspace": "workspace",
+        },
+        "artifact_sha256": {
+            "transcript": hashlib.sha256(transcript_path.read_bytes()).hexdigest(),
+            "raw_timestamps": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+        },
     }
     manifest_path.write_bytes(json_bytes(manifest))
 
@@ -389,14 +436,18 @@ def test_attach_editable_returns_normalized_and_rejects_different_variant(
     assert reused.returncode == 0
     assert reused.stdout == f"normalized_transcript: {normalized_path.resolve()}\n"
 
-    transcript_path = manifest_path.parent / "transcript.json"
-    transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
-    transcript["variant_id"] = "c" * 64
-    transcript_path.write_bytes(json_bytes(transcript))
-    manifest["request"]["variant_id"] = "c" * 64
-    manifest["artifact_sha256"]["transcript"] = hashlib.sha256(
-        transcript_path.read_bytes()
-    ).hexdigest()
+    request = {"provider": "faster-whisper", "language": "en"}
+    variant_id = canonical_sha256(request)
+    manifest["request"] = {"variant_id": variant_id, **request}
+    for artifact_name in ("transcript", "raw_timestamps"):
+        artifact_path = manifest_path.parent / manifest["artifacts"][artifact_name]
+        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+        artifact["variant_id"] = variant_id
+        artifact["language"] = "en"
+        artifact_path.write_bytes(json_bytes(artifact))
+        manifest["artifact_sha256"][artifact_name] = hashlib.sha256(
+            artifact_path.read_bytes()
+        ).hexdigest()
     manifest_path.write_bytes(json_bytes(manifest))
 
     rejected = run_attach(job_path.resolve(), manifest_path.resolve())
