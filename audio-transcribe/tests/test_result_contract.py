@@ -57,7 +57,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
         "language": "zh",
         "provider_identity": {"model": "test"},
         "execution_policy": {
-            "policy": "qwen3-cuda" if provider == "qwen3-asr" else "whisper-cpu"
+            "policy": "qwen3-asr-cuda" if provider == "qwen3-asr" else "whisper-cpu"
         },
     }
     request = {"variant_id": _canonical_sha256(request), **request}

@@ -246,6 +246,8 @@ def _validate_raw_timestamps(
                 "Raw timestamp times must be monotonic and within duration."
             )
         if provider == "qwen3-asr" and probability is not None:
-            raise ResultValidationError("Qwen3 timestamp probability must remain null.")
+            raise ResultValidationError(
+                "Qwen3-ASR timestamp probability must remain null."
+            )
         previous_end = end
     return cast(RawTimestamps, payload)

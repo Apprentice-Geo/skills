@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-qwen3 = [
+qwen3-asr = [
     "accelerate",
     "huggingface-hub",
     "librosa",

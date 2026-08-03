@@ -10,7 +10,7 @@ MODEL_REVISIONS = {
         "revision": "536b0662742c02347bc0e980a01041f333bce120",
         "logical_id": "faster-whisper-small",
     },
-    "qwen3": {
+    "qwen3-asr": {
         "repo": "Qwen/Qwen3-ASR-0.6B",
         "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",
         "logical_id": "qwen3-asr-0.6b",
@@ -28,6 +28,6 @@ MODEL_REVISIONS = {
 
 def provider_model_identity(provider: str) -> dict[str, Any]:
     try:
-        return dict(MODEL_REVISIONS["qwen3" if provider == "qwen3-asr" else provider])
+        return dict(MODEL_REVISIONS[provider])
     except KeyError as exc:
         raise ValueError(f"Unsupported provider: {provider}") from exc

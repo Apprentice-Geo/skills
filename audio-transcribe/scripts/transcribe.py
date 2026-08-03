@@ -30,10 +30,10 @@ SKILL_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RESULTS_DIR = SKILL_ROOT / "results"
 MODELS_DIR = SKILL_ROOT / "models"
 SUPPORTED_PROVIDERS = ("faster-whisper", "qwen3-asr")
-QWEN3_LANGUAGES = frozenset(
+QWEN3_ASR_LANGUAGES = frozenset(
     {"de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "yue", "zh"}
 )
-QWEN3_LANGUAGE_NAMES = {
+QWEN3_ASR_LANGUAGE_NAMES = {
     "de": "German",
     "en": "English",
     "es": "Spanish",
@@ -155,7 +155,7 @@ def _language_detection_samples(
     return np.concatenate(selected)
 
 
-def _qwen3_ready() -> bool:
+def _qwen3_asr_ready() -> bool:
     if (
         importlib.util.find_spec("qwen_asr") is None
         or importlib.util.find_spec("torch") is None
@@ -184,18 +184,18 @@ def _select_provider(requested: str | None, language: str) -> str:
     if requested is not None:
         if requested not in SUPPORTED_PROVIDERS:
             raise ValueError(f"Unsupported transcription provider: {requested}")
-        if requested == "qwen3-asr" and language not in QWEN3_LANGUAGES:
-            supported = ", ".join(sorted(QWEN3_LANGUAGES))
+        if requested == "qwen3-asr" and language not in QWEN3_ASR_LANGUAGES:
+            supported = ", ".join(sorted(QWEN3_ASR_LANGUAGES))
             raise ValueError(
-                f"Qwen3 does not support language '{language}'. Supported: {supported}."
+                f"Qwen3-ASR does not support language '{language}'. Supported: {supported}."
             )
         return requested
-    if language in QWEN3_LANGUAGES and _qwen3_ready():
+    if language in QWEN3_ASR_LANGUAGES and _qwen3_asr_ready():
         return "qwen3-asr"
     if _whisper_ready():
         return "faster-whisper"
     raise RuntimeError(
-        "No transcription Provider is ready. Install Qwen3 or faster-whisper first."
+        "No transcription Provider is ready. Install Qwen3-ASR or faster-whisper first."
     )
 
 
@@ -207,7 +207,7 @@ def _execution_identity(
 ) -> dict[str, Any]:
     if provider == "qwen3-asr":
         return {
-            "policy": "qwen3-cuda",
+            "policy": "qwen3-asr-cuda",
             "batch_size": 4,
             "batch_isolation": True,
         }
@@ -321,7 +321,7 @@ def _run_faster_whisper(
     return EngineResult(text, items)
 
 
-def _run_qwen3(
+def _run_qwen3_asr(
     samples: Any, request: dict[str, Any], execution: dict[str, Any]
 ) -> EngineResult:
     try:
@@ -329,15 +329,15 @@ def _run_qwen3(
         from qwen_asr import Qwen3ASRModel
         from transformers import GenerationConfig
     except ImportError as exc:
-        raise RuntimeError("Qwen3 ASR dependencies are not installed.") from exc
+        raise RuntimeError("Qwen3-ASR dependencies are not installed.") from exc
     if not torch.cuda.is_available():
-        raise RuntimeError("Qwen3 ASR requires an available CUDA GPU.")
+        raise RuntimeError("Qwen3-ASR requires an available CUDA GPU.")
     model_path = MODELS_DIR / "qwen3-asr-0.6b"
     aligner_path = MODELS_DIR / "qwen3-forcedaligner-0.6b"
     if not _model_has_weights(
         model_path, "model*.safetensors"
     ) or not _model_has_weights(aligner_path, "model*.safetensors"):
-        raise RuntimeError("The local Qwen3 ASR models are missing.")
+        raise RuntimeError("The local Qwen3-ASR models are missing.")
     dtype = torch.bfloat16
     generation_config = GenerationConfig.from_pretrained(
         str(model_path), temperature=None
@@ -354,11 +354,11 @@ def _run_qwen3(
     )
     results = model.transcribe(
         [(samples, SAMPLE_RATE)],
-        language=QWEN3_LANGUAGE_NAMES[request["language"]],
+        language=QWEN3_ASR_LANGUAGE_NAMES[request["language"]],
         return_time_stamps=True,
     )
     if len(results) != 1:
-        raise RuntimeError("Qwen3 returned an unexpected result count.")
+        raise RuntimeError("Qwen3-ASR returned an unexpected result count.")
     result = results[0]
     timestamp_data = getattr(result, "time_stamps", None)
     items = [
@@ -380,7 +380,7 @@ def _default_engine(
 ) -> EngineResult:
     if request["provider"] == "faster-whisper":
         return _run_faster_whisper(samples, request, execution)
-    return _run_qwen3(samples, request, execution)
+    return _run_qwen3_asr(samples, request, execution)
 
 
 def run_transcribe(
@@ -435,8 +435,8 @@ def run_transcribe(
     if not resolved_language:
         raise ValueError("Resolved language must not be empty.")
     provider = _select_provider(provider, resolved_language)
-    from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
-    from scripts.asr.providers import Qwen3Provider, WhisperProvider
+    from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
+    from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
     from scripts.runtime_options import TranscribeOptions
 
     if provider == "faster-whisper":
@@ -450,8 +450,8 @@ def run_transcribe(
         provider_strategy = WhisperProvider(options)
         policy = WhisperCpuPolicy(options)
     else:
-        provider_strategy = Qwen3Provider(resolved_language)
-        policy = Qwen3CudaPolicy()
+        provider_strategy = Qwen3AsrProvider(resolved_language)
+        policy = Qwen3AsrCudaPolicy()
     execution = policy.execution_identity(sample_count)
     canonical_request = {
         "provider": provider,
@@ -509,8 +509,8 @@ def run_transcribe(
                             prepared_vad=speech_intervals,
                         )
                     else:
-                        assert isinstance(provider_strategy, Qwen3Provider)
-                        assert isinstance(policy, Qwen3CudaPolicy)
+                        assert isinstance(provider_strategy, Qwen3AsrProvider)
+                        assert isinstance(policy, Qwen3AsrCudaPolicy)
                         run_asr_pipeline(
                             audio_path,
                             variant_dir / "workspace",

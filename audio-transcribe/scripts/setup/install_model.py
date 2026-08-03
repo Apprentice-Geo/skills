@@ -7,7 +7,7 @@ from pathlib import Path
 
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
-    QWEN3_WEIGHT_PATTERNS,
+    QWEN3_ASR_WEIGHT_PATTERNS,
     WHISPER_WEIGHT_PATTERNS,
     model_has_required_files,
 )
@@ -24,10 +24,10 @@ from scripts.setup.environment import (
 
 WHISPER_MODEL_REPO = str(MODEL_REVISIONS["faster-whisper"]["repo"])
 WHISPER_MODEL_REVISION = str(MODEL_REVISIONS["faster-whisper"]["revision"])
-QWEN3_ASR_MODEL_REPO = str(MODEL_REVISIONS["qwen3"]["repo"])
-QWEN3_ASR_MODEL_REVISION = str(MODEL_REVISIONS["qwen3"]["revision"])
-QWEN3_ALIGNER_MODEL_REPO = str(MODEL_REVISIONS["qwen3"]["aligner_repo"])
-QWEN3_ALIGNER_MODEL_REVISION = str(MODEL_REVISIONS["qwen3"]["aligner_revision"])
+QWEN3_ASR_MODEL_REPO = str(MODEL_REVISIONS["qwen3-asr"]["repo"])
+QWEN3_ASR_MODEL_REVISION = str(MODEL_REVISIONS["qwen3-asr"]["revision"])
+QWEN3_ASR_ALIGNER_MODEL_REPO = str(MODEL_REVISIONS["qwen3-asr"]["aligner_repo"])
+QWEN3_ASR_ALIGNER_MODEL_REVISION = str(MODEL_REVISIONS["qwen3-asr"]["aligner_revision"])
 LANGUAGE_ID_MODEL_REPO = str(MODEL_REVISIONS["language-id"]["repo"])
 LANGUAGE_ID_MODEL_REVISION = str(MODEL_REVISIONS["language-id"]["revision"])
 
@@ -56,18 +56,18 @@ def install_language_id_model(
         )
 
 
-def verify_qwen3_imports(python: Path, logger: ProcessLogger) -> None:
+def verify_qwen3_asr_imports(python: Path, logger: ProcessLogger) -> None:
     try:
         logger.run(
             [python, "-c", "import qwen_asr; import torch; import torchaudio"],
-            "Verify Qwen3 imports",
+            "Verify Qwen3-ASR imports",
             env=os.environ,
         )
     except SetupError as exc:
         raise SetupError(
-            "Qwen3 dependencies are missing. Run "
-            r"uv sync --python 3.12 --no-dev --extra qwen3 "
-            "before installing Qwen3 models."
+            "Qwen3-ASR dependencies are missing. Run "
+            r"uv sync --python 3.12 --no-dev --extra qwen3-asr "
+            "before installing Qwen3-ASR models."
         ) from exc
 
 
@@ -93,27 +93,27 @@ def install_qwen_models(
     paths: SetupPaths,
     logger: ProcessLogger,
 ) -> None:
-    logger.step(3, 5, "Verify Qwen3 extra imports")
-    verify_qwen3_imports(python, logger)
+    logger.step(3, 5, "Verify Qwen3-ASR extra imports")
+    verify_qwen3_asr_imports(python, logger)
 
-    logger.step(4, 5, "Download and verify Qwen3 ASR model")
+    logger.step(4, 5, "Download and verify Qwen3-ASR model")
     download_model(
         python,
         QWEN3_ASR_MODEL_REPO,
         QWEN3_ASR_MODEL_REVISION,
         paths.qwen3_asr_model_dir,
-        QWEN3_WEIGHT_PATTERNS,
+        QWEN3_ASR_WEIGHT_PATTERNS,
         logger,
         os.environ,
     )
 
-    logger.step(5, 5, "Download and verify Qwen3 aligner model")
+    logger.step(5, 5, "Download and verify Qwen3-ASR aligner model")
     download_model(
         python,
-        QWEN3_ALIGNER_MODEL_REPO,
-        QWEN3_ALIGNER_MODEL_REVISION,
+        QWEN3_ASR_ALIGNER_MODEL_REPO,
+        QWEN3_ASR_ALIGNER_MODEL_REVISION,
         paths.qwen3_aligner_model_dir,
-        QWEN3_WEIGHT_PATTERNS,
+        QWEN3_ASR_WEIGHT_PATTERNS,
         logger,
         os.environ,
     )
@@ -141,7 +141,7 @@ def run_model_setup(model: str, root: Path | None = None) -> Path:
 
         if model == "faster-whisper":
             install_faster_whisper_model(python, paths, logger)
-        elif model == "qwen3":
+        elif model == "qwen3-asr":
             install_qwen_models(python, paths, logger)
         else:
             raise SetupError(f"Unsupported model: {model}")
@@ -160,7 +160,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         required=True,
-        choices=("faster-whisper", "qwen3"),
+        choices=("faster-whisper", "qwen3-asr"),
         help="Model family to download.",
     )
     return parser.parse_args()

@@ -104,10 +104,10 @@ def test_model_revisions_are_full_pinned_commits() -> None:
     assert MODEL_REVISIONS["faster-whisper"]["revision"] == (
         "536b0662742c02347bc0e980a01041f333bce120"
     )
-    assert MODEL_REVISIONS["qwen3"]["revision"] == (
+    assert MODEL_REVISIONS["qwen3-asr"]["revision"] == (
         "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"
     )
-    assert MODEL_REVISIONS["qwen3"]["aligner_revision"] == (
+    assert MODEL_REVISIONS["qwen3-asr"]["aligner_revision"] == (
         "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
     )
 

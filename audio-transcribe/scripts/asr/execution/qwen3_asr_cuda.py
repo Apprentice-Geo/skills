@@ -10,23 +10,23 @@ from scripts.asr.chunking import (
 )
 from scripts.asr.pipeline_types import ChunkTranscript
 from scripts.asr.providers.base import BatchAsrProvider
-from scripts.config import QWEN3_MAX_INFERENCE_BATCH_SIZE
+from scripts.config import QWEN3_ASR_MAX_INFERENCE_BATCH_SIZE
 from scripts.process_logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class Qwen3CudaPolicy:
-    name = "qwen3-cuda"
+class Qwen3AsrCudaPolicy:
+    name = "qwen3-asr-cuda"
     planning_parameters = DEFAULT_PLANNING_PARAMETERS
 
     def execution_identity(self, sample_count: int) -> dict[str, Any]:
         del sample_count
         return {
             "policy": self.name,
-            "batch_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
+            "batch_size": QWEN3_ASR_MAX_INFERENCE_BATCH_SIZE,
             "count_strategy": "full",
-            "group_size": QWEN3_MAX_INFERENCE_BATCH_SIZE,
+            "group_size": QWEN3_ASR_MAX_INFERENCE_BATCH_SIZE,
             "batch_isolation": True,
         }
 
