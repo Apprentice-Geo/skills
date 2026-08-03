@@ -157,8 +157,9 @@ def _validate_manifest(
     }
     if _canonical_sha256(canonical_request) != variant_id:
         raise ResultValidationError("request.variant_id does not match request.")
-    for field in ("size", "sample_count", "sample_rate", "duration"):
+    for field in ("size", "sample_count", "sample_rate"):
         _finite_nonnegative(audio.get(field), f"audio.{field}")
+    duration = _finite_nonnegative(audio.get("duration"), "audio.duration")
     return (
         artifacts,
         digests,
@@ -166,7 +167,7 @@ def _validate_manifest(
         variant_id,
         cast(_Provider, provider),
         language,
-        float(audio["duration"]),
+        duration,
     )
 
 
