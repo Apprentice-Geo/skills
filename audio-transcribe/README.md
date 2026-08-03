@@ -1,87 +1,19 @@
 # audio-transcribe
 
-`audio-transcribe` 接受本地音频文件，使用 faster-whisper 或 Qwen3 生成可复用的转写 artifact。
+`audio-transcribe` 用于将已经存在于本地的音频转换为可复用的文字稿和时间戳，也可供总结、字幕制作等后续 Skill 使用。
 
-## 环境准备
+## 使用边界
 
-项目使用 Python 3.12 和 `uv`：
+- 输入音频必须已经存在于本地。
+- Skill 不负责下载媒体，也不修改其他 Skill 的结果。
 
-```powershell
-.\scripts\setup\setup_windows.bat
-```
+## 隐私与安全
 
-每次运行转写前先执行只读依赖检查并阅读摘要：
+运行环境配置需要访问网络，转写完全在本地环境中执行，但音频本身可能包含个人信息、机密对话或受版权保护的内容，分享转写文本、时间戳或结果目录前，请确认其中没有不应公开的原始内容、日志或路径信息。
 
-```powershell
-.\scripts\check_dependencies.bat
-```
+## 进一步阅读
 
-检查器会同时生成 `.cache/logs/dependency-check-*.json` 和日志，返回 `0` 表示 `ready` 或 `degraded`，`1` 表示 `not_ready`，`2` 表示平台、参数或检查器配置错误。它只报告状态，不安装依赖、不下载模型、不修复模型。自动转写依据 Provider 状态选择；显式指定不可用 Provider 时应立即停止。
-
-首次使用前安装至少一个转写模型。安装命令同时准备固定 revision 的语言识别模型：
-
-```powershell
-uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
-```
-
-Qwen3 需要可用的 CUDA 环境及可选依赖：
-
-```powershell
-uv sync --python 3.12 --no-dev --extra qwen3
-uv run --no-sync python -m scripts.setup.install_model --model qwen3
-```
-
-## 转写本地音频
-
-自动检测语言并选择已经就绪的模型：
-
-```powershell
-uv run --no-sync python -m scripts.transcribe ".\audio.m4a"
-```
-
-显式指定语言或 Provider：
-
-```powershell
-uv run --no-sync python -m scripts.transcribe ".\audio.m4a" --language zh --provider faster-whisper
-```
-
-Whisper CPU 参数：
-
-```powershell
-uv run --no-sync python -m scripts.transcribe ".\audio.m4a" `
-  --language zh `
-  --provider faster-whisper `
-  --num-workers 4 `
-  --cpu-threads 3
-```
-
-命令成功后会突出打印 `result_manifest.json` 的绝对路径。完整结果位于：
-
-```text
-results/<audio-id>/<provider>-<language>-<64位variant-id>/
-```
-
-同一音频改名或移动后仍使用相同 `audio_id`；语言、Provider、固定模型 revision、执行策略、VAD、规划或断句配置变化时会使用不同 `variant_id`。
-
-## 公开 artifact
-
-- `result_manifest.json`：唯一公开入口，包含完整请求、音频身份、相对 artifact 路径和 SHA-256。
-- `transcript.json`：有序短句及时间范围；文本保持 Provider 原文，不执行简繁转换。
-- `raw_timestamps.json`：标准化的 `text/start/end/probability` alignment items。
-- `transcribe.log`：首次成功调用日志。
-
-`workspace/` 是内部缓存与恢复目录，不是其他 Skill 的公开读取接口。complete manifest 发布后保持不可变；公开 artifact 缺失或损坏时，命令只会在 workspace 能够确定性重建出相同 digest 时恢复成功入口。
-
-## 维护参考
-
-- [Architecture](references/architecture.md)：当前转写流程、result identity、cache 和公开 artifact 合同。
-- [Error Handling](references/error-handling.md)：常见 setup、模型、推理、alignment、cache 和 artifact 失败处理。
-
-## 验证
-
-```powershell
-uv run pytest
-uv run ruff check
-uv run pyright
-uv run ruff format --check .
-```
+- [SKILL.md](SKILL.md)：完整使用规则、环境要求、命令和停止条件。
+- [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。
+- [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：安装、模型、Provider、缓存和产物错误处理。
+- [AGENTS.md](AGENTS.md)：开发维护、测试和代码规范。

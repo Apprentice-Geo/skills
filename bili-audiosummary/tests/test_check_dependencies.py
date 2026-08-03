@@ -16,6 +16,12 @@ def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:
     )
     assert external["status"] == "warn"
     assert "not checked" in external["actual"]
+    contract = next(
+        item
+        for item in report["checks"]
+        if item["id"] == "import:audio_transcribe_contract"
+    )
+    assert contract["status"] == "pass"
 
 
 def test_main_publishes_utf8_json_and_log_without_environment(

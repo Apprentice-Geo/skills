@@ -6,7 +6,7 @@ from typing import Mapping
 
 from scripts.process_logging import ProcessLogger, SetupError
 
-CORE_IMPORTS = ("faster_whisper", "ffmpeg_binaries")
+CORE_IMPORTS = ("audio_transcribe_contract", "faster_whisper", "ffmpeg_binaries")
 
 FFMPEG_RESOLVER = r"""
 import json

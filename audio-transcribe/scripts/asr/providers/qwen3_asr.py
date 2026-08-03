@@ -11,18 +11,18 @@ from scripts.asr.chunking import SAMPLE_RATE, ChunkLayout
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
 from scripts.config import (
     DEFAULT_HF_ENDPOINT,
-    QWEN3_ALIGNER_MODEL_DIR,
+    QWEN3_ASR_ALIGNER_MODEL_DIR,
+    QWEN3_ASR_DEVICE_MAP,
+    QWEN3_ASR_DTYPE,
+    QWEN3_ASR_MAX_NEW_TOKENS,
     QWEN3_ASR_MODEL_DIR,
-    QWEN3_DEVICE_MAP,
-    QWEN3_DTYPE,
-    QWEN3_MAX_NEW_TOKENS,
 )
-from scripts.model_artifacts import QWEN3_WEIGHT_PATTERNS, model_has_weights
+from scripts.model_artifacts import QWEN3_ASR_WEIGHT_PATTERNS, model_has_weights
 from scripts.model_identity import provider_model_identity
 from scripts.process_logging import get_logger
 from scripts.utils import path_to_posix
 
-QWEN3_LANGUAGE_NAMES = {
+QWEN3_ASR_LANGUAGE_NAMES = {
     "de": "German",
     "en": "English",
     "es": "Spanish",
@@ -35,7 +35,7 @@ QWEN3_LANGUAGE_NAMES = {
     "yue": "Cantonese",
     "zh": "Chinese",
 }
-QWEN3_END_TIME_TOLERANCE_SECONDS = 0.1
+QWEN3_ASR_END_TIME_TOLERANCE_SECONDS = 0.1
 
 logger = get_logger(__name__)
 
@@ -56,19 +56,19 @@ def adapt_qwen_timestamp_items(items: list[Any]) -> list[TranscriptWord]:
     return normalized
 
 
-class Qwen3Provider:
-    name = "qwen3"
+class Qwen3AsrProvider:
+    name = "qwen3-asr"
     source = "qwen3-asr"
-    supported_languages = frozenset(QWEN3_LANGUAGE_NAMES)
+    supported_languages = frozenset(QWEN3_ASR_LANGUAGE_NAMES)
 
     def __init__(self, language: str) -> None:
         self.language = language
         try:
-            self.model_language = QWEN3_LANGUAGE_NAMES[language.lower()]
+            self.model_language = QWEN3_ASR_LANGUAGE_NAMES[language.lower()]
         except KeyError as exc:
-            supported = ", ".join(sorted(QWEN3_LANGUAGE_NAMES))
+            supported = ", ".join(sorted(QWEN3_ASR_LANGUAGE_NAMES))
             raise ValueError(
-                f"Unsupported Qwen3 language: {language}. Supported: {supported}"
+                f"Unsupported Qwen3-ASR language: {language}. Supported: {supported}"
             ) from exc
 
     def request_identity(self) -> dict[str, Any]:
@@ -77,9 +77,9 @@ class Qwen3Provider:
             "language": self.language,
             "model_language": self.model_language,
             "model": provider_model_identity(self.name),
-            "device": QWEN3_DEVICE_MAP,
-            "compute_type": QWEN3_DTYPE,
-            "max_new_tokens": QWEN3_MAX_NEW_TOKENS,
+            "device": QWEN3_ASR_DEVICE_MAP,
+            "compute_type": QWEN3_ASR_DTYPE,
+            "max_new_tokens": QWEN3_ASR_MAX_NEW_TOKENS,
             "return_time_stamps": True,
         }
 
@@ -90,32 +90,34 @@ class Qwen3Provider:
             from transformers import GenerationConfig
         except ImportError as exc:
             raise RuntimeError(
-                "Qwen3 ASR dependencies are not installed. Run "
-                r"uv sync --python 3.12 --no-dev --extra qwen3, then "
-                r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
+                "Qwen3-ASR dependencies are not installed. Run "
+                r"uv sync --python 3.12 --no-dev --extra qwen3-asr, then "
+                r"uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr."
             ) from exc
         if not torch.cuda.is_available():
             raise RuntimeError(
-                "Qwen3 ASR requires an available CUDA GPU. Use the default whisper provider on CPU."
+                "Qwen3-ASR requires an available CUDA GPU. Use the default whisper provider on CPU."
             )
         if not model_has_weights(
-            QWEN3_ASR_MODEL_DIR, QWEN3_WEIGHT_PATTERNS
-        ) or not model_has_weights(QWEN3_ALIGNER_MODEL_DIR, QWEN3_WEIGHT_PATTERNS):
+            QWEN3_ASR_MODEL_DIR, QWEN3_ASR_WEIGHT_PATTERNS
+        ) or not model_has_weights(
+            QWEN3_ASR_ALIGNER_MODEL_DIR, QWEN3_ASR_WEIGHT_PATTERNS
+        ):
             raise RuntimeError(
-                "Qwen3 local models are missing. Run "
-                r"uv run --no-sync python -m scripts.setup.install_model --model qwen3."
+                "Qwen3-ASR local models are missing. Run "
+                r"uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr."
             )
         os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
         model_path = path_to_posix(QWEN3_ASR_MODEL_DIR)
-        dtype = getattr(torch, QWEN3_DTYPE)
+        dtype = getattr(torch, QWEN3_ASR_DTYPE)
         logger.info(
             "ASR model prepare: provider=%s model=%s forced_aligner=%s "
             "device=%s compute_type=%s policy=%s batch_size=%d",
             self.name,
             model_path,
-            path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
-            QWEN3_DEVICE_MAP,
-            QWEN3_DTYPE,
+            path_to_posix(QWEN3_ASR_ALIGNER_MODEL_DIR),
+            QWEN3_ASR_DEVICE_MAP,
+            QWEN3_ASR_DTYPE,
             execution_identity["policy"],
             int(execution_identity["batch_size"]),
         )
@@ -124,12 +126,12 @@ class Qwen3Provider:
         )
         return Qwen3ASRModel.from_pretrained(
             model_path,
-            forced_aligner=path_to_posix(QWEN3_ALIGNER_MODEL_DIR),
-            forced_aligner_kwargs={"dtype": dtype, "device_map": QWEN3_DEVICE_MAP},
+            forced_aligner=path_to_posix(QWEN3_ASR_ALIGNER_MODEL_DIR),
+            forced_aligner_kwargs={"dtype": dtype, "device_map": QWEN3_ASR_DEVICE_MAP},
             dtype=dtype,
-            device_map=QWEN3_DEVICE_MAP,
+            device_map=QWEN3_ASR_DEVICE_MAP,
             max_inference_batch_size=int(execution_identity["batch_size"]),
-            max_new_tokens=QWEN3_MAX_NEW_TOKENS,
+            max_new_tokens=QWEN3_ASR_MAX_NEW_TOKENS,
             generation_config=generation_config,
         )
 
@@ -149,12 +151,12 @@ class Qwen3Provider:
             overrun = last_word.end - duration
             if (
                 last_word.start <= duration < last_word.end
-                and overrun <= QWEN3_END_TIME_TOLERANCE_SECONDS + 1e-9
+                and overrun <= QWEN3_ASR_END_TIME_TOLERANCE_SECONDS + 1e-9
             ):
-                # Qwen3 强制对齐时间戳粒度是 80ms 会产生误差
+                # Qwen3-ASR 强制对齐时间戳粒度是 80ms 会产生误差
                 # 这里仅裁剪末词 0.1 秒内的切片尾部越界
                 logger.warning(
-                    "Clipped Qwen3 final word end from %.3fs to %.3fs "
+                    "Clipped Qwen3-ASR final word end from %.3fs to %.3fs "
                     "for chunk_%03d (overrun %.3fs).",
                     last_word.end,
                     duration,
@@ -192,7 +194,9 @@ class Qwen3Provider:
             return_time_stamps=True,
         )
         if len(results) != 1:
-            raise RuntimeError("Qwen3 returned an unexpected isolated result count.")
+            raise RuntimeError(
+                "Qwen3-ASR returned an unexpected isolated result count."
+            )
         return self.parse_result(results[0], layout, time.perf_counter() - started)
 
     def transcribe_batch(
@@ -205,7 +209,7 @@ class Qwen3Provider:
             return_time_stamps=True,
         )
         if len(results) != len(items):
-            raise RuntimeError("Qwen3 returned an unexpected batch result count.")
+            raise RuntimeError("Qwen3-ASR returned an unexpected batch result count.")
         elapsed = (time.perf_counter() - started) / max(1, len(items))
         return [
             self.parse_result(result, layout, elapsed)

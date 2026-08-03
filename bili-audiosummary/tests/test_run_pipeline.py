@@ -102,8 +102,64 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
     assert job["transcript"]["source"] == "bilibili_subtitle"
     assert job["resources"]["subtitle"] == "resource/subtitle/BVTEST.zh-Hans.srt"
     assert job["transcription_manifest"] is None
+    assert (result["job_path"].parent / "transcript.md").is_file()
     assert (result["job_path"].parent / job["prompt"]["path"]).is_file()
+    prompt = (result["job_path"].parent / job["prompt"]["path"]).read_text(
+        encoding="utf-8"
+    )
+    assert "[Read transcript data](transcript.md)" in prompt
+    assert "summary_job.json" not in prompt
+    assert "fetch_manifest.json" not in prompt
+    assert "_transcript.json" not in prompt
     assert not result["job_path"].with_suffix(".json.tmp").exists()
+
+
+def test_prepare_with_mixed_zero_duration_subtitle_stays_prompt_ready(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        subtitle_text=(
+            "1\n00:00:00,000 --> 00:00:00,000\nskip me\n\n"
+            "2\n00:00:01,000 --> 00:00:02,000\nkeep me\n"
+        ),
+    )
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
+
+    result = run_pipeline.run_pipeline(make_args())
+    transcript = read_json(
+        result["job_path"].parent / result["job"]["transcript"]["path"]
+    )
+
+    assert result["job"]["status"] == "prompt_ready"
+    assert transcript["segments"] == [
+        {"id": 0, "start": 1.0, "end": 2.0, "text": "keep me"}
+    ]
+    markdown = (result["job_path"].parent / "transcript.md").read_text(encoding="utf-8")
+    assert "keep me" in markdown
+    assert "skip me" not in markdown
+
+
+def test_prepare_with_only_zero_duration_subtitle_needs_transcription(
+    workspace_tmp_path: Path,
+    mocker,
+) -> None:
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        subtitle_text="1\n00:00:00,000 --> 00:00:00,000\nskip me\n",
+    )
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
+
+    result = run_pipeline.run_pipeline(make_args())
+
+    assert result["job"]["status"] == "needs_transcription"
+    assert result["job"]["resources"]["subtitle"] is None
+    assert result["job"]["transcript"] is None
 
 
 @pytest.mark.parametrize("skip_subtitles", [False, True])

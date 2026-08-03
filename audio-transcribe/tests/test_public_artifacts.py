@@ -6,14 +6,13 @@ import time
 from pathlib import Path
 
 import pytest
+from audio_transcribe_contract import ResultValidationError, load_result
 
 from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
-    ArtifactContractError,
     publish_result,
-    resolve_artifact_path,
-    validate_manifest,
-    validate_raw_timestamps,
+    recover_public_artifacts,
+    write_workspace_result,
 )
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
@@ -105,10 +104,10 @@ def test_model_revisions_are_full_pinned_commits() -> None:
     assert MODEL_REVISIONS["faster-whisper"]["revision"] == (
         "536b0662742c02347bc0e980a01041f333bce120"
     )
-    assert MODEL_REVISIONS["qwen3"]["revision"] == (
+    assert MODEL_REVISIONS["qwen3-asr"]["revision"] == (
         "5eb144179a02acc5e5ba31e748d22b0cf3e303b0"
     )
-    assert MODEL_REVISIONS["qwen3"]["aligner_revision"] == (
+    assert MODEL_REVISIONS["qwen3-asr"]["aligner_revision"] == (
         "c7cbfc2048c462b0d63a45797104fc9db3ad62b7"
     )
 
@@ -142,7 +141,7 @@ def test_content_identity_reuses_result_after_input_rename(
 
     assert first_manifest == second_manifest
     assert calls == [1]
-    manifest = validate_manifest(first_manifest)
+    manifest = load_result(first_manifest).manifest
     assert manifest["request"]["provider"] == "faster-whisper"
     assert len(manifest["request"]["variant_id"]) == 64
     assert first_manifest.parent.name.endswith(manifest["request"]["variant_id"])
@@ -231,48 +230,53 @@ def test_malformed_manifest_is_hidden_before_recovery(
     assert not manifest_path.exists()
 
 
-def test_qwen_probability_and_overlapping_timestamps_are_rejected() -> None:
-    common = {
-        "schema_version": 1,
-        "audio_id": "a" * 64,
-        "variant_id": "b" * 64,
-        "provider": "qwen3",
+def test_segment_end_is_clamped_to_duration_and_recovers_identically(
+    workspace_tmp_path: Path,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    workspace_path = variant_dir / "workspace" / "result.json"
+    duration = 1.0004
+    audio_id = "a" * 64
+    canonical_request = {
+        "provider": "faster-whisper",
         "language": "zh",
-        "duration": 1.0,
     }
-    with pytest.raises(ArtifactContractError, match="probability"):
-        validate_raw_timestamps(
-            {
-                **common,
-                "items": [
-                    {
-                        "text": "词",
-                        "start": 0.0,
-                        "end": 0.5,
-                        "probability": 0.9,
-                    }
-                ],
-            },
-            audio_id=common["audio_id"],
-            variant_id=common["variant_id"],
-        )
-    with pytest.raises(ArtifactContractError, match="monotonic"):
-        validate_raw_timestamps(
-            {
-                **common,
-                "items": [
-                    {"text": "前", "start": 0.0, "end": 0.5, "probability": None},
-                    {
-                        "text": "后",
-                        "start": 0.4995,
-                        "end": 0.8,
-                        "probability": None,
-                    },
-                ],
-            },
-            audio_id=common["audio_id"],
-            variant_id=common["variant_id"],
-        )
+    variant_id = canonical_sha256(canonical_request)
+    write_workspace_result(
+        workspace_path,
+        text="末",
+        items=[AlignmentItem("末", 0.0, 1.0006, None)],
+        duration=duration,
+        provider="faster-whisper",
+        language="zh",
+    )
+    (variant_dir / "transcribe.log").write_text("test\n", encoding="utf-8")
+
+    manifest_path = publish_result(
+        variant_dir,
+        audio={
+            "id": audio_id,
+            "size": 10,
+            "sample_count": 10_004,
+            "sample_rate": 10_000,
+            "duration": duration,
+        },
+        request={"variant_id": variant_id, **canonical_request},
+    )
+    transcript_path = variant_dir / "transcript.json"
+    original_manifest = manifest_path.read_bytes()
+    original_transcript = transcript_path.read_bytes()
+    manifest = read_json(manifest_path)
+
+    assert read_json(transcript_path)["segments"][0]["end"] == duration
+    assert read_json(variant_dir / "raw_timestamps.json")["items"][0]["end"] == duration
+
+    transcript_path.unlink()
+    recover_public_artifacts(manifest_path)
+
+    assert transcript_path.read_bytes() == original_transcript
+    assert manifest_path.read_bytes() == original_manifest
+    assert read_json(manifest_path)["artifact_sha256"] == manifest["artifact_sha256"]
 
 
 def test_preprocessing_decodes_and_runs_vad_once_before_language_resolution(
@@ -329,7 +333,7 @@ def test_missing_public_artifact_is_rebuilt_without_inference(
     assert run_transcribe(audio, **kwargs) == manifest_path
     assert calls == [1]
     assert manifest_path.read_bytes() == original_manifest
-    validate_manifest(manifest_path)
+    load_result(manifest_path)
 
 
 def test_migrated_pipeline_workspace_is_adapted_to_public_schema(
@@ -376,7 +380,7 @@ def test_migrated_pipeline_workspace_is_adapted_to_public_schema(
         request={"variant_id": variant_id, **canonical_request},
     )
 
-    validate_manifest(manifest_path)
+    load_result(manifest_path)
     transcript = read_json(variant_dir / "transcript.json")
     assert transcript["segments"][0]["text"] == "原文。"
 
@@ -404,7 +408,7 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
     write_json_atomic(workspace_path, workspace)
     (manifest_path.parent / "transcript.json").unlink()
 
-    with pytest.raises(ArtifactContractError, match="does not match"):
+    with pytest.raises(ResultValidationError, match="does not match"):
         run_transcribe(audio, **kwargs)
 
     assert not manifest_path.exists()
@@ -417,7 +421,7 @@ def test_empty_result_never_publishes_complete_manifest(
     audio.write_bytes(b"audio")
     results = workspace_tmp_path / "results"
 
-    with pytest.raises(ArtifactContractError, match="must contain"):
+    with pytest.raises(ResultValidationError, match="must contain"):
         run_transcribe(
             audio,
             language="en",
@@ -428,13 +432,3 @@ def test_empty_result_never_publishes_complete_manifest(
         )
 
     assert not list(results.rglob("result_manifest.json"))
-
-
-@pytest.mark.parametrize("unsafe", ["../outside.json", "/absolute.json"])
-def test_manifest_artifact_path_cannot_escape_result_directory(
-    workspace_tmp_path: Path, unsafe: str
-) -> None:
-    manifest_path = workspace_tmp_path / "result" / "result_manifest.json"
-
-    with pytest.raises(ArtifactContractError):
-        resolve_artifact_path(manifest_path, unsafe)

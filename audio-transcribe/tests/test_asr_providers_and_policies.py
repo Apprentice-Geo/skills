@@ -11,9 +11,9 @@ import pytest
 
 from scripts.asr.alignment import AlignmentContractError
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
-from scripts.asr.execution import Qwen3CudaPolicy, WhisperCpuPolicy
-from scripts.asr.providers import Qwen3Provider, WhisperProvider
-from scripts.config import QWEN3_DEVICE_MAP, QWEN3_DTYPE
+from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
+from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
+from scripts.config import QWEN3_ASR_DEVICE_MAP, QWEN3_ASR_DTYPE
 from scripts.process_logging import LoggingSession, get_logger
 from scripts.runtime_options import TranscribeOptions
 
@@ -76,7 +76,7 @@ def test_whisper_provider_forces_word_timestamps_and_preserves_probability() -> 
 
 
 def test_qwen_provider_parses_probability_as_none() -> None:
-    provider = Qwen3Provider("zh")
+    provider = Qwen3AsrProvider("zh")
     result = SimpleNamespace(
         text="你好",
         time_stamps=SimpleNamespace(
@@ -90,6 +90,7 @@ def test_qwen_provider_parses_probability_as_none() -> None:
 
     assert transcript.words[0].probability is None
     identity = provider.request_identity()
+    assert identity["provider"] == "qwen3-asr"
     assert identity["max_new_tokens"] > 0
     assert identity["return_time_stamps"] is True
 
@@ -131,7 +132,7 @@ def test_qwen_prepare_logs_only_safe_model_configuration(
 ) -> None:
     torch = ModuleType("torch")
     torch.cuda = SimpleNamespace(is_available=lambda: True)
-    setattr(torch, QWEN3_DTYPE, object())
+    setattr(torch, QWEN3_ASR_DTYPE, object())
     qwen_asr = ModuleType("qwen_asr")
     qwen_asr.Qwen3ASRModel = SimpleNamespace(
         from_pretrained=lambda *_args, **_kwargs: object()
@@ -144,22 +145,22 @@ def test_qwen_prepare_logs_only_safe_model_configuration(
     monkeypatch.setitem(sys.modules, "qwen_asr", qwen_asr)
     monkeypatch.setitem(sys.modules, "transformers", transformers)
     monkeypatch.setattr(
-        "scripts.asr.providers.qwen3.model_has_weights", lambda *_args: True
+        "scripts.asr.providers.qwen3_asr.model_has_weights", lambda *_args: True
     )
-    provider = Qwen3Provider("zh")
+    provider = Qwen3AsrProvider("zh")
     log_path = workspace_tmp_path / "qwen-prepare.log"
 
     with isolated_logging_session(log_path):
-        provider.prepare({"policy": "qwen3-cuda", "batch_size": 4})
+        provider.prepare({"policy": "qwen3-asr-cuda", "batch_size": 4})
 
     log_text = log_path.read_text(encoding="utf-8")
-    assert "provider=qwen3" in log_text
-    assert f"device={QWEN3_DEVICE_MAP} compute_type={QWEN3_DTYPE}" in log_text
-    assert "policy=qwen3-cuda batch_size=4" in log_text
+    assert "provider=qwen3-asr" in log_text
+    assert f"device={QWEN3_ASR_DEVICE_MAP} compute_type={QWEN3_ASR_DTYPE}" in log_text
+    assert "policy=qwen3-asr-cuda batch_size=4" in log_text
 
 
 def test_qwen_provider_clips_small_last_word_end_overrun() -> None:
-    provider = Qwen3Provider("en")
+    provider = Qwen3AsrProvider("en")
     result = SimpleNamespace(
         text="hello later",
         time_stamps=SimpleNamespace(
@@ -178,7 +179,7 @@ def test_qwen_provider_clips_small_last_word_end_overrun() -> None:
 
 
 def test_qwen_provider_rejects_large_last_word_end_overrun() -> None:
-    provider = Qwen3Provider("en")
+    provider = Qwen3AsrProvider("en")
     result = SimpleNamespace(
         text="hello",
         time_stamps=SimpleNamespace(
@@ -283,13 +284,13 @@ def test_whisper_policy_returns_final_exception_and_logs_second_traceback(
 def test_qwen_policy_logs_batch_and_isolated_failure_tracebacks(
     workspace_tmp_path,
 ) -> None:
-    policy = Qwen3CudaPolicy()
+    policy = Qwen3AsrCudaPolicy()
     layouts = [
         ChunkLayout(0, 0, 1, "silence", 0),
         ChunkLayout(1, 1, 2, "audio_end", 0),
     ]
     audio = NormalizedAudio(np.zeros(2, dtype=np.float32))
-    provider = SimpleNamespace(name="qwen3", prepare=lambda identity: object())
+    provider = SimpleNamespace(name="qwen3-asr", prepare=lambda identity: object())
     provider.transcribe_batch = lambda *_args: (_ for _ in ()).throw(
         RuntimeError("batch")
     )
@@ -316,11 +317,11 @@ def test_qwen_policy_logs_batch_and_isolated_failure_tracebacks(
     assert str(failures["chunk_001"]) == "bad"
     log_text = log_path.read_text(encoding="utf-8")
     assert (
-        "provider=qwen3 policy=qwen3-cuda batch=1 "
+        "provider=qwen3-asr policy=qwen3-asr-cuda batch=1 "
         "chunks=chunk_000..chunk_001 attempt=batch action=isolate"
     ) in log_text
     assert (
-        "provider=qwen3 policy=qwen3-cuda batch=1 "
+        "provider=qwen3-asr policy=qwen3-asr-cuda batch=1 "
         "chunk=chunk_001 attempt=isolation action=fail"
     ) in log_text
     assert "RuntimeError: batch" in log_text

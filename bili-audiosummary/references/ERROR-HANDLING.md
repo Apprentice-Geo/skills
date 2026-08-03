@@ -9,8 +9,7 @@ Use this reference only when Bilibili resource preparation, job continuation, or
 - [HTTP 412 and Cookies](#http-412-and-cookies)
 - [Subtitle Selection](#subtitle-selection)
 - [Job Status](#job-status)
-- [External Transcription Validation](#external-transcription-validation)
-- [External Artifact Recovery](#external-artifact-recovery)
+- [External Transcription Input](#external-transcription-input)
 - [Summary Completion](#summary-completion)
 - [Logs](#logs)
 - [Stop Conditions](#stop-conditions)
@@ -23,6 +22,7 @@ Use this reference only when Bilibili resource preparation, job continuation, or
 - If `.venv` is incomplete, remove or repair it only with explicit user approval, then rerun setup.
 - Use `uv run --no-sync python` for commands after setup.
 - If dependency sync fails, inspect the setup log and `pyproject.toml` / `uv.lock`.
+- If `audio_transcribe_contract` cannot import, rerun setup; do not replace the pinned contract with copied Skill source.
 - `ffmpeg-binaries-compat` is the supported ffmpeg source. If `ffmpeg` or `ffprobe` cannot be resolved, rerun setup rather than relying on system PATH.
 - This setup does not install ASR dependencies or models. Follow `audio-transcribe` documentation when the job needs transcription.
 
@@ -55,6 +55,7 @@ uv run --no-sync python -m scripts.run_pipeline `
 ## Subtitle Selection
 
 - Only `.srt` files in the requested Bilibili language group and parsing into non-empty segments are reusable.
+- A cue whose start and end timestamps are equal is logged and skipped. Other valid cues remain usable; if none remain, try another subtitle or fall back to audio transcription.
 - Other subtitle files do not block a fresh target-language download attempt.
 - An empty, malformed, or unreadable cached SRT should be logged and replaced when possible.
 - `--skip-subtitles` intentionally bypasses both cached and downloaded subtitles and requires audio.
@@ -75,7 +76,7 @@ Reject a job with a wrong schema, unknown status, missing fixed top-level keys, 
 
 Preparation must not silently replace an existing `prompt_ready` or `complete` job. Confirm the exact result directory if a new request resolves to an existing BVID.
 
-## External Transcription Validation
+## External Transcription Input
 
 Continue only from `needs_transcription`:
 
@@ -85,30 +86,15 @@ uv run --no-sync python -m scripts.continue_summary `
   --transcription-manifest "<absolute-result-manifest-path>"
 ```
 
-The transcription manifest must be absolute. Relative paths, unsupported schema, non-complete status, absolute artifact paths, `..` escape, missing transcript, malformed JSON, digest mismatch, empty segments, invalid IDs/times/text, or inconsistent identities are rejected.
-
-The manifest audio SHA-256 and size must match the exact job audio. A result for a different file is never accepted even if its title or filename looks correct.
+The transcription manifest must be absolute. The pinned `audio-transcribe-contract` validates its complete status, schema, contained artifact paths, digests, identities, transcript segments, and raw timestamps. Continue then compares the SHA-256 of job `resources.audio` with `manifest.audio.id`. A contract or audio-identity failure must not publish `transcript.md`, a prompt, or an updated job.
 
 On continue failure:
 
-- keep or return the job to `needs_transcription`;
-- do not create or retain a prompt that points to the rejected artifact;
+- keep the job at `needs_transcription` when prompt publication has not succeeded;
 - do not edit, delete, or attempt to repair the external transcription directory;
-- report the validation reason and let the user or `audio-transcribe` workflow provide a valid result.
+- report the loading or path-safety reason and let the user or `audio-transcribe` workflow provide a usable result.
 
-Calling continue again with the same valid manifest is idempotent and revalidates the artifacts. Passing a different manifest to a job already bound to a valid result is rejected rather than silently replacing it.
-
-## External Artifact Recovery
-
-Before using an external prompt and again during completion, the workflow revalidates the external manifest and transcript. If either was deleted, corrupted, escaped, digest-mismatched, or made identity-incompatible:
-
-- delete only the Bilibili prompt derived from that external reference;
-- clear the job's external transcription reference and derived prompt fields;
-- atomically return the job to `needs_transcription`;
-- preserve any summary file the user already wrote;
-- leave every external file unchanged.
-
-Do not continue summarizing from a transcript already known to be invalid. Obtain a valid external result and run continue again.
+Calling continue again with the same manifest is idempotent when `transcript.md` and the prompt exist. A missing prompt is rebuilt from existing Markdown without external revalidation; missing Markdown requires contract and audio-identity validation before it is rendered again. Passing a different manifest to an already bound job is rejected rather than silently replacing it. Existing ready or complete jobs are updated only when continue is explicitly called.
 
 ## Summary Completion
 
@@ -124,9 +110,7 @@ Completion fails without changing `prompt_ready` when:
 - template placeholders or prompt comments remain;
 - required structure or language validation fails.
 
-Fix the existing summary when appropriate and repeat completion. If the source transcript or external manifest no longer validates, the job instead follows the external-source recovery flow and returns to `needs_transcription`. Only a fully valid source and summary produce `complete`. Repeating completion on a still-valid complete job succeeds without rewriting it.
-
-If an external source became invalid, follow the recovery flow even when a summary already exists. The old summary is preserved but cannot make the job complete until a valid source is attached and the normal prompt-ready flow is restored.
+Fix the existing summary when appropriate and repeat completion. Native subtitle jobs still validate their transcript source. External transcription artifacts are not revalidated during completion. A valid summary produces `complete`, and repeating completion succeeds without rewriting the job.
 
 ## Logs
 
@@ -146,7 +130,7 @@ Stop without generating or completing a summary when:
 - Bilibili returns `HTTP 412` and no valid cookie is available;
 - neither a usable native subtitle nor usable audio is available;
 - the job is `preparing`, `needs_transcription`, or `failed`;
-- the job or a referenced artifact fails schema, path, digest, or identity validation;
+- the job fails schema or path validation, or a required internal artifact cannot be read safely;
 - the required prompt, template, transcript, or summary path cannot be safely resolved;
 - transcription fails before producing a complete public manifest.
 

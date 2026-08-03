@@ -3,6 +3,7 @@ name = "audio-transcribe"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "audio-transcribe-contract==0.1.0",
     "faster-whisper==1.2.1",
     "ffmpeg-binaries-compat",
     "numpy",
@@ -13,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-qwen3 = [
+qwen3-asr = [
     "accelerate",
     "huggingface-hub",
     "librosa",
@@ -42,6 +43,7 @@ url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
+audio-transcribe-contract = { path = "packages/audio-transcribe-contract" }
 torch = { index = "pytorch-cu126" }
 torchaudio = { index = "pytorch-cu126" }
 
@@ -52,6 +54,10 @@ target-version = "py312"
 select = ["E4", "E7", "E9", "F", "I", "B"]
 
 [tool.pyright]
-include = ["scripts"]
+include = [
+    "scripts",
+    "packages/audio-transcribe-contract/src",
+    "tests/test_result_contract.py",
+]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

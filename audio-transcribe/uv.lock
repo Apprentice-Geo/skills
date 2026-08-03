@@ -61,6 +61,7 @@ name = "audio-transcribe"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "audio-transcribe-contract" },
     { name = "faster-whisper" },
     { name = "ffmpeg-binaries-compat" },
     { name = "numpy" },
@@ -71,7 +72,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-qwen3 = [
+qwen3-asr = [
     { name = "accelerate" },
     { name = "huggingface-hub" },
     { name = "librosa" },
@@ -91,22 +92,23 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", marker = "extra == 'qwen3'" },
+    { name = "accelerate", marker = "extra == 'qwen3-asr'" },
+    { name = "audio-transcribe-contract", directory = "packages/audio-transcribe-contract" },
     { name = "faster-whisper", specifier = "==1.2.1" },
     { name = "ffmpeg-binaries-compat" },
-    { name = "huggingface-hub", marker = "extra == 'qwen3'" },
-    { name = "librosa", marker = "extra == 'qwen3'" },
-    { name = "numba", marker = "extra == 'qwen3'", specifier = ">=0.59.1" },
+    { name = "huggingface-hub", marker = "extra == 'qwen3-asr'" },
+    { name = "librosa", marker = "extra == 'qwen3-asr'" },
+    { name = "numba", marker = "extra == 'qwen3-asr'", specifier = ">=0.59.1" },
     { name = "numpy" },
     { name = "psutil" },
-    { name = "qwen-asr", marker = "extra == 'qwen3'" },
-    { name = "soundfile", marker = "extra == 'qwen3'" },
+    { name = "qwen-asr", marker = "extra == 'qwen3-asr'" },
+    { name = "soundfile", marker = "extra == 'qwen3-asr'" },
     { name = "speechbrain" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu126" },
     { name = "torchaudio", index = "https://download.pytorch.org/whl/cu126" },
-    { name = "transformers", marker = "extra == 'qwen3'" },
+    { name = "transformers", marker = "extra == 'qwen3-asr'" },
 ]
-provides-extras = ["qwen3"]
+provides-extras = ["qwen3-asr"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -115,6 +117,11 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.14,<4" },
     { name = "ruff", specifier = ">=0.15.22" },
 ]
+
+[[package]]
+name = "audio-transcribe-contract"
+version = "0.1.0"
+source = { directory = "packages/audio-transcribe-contract" }
 
 [[package]]
 name = "audioread"

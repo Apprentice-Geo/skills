@@ -7,13 +7,10 @@ from typing import Any
 
 from scripts.summary_job import (
     JobValidationError,
-    TranscriptionValidationError,
-    invalidate_external_transcription,
     job_lock,
     load_job,
     publish_job,
     resolve_local_path,
-    validate_transcription_manifest,
 )
 from scripts.utils import read_json
 from scripts.validate_summary import ValidationResult, validate_summary
@@ -61,23 +58,13 @@ def _validate_source(job_path: Path, job: dict[str, Any]) -> None:
                 or not math.isfinite(end)
                 or start < 0
                 or start < previous_end
-                or end < start
+                or end <= start
             ):
                 raise JobValidationError("subtitle transcript timestamps are invalid")
             if not isinstance(segment.get("text"), str) or not segment["text"].strip():
                 raise JobValidationError("subtitle transcript text is invalid")
             previous_end = end
         return
-
-    manifest_path = Path(job["transcription_manifest"])
-    audio_path = resolve_local_path(
-        job_path, job["resources"]["audio"], "resources.audio"
-    )
-    _, transcript_path = validate_transcription_manifest(manifest_path, audio_path)
-    if transcript_path.resolve() != Path(transcript["path"]).resolve():
-        raise TranscriptionValidationError(
-            "job transcript path does not match transcription manifest"
-        )
 
 
 def _complete_summary_unlocked(
@@ -90,12 +77,7 @@ def _complete_summary_unlocked(
             f"cannot complete summary job from status {job['status']!r}"
         )
 
-    try:
-        _validate_source(job_path, job)
-    except (OSError, JobValidationError, TranscriptionValidationError):
-        if job["transcript"]["source"] == "audio_transcribe":
-            invalidate_external_transcription(job_path, job)
-        raise
+    _validate_source(job_path, job)
 
     prompt_path = resolve_local_path(job_path, job["prompt"]["path"], "prompt.path")
     if not prompt_path.is_file():

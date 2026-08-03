@@ -14,12 +14,12 @@ from typing import Any
 from scripts.config import (
     DEFAULT_WHISPER_MODEL_DIR,
     LANGUAGE_ID_MODEL_DIR,
-    QWEN3_ALIGNER_MODEL_DIR,
+    QWEN3_ASR_ALIGNER_MODEL_DIR,
     QWEN3_ASR_MODEL_DIR,
 )
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
-    QWEN3_WEIGHT_PATTERNS,
+    QWEN3_ASR_WEIGHT_PATTERNS,
     WHISPER_WEIGHT_PATTERNS,
 )
 from scripts.model_identity import MODEL_REVISIONS
@@ -107,7 +107,7 @@ def model_check(
         "Model artifacts are ready."
         if status == "pass"
         else "Model directory is incomplete or has the wrong revision marker.",
-        f"uv run --no-sync python -m scripts.setup.install_model --model {'qwen3' if 'qwen3' in check_id else 'faster-whisper'}",
+        f"uv run --no-sync python -m scripts.setup.install_model --model {'qwen3-asr' if 'qwen3-asr' in check_id else 'faster-whisper'}",
     )
 
 
@@ -260,6 +260,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
 
     import_status: dict[str, bool] = {}
     for module in (
+        "audio_transcribe_contract",
         "faster_whisper",
         "ffmpeg_binaries",
         "numpy",
@@ -314,21 +315,21 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     checks.extend((language, whisper))
     qwen_asr = model_check(
-        "provider:qwen3:asr-model",
+        "provider:qwen3-asr:asr-model",
         QWEN3_ASR_MODEL_DIR,
-        QWEN3_WEIGHT_PATTERNS,
+        QWEN3_ASR_WEIGHT_PATTERNS,
         {
-            "repo": MODEL_REVISIONS["qwen3"]["repo"],
-            "revision": MODEL_REVISIONS["qwen3"]["revision"],
+            "repo": MODEL_REVISIONS["qwen3-asr"]["repo"],
+            "revision": MODEL_REVISIONS["qwen3-asr"]["revision"],
         },
     )
     qwen_aligner = model_check(
-        "provider:qwen3:forced-aligner",
-        QWEN3_ALIGNER_MODEL_DIR,
-        QWEN3_WEIGHT_PATTERNS,
+        "provider:qwen3-asr:forced-aligner",
+        QWEN3_ASR_ALIGNER_MODEL_DIR,
+        QWEN3_ASR_WEIGHT_PATTERNS,
         {
-            "repo": MODEL_REVISIONS["qwen3"]["aligner_repo"],
-            "revision": MODEL_REVISIONS["qwen3"]["aligner_revision"],
+            "repo": MODEL_REVISIONS["qwen3-asr"]["aligner_repo"],
+            "revision": MODEL_REVISIONS["qwen3-asr"]["aligner_revision"],
         },
     )
     checks.extend((qwen_asr, qwen_aligner))
@@ -343,10 +344,10 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                 item(
                     f"import:{module}",
                     "warn",
-                    "Qwen3 optional module imports",
+                    "Qwen3-ASR optional module imports",
                     actual or "import failed",
                     stderr or actual,
-                    "uv sync --python 3.12 --no-dev --extra qwen3",
+                    "uv sync --python 3.12 --no-dev --extra qwen3-asr",
                 )
             )
     qwen_imports = all(
@@ -362,26 +363,26 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             pass
     checks.append(
         item(
-            "provider:qwen3:cuda",
+            "provider:qwen3-asr:cuda",
             "pass" if cuda else "warn",
             "CUDA is available",
             str(cuda),
             "CUDA is available."
             if cuda
-            else "Qwen3 requires a CUDA GPU; faster-whisper can run on CPU.",
+            else "Qwen3-ASR requires a CUDA GPU; faster-whisper can run on CPU.",
             "Install a CUDA-enabled PyTorch build and GPU driver.",
         )
     )
     checks.append(
         item(
-            "provider:qwen3:imports",
+            "provider:qwen3-asr:imports",
             "pass" if qwen_imports else "warn",
-            "Qwen3 optional imports",
+            "Qwen3-ASR optional imports",
             "available" if qwen_imports else "missing",
-            "Qwen3 imports are available."
+            "Qwen3-ASR imports are available."
             if qwen_imports
-            else "Qwen3 optional dependencies are not installed.",
-            "uv sync --python 3.12 --no-dev --extra qwen3",
+            else "Qwen3-ASR optional dependencies are not installed.",
+            "uv sync --python 3.12 --no-dev --extra qwen3-asr",
         )
     )
     ffmpeg_ok = all(
@@ -408,7 +409,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     providers = {
         "faster-whisper": {"status": "ready" if whisper_ready else "not_ready"},
-        "qwen3": {"status": "ready" if qwen_ready else "not_ready"},
+        "qwen3-asr": {"status": "ready" if qwen_ready else "not_ready"},
     }
     core_ids = {
         "platform",
@@ -423,6 +424,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     } | {
         f"import:{name}"
         for name in (
+            "audio_transcribe_contract",
             "faster_whisper",
             "ffmpeg_binaries",
             "numpy",

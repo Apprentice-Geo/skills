@@ -44,11 +44,11 @@ def normalize_text(lines: list[str]) -> str:
     ).strip()
 
 
-def parse_srt(path: Path) -> list[dict[str, Any]]:
+def parse_srt(path: Path, *, report_zero_duration: bool = True) -> list[dict[str, Any]]:
     blocks = re.split(r"\r?\n\r?\n+", path.read_text(encoding="utf-8-sig").strip())
     segments: list[dict[str, Any]] = []
 
-    for block in blocks:
+    for cue_number, block in enumerate(blocks, start=1):
         lines = [line.rstrip() for line in block.splitlines() if line.strip()]
         if len(lines) < 2:
             continue
@@ -58,6 +58,20 @@ def parse_srt(path: Path) -> list[dict[str, Any]]:
         if not match:
             continue
 
+        start = round(parse_srt_timestamp(match.group("start")), 3)
+        end = round(parse_srt_timestamp(match.group("end")), 3)
+        if start == end:
+            if report_zero_duration:
+                logger.warning(
+                    "Skipping zero-duration subtitle cue: %s (cue %s, %s --> %s)",
+                    path_to_posix(path),
+                    lines[0] if time_index == 1 else cue_number,
+                    match.group("start"),
+                    match.group("end"),
+                    extra={"terminal": True},
+                )
+            continue
+
         text = normalize_text(lines[time_index + 1 :])
         if not text:
             continue
@@ -65,8 +79,8 @@ def parse_srt(path: Path) -> list[dict[str, Any]]:
         segments.append(
             {
                 "id": len(segments),
-                "start": round(parse_srt_timestamp(match.group("start")), 3),
-                "end": round(parse_srt_timestamp(match.group("end")), 3),
+                "start": start,
+                "end": end,
                 "text": text,
             }
         )
@@ -74,9 +88,14 @@ def parse_srt(path: Path) -> list[dict[str, Any]]:
     return segments
 
 
-def probe_srt(path: Path) -> tuple[list[dict[str, Any]] | None, str | None]:
+def probe_srt(
+    path: Path, *, report_zero_duration: bool = True
+) -> tuple[list[dict[str, Any]] | None, str | None]:
     try:
-        segments = parse_srt(path)
+        segments = parse_srt(
+            path,
+            report_zero_duration=report_zero_duration,
+        )
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
 
@@ -91,17 +110,22 @@ def subtitle_to_transcript(
     manifest: dict[str, Any],
     metadata: dict[str, Any],
     output_dir: Path,
+    *,
+    report_zero_duration: bool = True,
 ) -> dict[str, Any]:
     terminal_info(logger, "[Stage] Build transcript from subtitle")
     suffix = subtitle_path.suffix.lower()
     if suffix != ".srt":
         raise ValueError(f"Unsupported subtitle format: {subtitle_path}")
 
-    segments = parse_srt(subtitle_path)
+    segments = parse_srt(
+        subtitle_path,
+        report_zero_duration=report_zero_duration,
+    )
     video_id = manifest.get("id") or subtitle_path.stem
     output_stem = f"{video_id}_transcript"
     json_path = output_dir / f"{output_stem}.json"
-    md_path = output_dir / f"{output_stem}.md"
+    md_path = output_dir / "transcript.md"
     subtitle_language = infer_subtitle_language(subtitle_path)
     session = LoggingSession.current()
     if session is not None:
@@ -112,6 +136,7 @@ def subtitle_to_transcript(
         "title": manifest.get("title"),
         "url": manifest.get("url"),
         "uploader": metadata.get("uploader"),
+        "duration": metadata.get("duration"),
         "duration_string": metadata.get("duration_string"),
         "source": "subtitle",
         "language": subtitle_language,

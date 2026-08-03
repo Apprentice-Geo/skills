@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from scripts import check_dependencies
+from scripts.setup.install_core import CORE_IMPORTS
 
 
 def test_model_check_requires_revision_marker_and_required_files(
@@ -30,9 +31,13 @@ def test_qwen_import_check_runs_in_a_clean_process() -> None:
 def test_report_has_provider_statuses_and_stable_shape() -> None:
     report = check_dependencies.run_check(Path(__file__).resolve().parents[1])
     assert report["schema_version"] == 1
-    assert set(report["providers"]) == {"faster-whisper", "qwen3"}
+    assert set(report["providers"]) == {"faster-whisper", "qwen3-asr"}
     assert report["overall_status"] in {"ready", "degraded", "not_ready"}
     assert all(
         {"id", "status", "expected", "actual", "message", "fix"} <= set(item)
         for item in report["checks"]
+    )
+    assert "audio_transcribe_contract" in CORE_IMPORTS
+    assert any(
+        item["id"] == "import:audio_transcribe_contract" for item in report["checks"]
     )

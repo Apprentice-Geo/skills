@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Sequence
 
 WHISPER_WEIGHT_PATTERNS = ("model.bin",)
-QWEN3_WEIGHT_PATTERNS = ("model*.safetensors",)
+QWEN3_ASR_WEIGHT_PATTERNS = ("model*.safetensors",)
 LANGUAGE_ID_REQUIRED_FILES = (
     "embedding_model.ckpt",
     "classifier.ckpt",

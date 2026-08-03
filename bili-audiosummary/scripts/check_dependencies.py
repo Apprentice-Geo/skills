@@ -194,7 +194,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                 "Restore uv, uv.lock and the .venv.",
             )
         )
-    for module in ("yt_dlp", "ffmpeg_binaries"):
+    for module in ("yt_dlp", "ffmpeg_binaries", "audio_transcribe_contract"):
         try:
             imported = __import__(module)
             value = getattr(imported, "__version__", "importable")

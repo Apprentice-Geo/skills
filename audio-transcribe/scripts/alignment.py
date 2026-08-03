@@ -158,7 +158,7 @@ def build_sentence_segments(
                 {
                     "id": len(segments),
                     "start": _to_float(items[sentence_start_item].start),
-                    "end": _to_float(items[end_item - 1].end),
+                    "end": min(_to_float(items[end_item - 1].end), duration),
                     "text": sentence_text,
                 }
             )
@@ -172,7 +172,7 @@ def build_sentence_segments(
             {
                 "id": len(segments),
                 "start": _to_float(items[sentence_start_item].start),
-                "end": _to_float(items[-1].end),
+                "end": min(_to_float(items[-1].end), duration),
                 "text": sentence_text,
             }
         )

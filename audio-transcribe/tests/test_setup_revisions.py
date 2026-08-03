@@ -11,11 +11,12 @@ def test_setup_and_variant_identity_share_pinned_revisions() -> None:
         == (MODEL_REVISIONS["faster-whisper"]["revision"])
     )
     assert (
-        install_model.QWEN3_ASR_MODEL_REVISION == MODEL_REVISIONS["qwen3"]["revision"]
+        install_model.QWEN3_ASR_MODEL_REVISION
+        == MODEL_REVISIONS["qwen3-asr"]["revision"]
     )
     assert (
-        install_model.QWEN3_ALIGNER_MODEL_REVISION
-        == (MODEL_REVISIONS["qwen3"]["aligner_revision"])
+        install_model.QWEN3_ASR_ALIGNER_MODEL_REVISION
+        == (MODEL_REVISIONS["qwen3-asr"]["aligner_revision"])
     )
     assert (
         install_model.LANGUAGE_ID_MODEL_REVISION
