@@ -17,8 +17,8 @@
 - `scripts/subtitle_transcript.py`：原生 SRT 到本项目 transcript JSON 和统一 `transcript.md` 的转换。
 - `scripts/validate_summary.py`：最终总结内容校验。
 - `assets/`：总结模板与提示词资源。
-- `references/architecture.md`：模块职责、job 状态和 artifact 边界。
-- `references/error-handling.md`：故障定位、恢复与停止条件。
+- `references/ARCHITECTURE.md`：模块职责、job 状态和 artifact 边界。
+- `references/ERROR-HANDLING.md`：故障定位、恢复与停止条件。
 - `tests/`：与公开状态转换和脚本行为对应的测试。
 
 ## 开发边界

@@ -12,7 +12,7 @@
 - `README.md`：面向使用者的安装、模型准备、CLI 参数和公开 artifact 说明。
 - `scripts/transcribe.py`：CLI 解析、本地音频身份、语言解析、Provider 选择、variant 目录、锁、缓存复用和最终 manifest 输出。
 - `scripts/asr/pipeline.py`：准备音频、VAD、分块规划、Provider 执行、chunk 校验、合并和 workspace 发布。
-- `scripts/asr/providers/`：faster-whisper 与 Qwen3 的 Provider 适配层。
+- `scripts/asr/providers/`：faster-whisper 与 Qwen3-ASR 的 Provider 适配层。
 - `scripts/asr/execution/`：不同 Provider 的执行策略和执行身份。
 - `scripts/asr/chunking/`：音频分块、时间线和规划优化。
 - `scripts/asr/alignment.py`：chunk 级文本与时间戳 alignment 校验。
@@ -23,8 +23,8 @@
 - `scripts/model_artifacts.py`：本地模型 artifact 就绪性检查。
 - `scripts/process_logging.py`：转写日志归档。
 - `scripts/setup/`：Windows 环境、依赖和模型安装辅助脚本。
-- `references/architecture.md`：pipeline、result identity、cache 和公开 artifact 合同。
-- `references/error-handling.md`：setup、模型、Provider、cache、artifact 和停止条件。
+- `references/ARCHITECTURE.md`：pipeline、result identity、cache 和公开 artifact 合同。
+- `references/ERROR-HANDLING.md`：setup、模型、Provider、cache、artifact 和停止条件。
 - `tests/`：与公开契约、CLI、pipeline、Provider、cache 和 setup 对应的测试。
 
 ## 开发边界
@@ -66,11 +66,11 @@ uv sync --python 3.12
 uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 ```
 
-安装 Qwen3 可选依赖和模型：
+安装 Qwen3-ASR 可选依赖和模型：
 
 ```powershell
-uv sync --python 3.12 --no-dev --extra qwen3
-uv run --no-sync python -m scripts.setup.install_model --model qwen3
+uv sync --python 3.12 --no-dev --extra qwen3-asr
+uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
 
 转写本地音频：
@@ -112,7 +112,3 @@ uv run pytest tests/test_asr_pipeline.py tests/test_asr_pipeline_runtime.py
 - 变更跨越多个模块或公共契约时，在聚焦测试通过后运行完整 `uv run pytest`。
 - 文档改动至少检查命令、路径、模块名、Markdown 链接和冲突标记。
 - 交付前运行 `git diff --check`，并确认没有夹带生成文件、模型文件、音频或无关改动。
-
-## 提交信息
-
-编写提交信息时，遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) 规范。

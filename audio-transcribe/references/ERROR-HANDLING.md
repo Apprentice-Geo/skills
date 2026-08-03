@@ -33,11 +33,11 @@ Install at least one local transcription model before transcription:
 uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 ```
 
-For Qwen3, first install optional dependencies and ensure CUDA is available:
+For Qwen3-ASR, first install optional dependencies and ensure CUDA is available:
 
 ```powershell
-uv sync --python 3.12 --no-dev --extra qwen3
-uv run --no-sync python -m scripts.setup.install_model --model qwen3
+uv sync --python 3.12 --no-dev --extra qwen3-asr
+uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
 
 If fixed-revision model artifacts are missing, incomplete, or from the wrong revision, reinstall the requested model. Do not invent revision values or treat a partially downloaded model directory as ready.
@@ -66,20 +66,20 @@ The language-identification model is required when `--language` is omitted. If i
 - If `--provider` names an unsupported Provider, stop.
 - If `--provider qwen3-asr` is used with an unsupported language, stop and report the supported language set.
 - If no Provider is specified, select only from Providers that are ready in the current environment.
-- If no Provider is ready, stop and ask the user to install Qwen3 or faster-whisper.
+- If no Provider is ready, stop and ask the user to install Qwen3-ASR or faster-whisper.
 - Once a Provider is resolved, do not silently switch Providers after a loading, inference, alignment, or artifact failure.
 
 ## Execution Policy
 
 - faster-whisper runs under the CPU policy. `--num-workers` and `--cpu-threads` must be positive integers when provided.
 - The faster-whisper worker/thread product must fit within the computed CPU budget. If it exceeds the budget, reduce workers or threads and rerun.
-- Qwen3 runs under the CUDA policy and requires available CUDA plus local ASR and forced-aligner model artifacts.
+- Qwen3-ASR runs under the CUDA policy and requires available CUDA plus local ASR and forced-aligner model artifacts.
 - Execution policy values are part of `variant_id`. Do not edit a manifest to pretend that a failed run used a different policy.
 
 ## Model Loading and Inference
 
 - If faster-whisper is not installed or its local `model.bin` is missing, install or repair faster-whisper before retrying.
-- If Qwen3 dependencies, CUDA, ASR weights, or forced-aligner weights are missing, install or repair Qwen3 before retrying.
+- If Qwen3-ASR dependencies, CUDA, ASR weights, or forced-aligner weights are missing, install or repair Qwen3-ASR before retrying.
 - If a Provider returns an unexpected result shape, inspect the pinned dependency version and the adapter before changing the public artifact schema.
 - Do not store third-party model objects, raw Provider responses, or large internal metadata in public artifacts.
 - Do not rewrite Provider text during inference recovery. Public transcript text remains Provider output.
@@ -89,7 +89,7 @@ The language-identification model is required when `--language` is omitted. If i
 - A complete transcription must contain non-empty text and timestamp items.
 - Reject timestamps with negative, non-finite, overlapping, or decreasing times.
 - Reject empty timestamp item text.
-- Reject Qwen3 timestamp items with non-null probability.
+- Reject Qwen3-ASR timestamp items with non-null probability.
 - Preserve punctuation-driven segmentation behavior. If sentence output looks wrong, inspect alignment items and segmentation rules rather than editing published `transcript.json` manually.
 - Do not publish `result_manifest.json` when alignment validation fails.
 
@@ -143,7 +143,7 @@ Stop without producing or using a transcript when:
 - automatic language detection is required but the language-id model or usable speech is unavailable;
 - the resolved language is empty or invalid;
 - the requested Provider is unsupported or not ready;
-- Qwen3 is requested without CUDA or required local model artifacts;
+- Qwen3-ASR is requested without CUDA or required local model artifacts;
 - faster-whisper is requested without required dependencies or local model artifacts;
 - CPU worker/thread options are invalid or exceed budget;
 - Provider inference fails;

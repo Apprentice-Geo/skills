@@ -15,7 +15,17 @@ Use this skill when the user provides a Bilibili video URL and wants an audio-ba
 
 Use it for audio-first videos such as talks, interviews, lectures, podcasts, news commentary, tutorials, and narrated explainers. Do not use it as the main solution for visual-first videos where essential information is carried by video frames, on-screen text, charts, actions, or images because this skill does not perform visual analysis.
 
-User-facing installation, command, and cookie instructions are in [README.md](README.md). Read [references/architecture.md](references/architecture.md) only for maintenance or debugging that requires internal job and artifact details.
+User-facing context is in [README.md](README.md). Read [references/ARCHITECTURE.md](references/ARCHITECTURE.md) only for maintenance or debugging that requires internal job and artifact details.
+
+## Environment
+
+Run commands from this Skill directory on Windows with Python 3.12 and `uv`.
+
+1. Prepare the environment with `scripts/setup/setup_windows.bat`.
+2. Run `scripts/check_dependencies.bat` before preparing a job. It is read-only and reports whether the Bilibili/download dependencies are ready.
+3. When transcription is required, separately install and check the `audio-transcribe` Skill. This Skill does not install ASR models.
+
+Network access to Bilibili is required. Cookie setup is described only in [README.md](README.md).
 
 ## Main Steps
 
@@ -59,7 +69,7 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 ```
 
 The command validates the native subtitle source when applicable, requires the recorded prompt, and validates the final summary. It does not revalidate external transcription artifacts. Only a successful validation changes the job to `complete`.
-8. A valid `complete` job may be returned as already finished. Do not overwrite it. Follow [references/error-handling.md](references/error-handling.md) for `failed`, invalid, or recoverable jobs, and never generate a summary while the job remains `needs_transcription`.
+8. A valid `complete` job may be returned as already finished. Do not overwrite it. Follow [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md) for `failed`, invalid, or recoverable jobs, and never generate a summary while the job remains `needs_transcription`.
 
 ## Processing Time
 

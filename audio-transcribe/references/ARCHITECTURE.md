@@ -36,9 +36,9 @@ The command prints the absolute `result_manifest.json` path only after a complet
 - `scripts/asr/pipeline_types.py`: defines source identity, pipeline plans, and chunk transcript contracts.
 - `scripts/asr/providers/base.py`: defines the Provider interface used by the pipeline.
 - `scripts/asr/providers/whisper.py`: adapts faster-whisper output into the internal chunk transcript contract.
-- `scripts/asr/providers/qwen3.py`: adapts Qwen3 ASR and forced-aligner output into the internal chunk transcript contract.
+- `scripts/asr/providers/qwen3_asr.py`: adapts Qwen3-ASR and forced-aligner output into the internal chunk transcript contract.
 - `scripts/asr/execution/whisper_cpu.py`: owns faster-whisper CPU execution identity and worker/thread planning.
-- `scripts/asr/execution/qwen3_cuda.py`: owns Qwen3 CUDA execution identity and batch policy.
+- `scripts/asr/execution/qwen3_asr_cuda.py`: owns Qwen3-ASR CUDA execution identity and batch policy.
 - `scripts/asr/chunking/*`: owns normalized audio, VAD parameters, speech timelines, chunk layout validation, planning, and chunk audio extraction.
 - `scripts/asr/alignment.py`: validates Provider text and timestamp alignment at chunk level.
 - `scripts/asr/merge.py`: merges ordered chunk transcripts into one workspace result.
@@ -102,7 +102,7 @@ The zero-runtime-dependency `audio-transcribe-contract` package exports `ResultM
 
 `transcript.json` uses schema version 1 and contains ordered sentence segments. Segment IDs are continuous from zero. Segment text is non-empty. Segments do not overlap, and each segment satisfies `0 <= start < end <= duration`.
 
-`raw_timestamps.json` uses schema version 1 and contains standardized alignment items with exactly `text`, `start`, `end`, and `probability`. Item text is non-empty. Item times are finite, non-negative, and monotonic. Qwen3 items always use `probability: null`.
+`raw_timestamps.json` uses schema version 1 and contains standardized alignment items with exactly `text`, `start`, `end`, and `probability`. Item text is non-empty. Item times are finite, non-negative, and monotonic. Qwen3-ASR items always use `probability: null`.
 
 Provider text is preserved in public artifacts. The publication path does not run OpenCC, simplification, rewriting, or other text normalization over transcript text.
 
@@ -120,11 +120,11 @@ For a new result, `transcript.json` and `raw_timestamps.json` are written first.
 
 ## Provider Resolution
 
-If the user passes `--provider`, that Provider must be supported and ready for the resolved language and runtime environment. If the user omits `--provider`, Qwen3 is selected only when the resolved language is supported and the CUDA model environment is ready; otherwise faster-whisper is selected when ready.
+If the user passes `--provider`, that Provider must be supported and ready for the resolved language and runtime environment. If the user omits `--provider`, Qwen3-ASR is selected only when the resolved language is supported and the CUDA model environment is ready; otherwise faster-whisper is selected when ready.
 
 Once a Provider is resolved, later loading, inference, alignment, merge, artifact, or publication failures stop the run. The command does not silently switch Providers after resolution, because doing so would change result identity and reproducibility.
 
-The public Qwen3 identifier changed incompatibly from `qwen3` to `qwen3-asr`. Since Provider identity contributes to `variant_id` and the result directory name, new runs intentionally do not reuse old `qwen3` cache entries. The `qwen3` extra, model installation argument, model directories, internal module names, and `qwen3-cuda` execution policy remain unchanged.
+The public Qwen3-ASR identifier is `qwen3-asr`. Since Provider identity contributes to `variant_id` and the result directory name, new runs intentionally do not reuse old `qwen3` cache entries. The `qwen3-asr` extra, model installation argument, model directories, internal module names, and `qwen3-asr-cuda` execution policy use the unified naming.
 
 ## Logging
 

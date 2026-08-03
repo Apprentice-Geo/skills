@@ -1,6 +1,8 @@
 ---
 name: subtitle-creator
 description: Create SRT subtitles(SRT 字幕) with optional text correction from local audio by coordinating a content-addressed subtitle job with the installed audio-transcribe Skill. Use when the user wants to create subtitles(创建字幕), correct transcript text(校正转写文本) against source text, or resume or reuse an existing subtitle job.
+compatibility: Windows. Requires uv and Python 3.12, plus an installed audio-transcribe Skill when transcription is needed.
+license: Apache-2.0
 ---
 
 # Subtitle Creator
@@ -10,6 +12,16 @@ description: Create SRT subtitles(SRT 字幕) with optional text correction from
 Use this Skill to turn an existing local audio file into an SRT subtitle with optional text-only correction against source text and resumable job state.
 
 Do not use it to download audio, perform transcription by itself, change segment timing or layout, translate text, or produce subtitle formats other than SRT. Coordinate the three independent script commands from the `subtitle-creator` directory, and let the Agent own every transition between them.
+
+## Environment
+
+Run commands from this Skill directory on Windows with Python 3.12 and `uv`.
+
+1. Run `uv sync --python 3.12` to prepare the environment.
+2. When transcription is required, install and check the separate `audio-transcribe` Skill before invoking it.
+3. Run the three commands in this document with `uv run --no-dev python -m ...`.
+
+This Skill does not install ASR models or download audio.
 
 ## Core Rules
 
