@@ -44,3 +44,30 @@ def test_main_publishes_utf8_json_and_log_without_environment(
     payload = json.loads(paths[0].read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
     assert "environment" not in paths[0].read_text(encoding="utf-8").lower()
+
+
+def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    report = {
+        "schema_version": 1,
+        "skill": "bili-audiosummary",
+        "overall_status": "not_ready",
+        "checks": [
+            {"id": "uv", "status": "pass", "message": "uv is ready"},
+            {"id": "yt_dlp", "status": "fail", "message": "module failed"},
+        ],
+        "providers": {},
+        "logs": {},
+    }
+    monkeypatch.setattr(check_dependencies, "run_check", lambda _root: report)
+
+    assert check_dependencies.main(["--root", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    log_path = next((tmp_path / ".cache" / "logs").glob("*.log"))
+    log = log_path.read_text(encoding="utf-8")
+
+    assert "[PASS] Dependencies OK (1 checks passed)" in output
+    assert "[PASS] uv: uv is ready" not in output
+    assert "[FAIL] yt_dlp: module failed" in output
+    assert "[PASS] uv: uv is ready" in log

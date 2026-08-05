@@ -70,4 +70,10 @@
 
 ## 提交信息
 
-编写提交信息时，遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) 规范。
+编写提交信息时，遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) 规范：
+
+```
+<type>(<scope>): <简短描述>
+
+[可选的详细说明]
+```

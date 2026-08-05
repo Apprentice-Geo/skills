@@ -3,6 +3,7 @@
 results/
 __pycache__/
 .pytest_cache/
+.pytest_tmp/
 .ruff_cache/
 .pyright/
 *.py[cod]

@@ -41,3 +41,31 @@ def test_report_has_provider_statuses_and_stable_shape() -> None:
     assert any(
         item["id"] == "import:audio_transcribe_contract" for item in report["checks"]
     )
+
+
+def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    report = {
+        "schema_version": 1,
+        "skill": "audio-transcribe",
+        "overall_status": "not_ready",
+        "checks": [
+            {"id": "uv", "status": "pass", "message": "uv is ready"},
+            {"id": "torch", "status": "fail", "message": "module failed"},
+        ],
+        "providers": {"faster-whisper": {"status": "not_ready"}},
+        "logs": {},
+    }
+    monkeypatch.setattr(check_dependencies, "run_check", lambda _root: report)
+
+    assert check_dependencies.main(["--root", str(tmp_path)]) == 1
+    output = capsys.readouterr().out
+    log_path = next((tmp_path / ".cache" / "logs").glob("*.log"))
+    log = log_path.read_text(encoding="utf-8")
+
+    assert "[PASS] Dependencies OK (1 checks passed)" in output
+    assert "[PASS] uv: uv is ready" not in output
+    assert "[FAIL] torch: module failed" in output
+    assert "Provider faster-whisper: not_ready" in output
+    assert "[PASS] uv: uv is ready" in log

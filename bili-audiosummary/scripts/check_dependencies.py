@@ -265,17 +265,35 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     os.replace(temporary, json_path)
-    lines = [
+    check_lines = [
+        f"[{check['status'].upper()}] {check['id']}: {check['message']}"
+        for check in report["checks"]
+    ]
+    terminal_lines = [
         f"Dependency check: {report['skill']}",
         f"Overall: {report['overall_status']}",
     ]
-    for check in report["checks"]:
-        lines.append(f"[{check['status'].upper()}] {check['id']}: {check['message']}")
-    lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
+    passed = sum(check["status"] == "pass" for check in report["checks"])
+    if passed:
+        terminal_lines.append(f"[PASS] Dependencies OK ({passed} checks passed)")
+    terminal_lines.extend(line for line in check_lines if not line.startswith("[PASS] "))
+    terminal_lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
     log_temporary = log_path.with_suffix(".tmp")
-    log_temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    log_temporary.write_text(
+        "\n".join(
+            [
+                f"Dependency check: {report['skill']}",
+                f"Overall: {report['overall_status']}",
+                *check_lines,
+                f"JSON report: {json_path}",
+                f"Log: {log_path}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     os.replace(log_temporary, log_path)
-    print("\n".join(lines))
+    print("\n".join(terminal_lines))
     return (
         2
         if any(

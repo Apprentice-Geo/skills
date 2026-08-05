@@ -22,7 +22,7 @@ pythonVersion = "3.12"
 typeCheckingMode = "standard"
 
 [tool.pytest.ini_options]
-addopts = "--basetemp=results/.pytest-tmp"
+addopts = "--basetemp=.pytest_tmp"
 pythonpath = ["."]
 testpaths = ["tests"]
 
