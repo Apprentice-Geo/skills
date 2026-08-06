@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -19,20 +21,30 @@ def benchmark_audio(
     results: list[dict[str, Any]] = []
     for audio_path in audio_paths:
         started = time.perf_counter()
-        manifest = run_transcribe(audio_path, language=language, provider=provider)
-        results.append(
-            {
-                "audio_path": str(audio_path.resolve()),
-                "manifest": str(manifest),
-                "elapsed_seconds": round(time.perf_counter() - started, 3),
-            }
-        )
+        item: dict[str, Any] = {
+            "audio_path": str(audio_path.resolve()),
+        }
+        try:
+            manifest = run_transcribe(audio_path, language=language, provider=provider)
+        except Exception as exc:
+            item["error"] = f"{type(exc).__name__}: {exc}"
+        else:
+            item["manifest"] = str(manifest)
+        item["elapsed_seconds"] = round(time.perf_counter() - started, 3)
+        results.append(item)
     report = {"provider": provider, "language": language, "results": results}
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    payload = (json.dumps(report, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    fd, temporary_name = tempfile.mkstemp(
+        dir=output_path.parent, prefix=f".{output_path.name}.", suffix=".tmp"
     )
+    os.close(fd)
+    temporary = Path(temporary_name)
+    try:
+        temporary.write_bytes(payload)
+        os.replace(temporary, output_path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return report
 
 

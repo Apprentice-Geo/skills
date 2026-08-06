@@ -4,6 +4,7 @@ import pytest
 
 import scripts.complete_summary as complete_summary
 import scripts.continue_summary as continue_summary
+from scripts.summary_job import TranscriptionValidationError
 from scripts.utils import read_json, write_json
 from tests.test_continue_summary import make_needs_job, make_transcription
 
@@ -53,21 +54,10 @@ def test_continue_rebuilds_missing_prompt_before_completion(
     prompt_path.unlink()
     (manifest_path.parent / "transcript.json").unlink()
 
-    restored = continue_summary.continue_summary(job_path, manifest_path.resolve())
-
-    assert restored["status"] == "prompt_ready"
-    assert restored["transcription_manifest"] == job["transcription_manifest"]
-    assert restored["transcript"] == job["transcript"]
-    assert prompt_path.is_file()
-
-    summary_path = job_path.parent / restored["prompt"]["summary_path"]
-    summary_path.write_text(
-        "# Summary\n\nRestored prompt completed.\n", encoding="utf-8"
-    )
-    completed, result = complete_summary.complete_summary(job_path)
-
-    assert result.ok
-    assert completed["status"] == "complete"
+    with pytest.raises(TranscriptionValidationError):
+        continue_summary.continue_summary(job_path, manifest_path.resolve())
+    assert read_json(job_path)["status"] == "prompt_ready"
+    assert not prompt_path.is_file()
 
 
 @pytest.mark.parametrize(

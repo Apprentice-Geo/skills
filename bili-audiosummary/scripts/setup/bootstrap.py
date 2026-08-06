@@ -24,12 +24,12 @@ def run_setup(root: Path | None = None) -> Path:
 
     root = root or Path(__file__).resolve().parents[2]
     paths = SetupPaths.from_root(root)
-    configure_environment(paths, os.environ)
     logger = ProcessLogger(create_log_path(paths))
     launcher_python = current_python()
     venv_python = paths.venv_python
     print(f"Full log: {logger.log_path}")
     try:
+        configure_environment(paths, os.environ)
         logger.step(1, 3, "Verify setup Python 3.12")
         assert_python_312(
             read_python_version(launcher_python, logger),
@@ -56,8 +56,10 @@ def run_setup(root: Path | None = None) -> Path:
 
         print("Setup completed.")
         return logger.log_path
-    except Exception:
-        logger.logger.exception("Setup failed")
+    except Exception as exc:
+        logger.logger.error("Setup failed: %s", exc, exc_info=exc)
+        if not isinstance(exc, SetupError):
+            raise SetupError(f"Setup failed. See {logger.log_path}") from exc
         raise
     finally:
         logger.close()

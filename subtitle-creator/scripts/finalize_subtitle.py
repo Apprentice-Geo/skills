@@ -12,7 +12,7 @@ from .subtitle_job import (
     SubtitleJobError,
     atomic_write_json,
     compare_normalized_correction,
-    normalized_srt_segments,
+    expected_srt_bytes,
     read_json_object,
     sha256_file,
     validate_job,
@@ -46,6 +46,14 @@ def _atomic_write(path: Path, content: bytes) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -59,7 +67,7 @@ def finalize_subtitle(job_path: Path) -> Path:
         raise SubtitleJobError(f"subtitle job is not a regular file: {job_path}")
 
     job = read_json_object(job_path)
-    validate_job(job_path, job)
+    validate_job(job_path, job, allow_stale_derived=True)
 
     artifacts = job["artifacts"]
     baseline = read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True)
@@ -84,12 +92,7 @@ def finalize_subtitle(job_path: Path) -> Path:
     ):
         return subtitle_path
 
-    segments = normalized_srt_segments(normalized)
-    blocks = [
-        f"{index}\n{_timestamp(start)} --> {_timestamp(end)}\n{text}"
-        for index, (start, end, text) in enumerate(segments, start=1)
-    ]
-    _atomic_write(subtitle_path, ("\n\n".join(blocks) + "\n").encode("utf-8-sig"))
+    _atomic_write(subtitle_path, expected_srt_bytes(normalized))
 
     job["changed_segment_ids"] = changed_ids
     artifacts["normalized_transcript_sha256"] = normalized_digest

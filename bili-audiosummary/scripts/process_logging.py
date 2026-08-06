@@ -64,6 +64,7 @@ class LoggingSession:
         self._stream_handler: logging.StreamHandler | None = None
         self._captured_loggers: dict[str, CapturedLoggerState] = {}
         self._previous_showwarning = None
+        self._previous_logger_state = None
         self._started = False
 
     @classmethod
@@ -85,6 +86,14 @@ class LoggingSession:
         if previous is not None and previous is not self:
             previous.close()
 
+        self._previous_logger_state = CapturedLoggerState(
+            handlers=list(self._logger.handlers),
+            level=self._logger.level,
+            propagate=self._logger.propagate,
+            disabled=self._logger.disabled,
+            forwarding_handler=ForwardingHandler(self._logger),
+        )
+        self._previous_logger_state.forwarding_handler.close()
         self._logger.setLevel(logging.DEBUG)
         self._logger.propagate = False
         self._file_handler = self._make_file_handler(self.log_path)
@@ -206,6 +215,13 @@ class LoggingSession:
             except ValueError:
                 pass
             self._logger.removeHandler(handler)
+        if self._previous_logger_state is not None:
+            state = self._previous_logger_state
+            self._logger.handlers[:] = state.handlers
+            self._logger.setLevel(state.level)
+            self._logger.propagate = state.propagate
+            self._logger.disabled = state.disabled
+            self._previous_logger_state = None
         self._file_handler = None
         self._stream_handler = None
         self._started = False
@@ -265,17 +281,27 @@ class ProcessLogger:
         check: bool = True,
     ) -> ProcessResult:
         command_text = [str(part) for part in command]
-        completed = subprocess.run(
-            command_text,
-            cwd=cwd,
-            env=dict(env) if env is not None else None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command_text,
+                cwd=cwd,
+                env=dict(env) if env is not None else None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as exc:
+            self.logger.error(
+                "$ %s\n[failed to start: %s]",
+                subprocess.list2cmdline(command_text),
+                exc,
+            )
+            raise SetupError(
+                f"{description} could not start. See {self.log_path}"
+            ) from exc
         output = completed.stdout or ""
         self.logger.info(
             "$ %s\n%s[exit %d]",

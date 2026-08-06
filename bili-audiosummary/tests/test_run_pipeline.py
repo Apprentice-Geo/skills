@@ -114,6 +114,32 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
     assert not result["job_path"].with_suffix(".json.tmp").exists()
 
 
+@pytest.mark.parametrize("page", ["0", "-1", "../secret"])
+def test_prepare_rejects_invalid_video_page(
+    workspace_tmp_path: Path, page: str, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        run_pipeline,
+        "normalize_bilibili_video_url",
+        lambda _url: f"https://www.bilibili.com/video/BVTEST/?p={page}",
+    )
+
+    with pytest.raises(ValueError, match="page must be a positive integer"):
+        run_pipeline._preparing_job(make_args())
+
+
+def test_prepare_rejects_result_path_escape(monkeypatch) -> None:
+    monkeypatch.setattr(
+        run_pipeline, "normalize_bilibili_video_url", lambda _url: "normalized"
+    )
+    monkeypatch.setattr(
+        run_pipeline, "_video_id_from_normalized_url", lambda _url: "../escape"
+    )
+
+    with pytest.raises(ValueError, match="escapes the results directory"):
+        run_pipeline._preparing_job(make_args())
+
+
 def test_prepare_with_mixed_zero_duration_subtitle_stays_prompt_ready(
     workspace_tmp_path: Path,
     mocker,

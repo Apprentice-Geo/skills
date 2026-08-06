@@ -57,13 +57,19 @@ def run_attach(job_path: Path | str, manifest_path: Path | str) -> subprocess.Co
 @pytest.fixture
 def transcription(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[Path, Path, Path, str, dict[str, Any]]]:
     audio_path = tmp_path / "sample.wav"
     audio_content = b"test audio content"
     audio_path.write_bytes(audio_content)
     audio_id = hashlib.sha256(audio_content).hexdigest()
+    monkeypatch.setenv("SUBTITLE_CREATOR_RESULTS_DIR", str(tmp_path / "results"))
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(
+        __import__("scripts.subtitle_job", fromlist=["RESULTS_DIR"]), "RESULTS_DIR", results_dir
+    )
+    monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     job_dir = RESULTS_DIR / audio_id
-    shutil.rmtree(job_dir, ignore_errors=True)
     job_dir.mkdir(parents=True)
     job_path = job_dir / "subtitle_job.json"
     job = {

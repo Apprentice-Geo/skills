@@ -81,6 +81,14 @@ def write_json_atomic(path: Path, data: Any) -> None:
             encoding="utf-8",
         )
         os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
     finally:
         temporary_path.unlink(missing_ok=True)
 
@@ -93,6 +101,14 @@ def write_text_atomic(path: Path, text: str) -> None:
     try:
         temporary_path.write_text(text, encoding="utf-8")
         os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
     finally:
         temporary_path.unlink(missing_ok=True)
 

@@ -89,10 +89,15 @@ def _normalize_speech_samples(
 ) -> tuple[tuple[int, int], ...]:
     normalized = []
     for start, end in intervals:
-        if isinstance(start, bool) or isinstance(end, bool):
+        if (
+            isinstance(start, bool)
+            or isinstance(end, bool)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+        ):
             raise ValueError("Speech sample coordinates must be integers.")
-        start_value = max(0, min(sample_count, int(start)))
-        end_value = max(0, min(sample_count, int(end)))
+        start_value = max(0, min(sample_count, start))
+        end_value = max(0, min(sample_count, end))
         if end_value < start_value:
             raise ValueError(f"Invalid speech interval: {(start, end)!r}.")
         if end_value > start_value:

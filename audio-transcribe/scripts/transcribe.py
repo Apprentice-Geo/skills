@@ -63,9 +63,9 @@ class Engine(Protocol):
 
 
 def _model_has_weights(directory: Path, pattern: str) -> bool:
-    return directory.is_dir() and any(
-        path.is_file() for path in directory.glob(pattern)
-    )
+    from scripts.model_artifacts import model_has_weights
+
+    return model_has_weights(directory, (pattern,))
 
 
 def _decode_audio(path: Path) -> Any:

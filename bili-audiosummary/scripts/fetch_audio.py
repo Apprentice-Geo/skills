@@ -294,7 +294,7 @@ def download_subtitles(
     except Exception as exc:
         if is_http_412_error(exc):
             raise make_cookie_required_error() from exc
-        logger.warning("Subtitle download failed: %s", exc, exc_info=True)
+        raise RuntimeError(f"Subtitle download failed: {exc}") from exc
 
     subtitle_files = filter_subtitle_files_by_language(
         list_current_files(subtitle_dir, video_id),
@@ -312,7 +312,9 @@ def download_subtitles(
     non_srt_subtitle_files = [
         path for path in subtitle_files if not is_usable_subtitle(path)
     ]
-    return sort_subtitle_files(non_srt_subtitle_files, preferred_languages)
+    if non_srt_subtitle_files:
+        raise RuntimeError("Subtitle download did not produce a valid SRT file.")
+    return []
 
 
 def download_audio(
@@ -350,9 +352,12 @@ def download_audio(
     except Exception as exc:
         if is_http_412_error(exc):
             raise make_cookie_required_error() from exc
-        logger.warning("Audio download failed: %s", exc, exc_info=True)
+        raise RuntimeError(f"Audio download failed: {exc}") from exc
 
-    return list_current_files(audio_dir, video_id)
+    files = list_current_files(audio_dir, video_id)
+    if not files:
+        raise RuntimeError("Audio download did not produce an audio file.")
+    return files
 
 
 def compact_metadata(info: dict[str, Any]) -> dict[str, Any]:

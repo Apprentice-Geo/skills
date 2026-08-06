@@ -12,7 +12,6 @@ from scripts.setup.environment import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_UV_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
 def test_configure_environment_uses_project_local_caches(
@@ -57,14 +56,13 @@ def test_create_log_path_uses_setup_timestamp_name(
     assert log_path.name.endswith(".log")
 
 
-def test_pyproject_uses_only_the_default_uv_index() -> None:
+def test_pyproject_uses_ordered_trusted_indexes() -> None:
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text("utf-8"))
 
     indexes = pyproject["tool"]["uv"]["index"]
-    assert indexes == [
-        {
-            "name": "tsinghua-pypi",
-            "url": DEFAULT_UV_INDEX,
-            "default": True,
-        }
+    assert [(item["name"], item["url"]) for item in indexes] == [
+        ("pypi", "https://pypi.org/simple"),
+        ("tsinghua-pypi", "https://pypi.tuna.tsinghua.edu.cn/simple"),
+        ("aliyun-pypi", "https://mirrors.aliyun.com/pypi/simple"),
     ]
+    assert pyproject["tool"]["uv"]["index-strategy"] == "first-index"

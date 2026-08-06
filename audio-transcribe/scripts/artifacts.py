@@ -113,7 +113,7 @@ def _public_payloads(
         or workspace.get("schema_version") != WORKSPACE_SCHEMA_VERSION
     ):
         raise ResultValidationError("Invalid workspace result.")
-    raw_items = workspace.get("items", workspace.get("words"))
+    raw_items = workspace.get("items")
     try:
         if not isinstance(raw_items, list):
             raise TypeError("timestamp items must be an array")
@@ -123,20 +123,7 @@ def _public_payloads(
         language = str(workspace["language"])
         text = str(workspace["text"])
     except (KeyError, TypeError, ValueError):
-        # The migrated ASR core stores identity and duration in its plan.
-        try:
-            plan = workspace["plan"]
-            items = [AlignmentItem(**item) for item in workspace["words"]]
-            duration = float(plan["source"]["sample_count"]) / float(
-                plan["source"]["sample_rate"]
-            )
-            provider = str(plan["provider_request"]["provider"])
-            language = str(plan["provider_request"]["language"])
-            text = str(workspace["text"])
-        except (KeyError, TypeError, ValueError) as nested:
-            raise ResultValidationError(
-                f"Invalid workspace result: {nested}"
-            ) from nested
+        raise ResultValidationError("Invalid workspace result.") from None
     segments = build_sentence_segments(text, items, duration)
     transcript = {
         "schema_version": PUBLIC_SCHEMA_VERSION,
@@ -248,6 +235,9 @@ def recover_public_artifacts(manifest_path: Path) -> dict[str, Any]:
         hidden_path.unlink(missing_ok=True)
         return dict(load_result(manifest_path).manifest)
     except Exception:
-        # No complete entry remains after failed recovery.
-        manifest_path.unlink(missing_ok=True)
+        # Keep the last complete manifest available if reconstruction fails.
+        from scripts.io_utils import write_bytes_atomic
+
+        write_bytes_atomic(manifest_path, original_bytes)
+        hidden_path.unlink(missing_ok=True)
         raise

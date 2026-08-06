@@ -118,10 +118,12 @@ def subtitle_to_transcript(
     if suffix != ".srt":
         raise ValueError(f"Unsupported subtitle format: {subtitle_path}")
 
-    segments = parse_srt(
+    segments, error = probe_srt(
         subtitle_path,
         report_zero_duration=report_zero_duration,
     )
+    if segments is None:
+        raise ValueError(error or "Subtitle SRT is empty or invalid.")
     video_id = manifest.get("id") or subtitle_path.stem
     output_stem = f"{video_id}_transcript"
     json_path = output_dir / f"{output_stem}.json"

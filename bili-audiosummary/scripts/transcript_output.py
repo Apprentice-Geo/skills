@@ -1,4 +1,5 @@
 import math
+import re
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -6,6 +7,12 @@ from typing import Any
 from scripts.utils import read_json, write_text_atomic
 
 STRONG_ENDINGS = frozenset("。！？.!?")
+_UNSAFE_TEXT = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+
+
+def _safe_line(value: Any, *, limit: int = 1024) -> str:
+    text = _UNSAFE_TEXT.sub(" ", str(value))
+    return " ".join(text.split())[:limit]
 
 
 def format_timestamp(seconds: float) -> str:
@@ -49,7 +56,7 @@ def _merged_segments(segments: Any) -> list[tuple[float, float, str]]:
         ):
             raise ValueError("transcript segment timestamps are invalid")
         text = segment.get("text")
-        if not isinstance(text, str) or not (text := text.strip()):
+        if not isinstance(text, str) or not (text := _safe_line(text)):
             raise ValueError("transcript segment text must be non-empty")
 
         if current_text and start - current_end > 5:
@@ -80,13 +87,13 @@ def render_markdown(payload: dict[str, Any]) -> str:
     lines = [
         "## metadata",
         "",
-        f"title: {payload.get('title') or ''}",
-        f"bvid: {payload.get('bvid') or ''}",
-        f"url: {payload.get('url') or ''}",
-        f"uploader: {payload.get('uploader') or ''}",
-        f"duration: {payload.get('duration_string') or payload.get('duration') or ''}",
-        f"source: {payload.get('source') or ''}",
-        f"language: {payload.get('language') or ''}",
+        f"title: {_safe_line(payload.get('title') or '')}",
+        f"bvid: {_safe_line(payload.get('bvid') or '')}",
+        f"url: {_safe_line(payload.get('url') or '')}",
+        f"uploader: {_safe_line(payload.get('uploader') or '')}",
+        f"duration: {_safe_line(payload.get('duration_string') or payload.get('duration') or '')}",
+        f"source: {_safe_line(payload.get('source') or '')}",
+        f"language: {_safe_line(payload.get('language') or '')}",
         "",
         "## transcript text",
         "",

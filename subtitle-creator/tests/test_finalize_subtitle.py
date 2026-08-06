@@ -64,13 +64,19 @@ def run_attach(job_path: Path, manifest_path: Path) -> subprocess.CompletedProce
 @pytest.fixture
 def correction_job(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[Path, Path, Path, Path, dict[str, Any]]]:
     audio_path = tmp_path / "sample.wav"
     audio_content = b"finalize audio"
     audio_path.write_bytes(audio_content)
     audio_id = hashlib.sha256(audio_content).hexdigest()
+    monkeypatch.setenv("SUBTITLE_CREATOR_RESULTS_DIR", str(tmp_path / "results"))
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(
+        __import__("scripts.subtitle_job", fromlist=["RESULTS_DIR"]), "RESULTS_DIR", results_dir
+    )
+    monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     job_dir = RESULTS_DIR / audio_id
-    shutil.rmtree(job_dir, ignore_errors=True)
     job_dir.mkdir(parents=True)
 
     result_dir = tmp_path / "upstream"

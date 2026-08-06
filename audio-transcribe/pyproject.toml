@@ -3,7 +3,7 @@ name = "audio-transcribe"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "audio-transcribe-contract==0.1.0",
+    "audio-transcribe-contract==0.1.1",
     "faster-whisper==1.2.1",
     "ffmpeg-binaries-compat",
     "numpy",
@@ -33,9 +33,19 @@ dev = [
 ]
 
 [[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[[tool.uv.index]]
 name = "tsinghua-pypi"
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
+
+[[tool.uv.index]]
+name = "aliyun-pypi"
+url = "https://mirrors.aliyun.com/pypi/simple"
+
+[tool.uv]
+index-strategy = "first-index"
 
 [[tool.uv.index]]
 name = "pytorch-cu126"
@@ -49,6 +59,9 @@ torchaudio = { index = "pytorch-cu126" }
 
 [tool.ruff]
 target-version = "py312"
+
+[tool.pytest.ini_options]
+addopts = "--basetemp=.pytest-tmp"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B"]

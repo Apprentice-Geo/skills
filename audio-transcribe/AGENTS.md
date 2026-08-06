@@ -21,7 +21,7 @@
 - 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 和 `references/` 中直接相关的内容。
 - `result_manifest.json` 是唯一公开入口；公开结果、身份、cache、恢复和 Provider 行为必须遵循 `references/ARCHITECTURE.md` 与其定义的 contract。
 - 其他 Skill 只能通过公开的 `result_manifest.json` 和 `audio-transcribe-contract` 读取结果，不得读取或修改内部 `workspace/`。
-- `.cache/`、`.venv/`、`.pytest_cache/`、`.ruff_cache/`、`results/`、`tmp/`、`models/` 和本地音频均为本地或生成内容，不应纳入提交。
+- `.cache/`、`.venv/`、`.pytest_cache/`、`.pytest-tmp/`、`.ruff_cache/`、`results/`、`tmp/`、`models/` 和本地音频均为本地或生成内容，不应纳入提交。
 - 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `uv run python -m scripts.<module>` 或 README 中记录的等价形式运行。
 
 ## 环境与常用命令

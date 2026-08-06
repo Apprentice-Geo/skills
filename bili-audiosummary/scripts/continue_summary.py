@@ -108,26 +108,17 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
             )
         result_dir = job_path.parent
         markdown_path = result_dir / "transcript.md"
-        prompt_path = resolve_local_path(job_path, job["prompt"]["path"], "prompt.path")
-        if markdown_path.is_file() and prompt_path.is_file():
-            return job
-        transcript_language = None
-        if not markdown_path.is_file():
-            result, markdown = _validated_transcript_markdown(
-                job_path, job, recorded_manifest
-            )
+        result, markdown = _validated_transcript_markdown(
+            job_path, job, recorded_manifest
+        )
+        if (
+            not markdown_path.is_file()
+            or markdown_path.read_text(encoding="utf-8") != markdown
+        ):
             write_text_atomic(markdown_path, markdown)
-            transcript_language = result.transcript["language"]
-        if prompt_path.is_file():
-            return job
-        if transcript_language is None:
-            summary_path = resolve_local_path(
-                job_path, job["prompt"]["summary_path"], "prompt.summary_path"
-            )
-            transcript_language = summary_path.stem.rsplit("_", maxsplit=1)[-1]
         updated = {
             **job,
-            "prompt": _write_prompt(job_path, job, transcript_language),
+            "prompt": _write_prompt(job_path, job, result.transcript["language"]),
         }
         publish_job(job_path, updated)
         return updated

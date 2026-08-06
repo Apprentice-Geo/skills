@@ -276,7 +276,9 @@ def main(argv: list[str] | None = None) -> int:
     passed = sum(check["status"] == "pass" for check in report["checks"])
     if passed:
         terminal_lines.append(f"[PASS] Dependencies OK ({passed} checks passed)")
-    terminal_lines.extend(line for line in check_lines if not line.startswith("[PASS] "))
+    terminal_lines.extend(
+        line for line in check_lines if not line.startswith("[PASS] ")
+    )
     terminal_lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
     log_temporary = log_path.with_suffix(".tmp")
     log_temporary.write_text(

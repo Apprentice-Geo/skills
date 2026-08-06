@@ -11,13 +11,12 @@ pytestmark = pytest.mark.skipif(
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SETUP_BAT = REPO_ROOT / "scripts" / "setup" / "setup_windows.bat"
-DEFAULT_UV_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
 def write_fake_command(path: Path, name: str) -> None:
     path.write_text(
         "@echo off\n"
-        f'>>"%SETUP_LAUNCH_LOG%" echo {name} %* [UV_CACHE_DIR=%UV_CACHE_DIR%] [UV_DEFAULT_INDEX=%UV_DEFAULT_INDEX%]\n'
+        f'>>"%SETUP_LAUNCH_LOG%" echo {name} %* [UV_CACHE_DIR=%UV_CACHE_DIR%] [UV_DEFAULT_INDEX=%UV_DEFAULT_INDEX%] [UV_INDEX_STRATEGY=%UV_INDEX_STRATEGY%]\n'
         "echo Resolved 128 packages in 1ms\n"
         "echo Checked 107 packages in 12ms\n",
         encoding="ascii",
@@ -67,7 +66,8 @@ def test_setup_launcher_prepares_python_and_runs_setup(
     assert "-m scripts.setup.bootstrap" in invocation
     assert "uv sync --python 3.12 --no-dev" not in invocation
     assert str(REPO_ROOT / ".cache" / "uv") in invocation
-    assert DEFAULT_UV_INDEX in invocation
+    assert "[UV_DEFAULT_INDEX=]" in invocation
+    assert "[UV_INDEX_STRATEGY=first-index]" in invocation
     assert "uv python install 3.12" in result.stdout
     assert "Resolved 128 packages in 1ms" in result.stdout
     assert "Checked 107 packages in 12ms" in result.stdout
@@ -87,7 +87,7 @@ def test_setup_launcher_preserves_explicit_uv_default_index(
     assert result.returncode == 0
     invocation = log_path.read_text(encoding="utf-8")
     assert custom_index in invocation
-    assert DEFAULT_UV_INDEX not in invocation
+    assert "https://pypi.tuna.tsinghua.edu.cn/simple" not in invocation
 
 
 def test_setup_launcher_reports_missing_uv(workspace_tmp_path: Path) -> None:

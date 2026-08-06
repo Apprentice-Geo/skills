@@ -115,12 +115,7 @@ If a complete manifest exists, the command first validates it. A valid cache hit
 
 If public artifacts are missing or corrupted, recovery is allowed only when `workspace/result.json` can rebuild `transcript.json` and `raw_timestamps.json` with exactly the SHA-256 digests recorded in the hidden manifest. Successful recovery restores the original manifest byte-for-byte.
 
-If workspace reconstruction fails or produces different digests:
-
-- no complete manifest remains;
-- treat the variant as incomplete;
-- rerun transcription after fixing the underlying cause;
-- do not copy files from another variant or edit digests to match new bytes.
+If workspace reconstruction fails or produces different digests, keep the original complete manifest and its last known public artifacts available, report the recovery failure, and retry recovery or transcription on a later run. Do not copy files from another variant or edit digests to match new bytes.
 
 The variant lock protects validation, recovery, inference, and publication from concurrent writers. If a process appears stuck on the lock, inspect running transcription processes before deleting any lock-related file.
 

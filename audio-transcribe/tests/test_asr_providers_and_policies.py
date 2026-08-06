@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -247,6 +248,39 @@ def test_whisper_policy_logs_retry_traceback_then_succeeds(
     ) in log_text
     assert "Traceback (most recent call last)" in log_text
     assert "RuntimeError: once" in log_text
+
+
+def test_whisper_policy_shares_one_prepared_model_across_workers(monkeypatch) -> None:
+    monkeypatch.setattr("scripts.asr.execution.whisper_cpu.os.cpu_count", lambda: 4)
+    policy = WhisperCpuPolicy(TranscribeOptions(num_workers=2, cpu_threads=1))
+    audio = NormalizedAudio(np.zeros(32_000, dtype=np.float32))
+    layouts = [
+        ChunkLayout(0, 0, 16_000, "audio", 1),
+        ChunkLayout(1, 16_000, 32_000, "audio_end", 1),
+    ]
+    model = object()
+    provider = SimpleNamespace(name="whisper", prepare=lambda _identity: model)
+    barrier = threading.Barrier(2)
+    seen_models = []
+
+    def transcribe_one(prepared, _samples, _layout):
+        seen_models.append(prepared)
+        barrier.wait(timeout=2)
+        return "ok"
+
+    provider.transcribe_one = transcribe_one
+    cached = []
+    failures = policy.execute(
+        provider,
+        audio,
+        layouts,
+        {"num_workers": 2, "cpu_threads": 1},
+        cached.append,
+    )
+
+    assert failures == {}
+    assert seen_models == [model, model]
+    assert cached == ["ok", "ok"]
 
 
 def test_whisper_policy_returns_final_exception_and_logs_second_traceback(

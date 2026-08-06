@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -24,7 +26,11 @@ def _installed_revision_matches(
         payload = read_json(model_dir / IDENTITY_MARKER)
     except (OSError, UnicodeError, ValueError):
         return False
-    return payload == {"repo": repo_id, "revision": revision}
+    return (
+        isinstance(payload, dict)
+        and payload.get("repo") == repo_id
+        and payload.get("revision") == revision
+    )
 
 
 def download_model(
@@ -45,15 +51,41 @@ def download_model(
         return False
 
     model_dir.parent.mkdir(parents=True, exist_ok=True)
-    logger.run(
-        [python, "-c", DOWNLOAD_SCRIPT, repo_id, revision, model_dir],
-        f"Download model {repo_id}@{revision}",
-        env=env,
+    temporary_dir = Path(
+        tempfile.mkdtemp(prefix=f".{model_dir.name}.", dir=model_dir.parent)
     )
-    if not ready(model_dir, weight_patterns):
-        raise SetupError(f"Downloaded model is missing required weights: {model_dir}")
-    write_json_atomic(
-        model_dir / IDENTITY_MARKER,
-        {"repo": repo_id, "revision": revision},
-    )
+    backup_dir = model_dir.with_name(f".{model_dir.name}.old")
+    try:
+        logger.run(
+            [python, "-c", DOWNLOAD_SCRIPT, repo_id, revision, temporary_dir],
+            f"Download model {repo_id}@{revision}",
+            env=env,
+        )
+        if not ready(temporary_dir, weight_patterns):
+            raise SetupError(
+                f"Downloaded model is missing required weights: {model_dir}"
+            )
+        write_json_atomic(
+            temporary_dir / IDENTITY_MARKER,
+            {"repo": repo_id, "revision": revision},
+        )
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        if model_dir.exists():
+            model_dir.replace(backup_dir)
+        try:
+            temporary_dir.replace(model_dir)
+        except Exception:
+            if backup_dir.exists() and not model_dir.exists():
+                backup_dir.replace(model_dir)
+            raise
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+    except Exception:
+        if backup_dir.exists() and not model_dir.exists():
+            backup_dir.replace(model_dir)
+        raise
+    finally:
+        if temporary_dir.exists():
+            shutil.rmtree(temporary_dir)
     return True

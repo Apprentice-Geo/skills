@@ -76,3 +76,18 @@ def test_merge_ends_after_exceeding_64_characters_without_splitting_segment(
         f"[00:00:03 - 00:00:04] {long_text}",
         "[00:00:04 - 00:00:05] tail",
     ]
+
+
+def test_markdown_text_is_single_line_and_bounded() -> None:
+    payload = {
+        "title": " title\nwith\tcontrol\x00",
+        "segments": [
+            {"id": 0, "start": 0, "end": 1, "text": " hello\nworld\r\x1b[31m"}
+        ],
+    }
+    markdown = transcript_output.render_markdown(payload)
+    assert "title: title with control" in markdown
+    assert "[00:00:00 - 00:00:01] hello world [31m" in markdown
+    assert all(
+        "\x00" not in line and "\n" not in line for line in markdown.splitlines()
+    )

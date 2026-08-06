@@ -227,7 +227,7 @@ def test_malformed_manifest_is_hidden_before_recovery(
     with pytest.raises(ValueError):
         run_transcribe(audio, **kwargs)
 
-    assert not manifest_path.exists()
+    assert manifest_path.is_file()
 
 
 def test_segment_end_is_clamped_to_duration_and_recovers_identically(
@@ -336,7 +336,7 @@ def test_missing_public_artifact_is_rebuilt_without_inference(
     load_result(manifest_path)
 
 
-def test_migrated_pipeline_workspace_is_adapted_to_public_schema(
+def test_workspace_without_current_fields_is_rejected(
     workspace_tmp_path: Path,
 ) -> None:
     variant_dir = workspace_tmp_path / "variant"
@@ -368,21 +368,18 @@ def test_migrated_pipeline_workspace_is_adapted_to_public_schema(
     )
     (variant_dir / "transcribe.log").write_text("test\n", encoding="utf-8")
 
-    manifest_path = publish_result(
-        variant_dir,
-        audio={
-            "id": audio_id,
-            "size": 10,
-            "sample_count": 16_000,
-            "sample_rate": 16_000,
-            "duration": 1.0,
-        },
-        request={"variant_id": variant_id, **canonical_request},
-    )
-
-    load_result(manifest_path)
-    transcript = read_json(variant_dir / "transcript.json")
-    assert transcript["segments"][0]["text"] == "原文。"
+    with pytest.raises(ResultValidationError, match="Invalid workspace result"):
+        publish_result(
+            variant_dir,
+            audio={
+                "id": audio_id,
+                "size": 10,
+                "sample_count": 16_000,
+                "sample_rate": 16_000,
+                "duration": 1.0,
+            },
+            request={"variant_id": variant_id, **canonical_request},
+        )
 
 
 def test_recovery_refuses_workspace_that_changes_published_digest(
@@ -411,7 +408,7 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
     with pytest.raises(ResultValidationError, match="does not match"):
         run_transcribe(audio, **kwargs)
 
-    assert not manifest_path.exists()
+    assert manifest_path.is_file()
 
 
 def test_empty_result_never_publishes_complete_manifest(

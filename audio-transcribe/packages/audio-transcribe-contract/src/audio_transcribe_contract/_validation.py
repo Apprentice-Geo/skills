@@ -33,10 +33,10 @@ def _reject_constant(value: str) -> None:
     raise ValueError(f"Invalid JSON number: {value}")
 
 
-def _read_object(path: Path, label: str) -> dict[str, Any]:
+def _read_object_bytes(data: bytes, label: str) -> dict[str, Any]:
     try:
         payload = json.loads(
-            path.read_text(encoding="utf-8"),
+            data.decode("utf-8"),
             object_pairs_hook=_object_without_duplicates,
             parse_constant=_reject_constant,
         )
@@ -45,6 +45,14 @@ def _read_object(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ResultValidationError(f"{label} must be a JSON object.")
     return payload
+
+
+def _read_object(path: Path, label: str) -> dict[str, Any]:
+    try:
+        data = path.read_bytes()
+    except (OSError, ValueError) as exc:
+        raise ResultValidationError(f"Invalid {label} JSON.") from exc
+    return _read_object_bytes(data, label)
 
 
 def _is_schema_one(value: Any) -> bool:
@@ -148,7 +156,7 @@ def _validate_manifest(
     variant_id = _sha256(request.get("variant_id"), "request.variant_id")
     provider = request.get("provider")
     language = request.get("language")
-    if provider not in _PROVIDERS:
+    if not isinstance(provider, str) or provider not in _PROVIDERS:
         raise ResultValidationError("Invalid request.provider.")
     if not isinstance(language, str) or not language:
         raise ResultValidationError("request.language must be a non-empty string.")

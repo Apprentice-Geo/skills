@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -40,4 +40,6 @@ def detect_speech_samples(
         options,
         sampling_rate=audio.sample_rate,
     )
-    return [(int(item["start"]), int(item["end"])) for item in timestamps]
+    return [
+        (int(cast(Any, item).start), int(cast(Any, item).end)) for item in timestamps
+    ]

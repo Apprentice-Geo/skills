@@ -15,7 +15,7 @@ NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
 SUBTITLE_FILENAME = "subtitle.srt"
 SKILL_DIR = Path(__file__).resolve().parents[1]
-RESULTS_DIR = SKILL_DIR / "results"
+RESULTS_DIR = Path(os.environ.get("SUBTITLE_CREATOR_RESULTS_DIR", SKILL_DIR / "results"))
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -76,6 +76,14 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -200,7 +208,22 @@ def normalized_srt_segments(normalized: dict[str, Any]) -> list[tuple[int, int, 
     return result
 
 
-def validate_job(job_path: Path, job: dict[str, Any]) -> None:
+def _timestamp(milliseconds: int) -> str:
+    hours, remainder = divmod(milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
+
+
+def expected_srt_bytes(normalized: dict[str, Any]) -> bytes:
+    blocks = [
+        f"{index}\n{_timestamp(start)} --> {_timestamp(end)}\n{text}"
+        for index, (start, end, text) in enumerate(normalized_srt_segments(normalized), start=1)
+    ]
+    return ("\n\n".join(blocks) + "\n").encode("utf-8-sig")
+
+
+def validate_job(job_path: Path, job: dict[str, Any], *, allow_stale_derived: bool = False) -> None:
     if type(job.get("schema_version")) is not int or job["schema_version"] != SCHEMA_VERSION:
         raise SubtitleJobError("unsupported job schema_version")
 
@@ -281,8 +304,11 @@ def validate_job(job_path: Path, job: dict[str, Any]) -> None:
         variant_id=variant_id,
         manifest_path=manifest_path,
     )
+    normalized_srt_segments(normalized)
+    normalized_digest = sha256_file(normalized_path)
+    declared_normalized_digest = artifacts.get("normalized_transcript_sha256")
     derived_values = (
-        artifacts.get("normalized_transcript_sha256"),
+        declared_normalized_digest,
         artifacts.get("subtitle"),
         artifacts.get("subtitle_sha256"),
     )
@@ -292,9 +318,29 @@ def validate_job(job_path: Path, job: dict[str, Any]) -> None:
         return
     if any(value is None for value in derived_values):
         raise SubtitleJobError("editable derived artifact fields must all be set or null")
-    require_sha256(
-        artifacts["normalized_transcript_sha256"],
-        "artifacts.normalized_transcript_sha256",
+    require_sha256(declared_normalized_digest, "artifacts.normalized_transcript_sha256")
+    if declared_normalized_digest != normalized_digest and not allow_stale_derived:
+        raise SubtitleJobError("normalized transcript artifact digest mismatch")
+    subtitle_path = require_job_artifact_path(artifacts["subtitle"], "artifacts.subtitle", job_dir)
+    subtitle_digest = require_sha256(artifacts["subtitle_sha256"], "artifacts.subtitle_sha256")
+    if (
+        not subtitle_path.is_file() or sha256_file(subtitle_path) != subtitle_digest
+    ) and not allow_stale_derived:
+        raise SubtitleJobError("subtitle artifact digest mismatch")
+    if (
+        subtitle_path.is_file()
+        and subtitle_path.read_bytes() != expected_srt_bytes(normalized)
+        and not allow_stale_derived
+    ):
+        raise SubtitleJobError(
+            "subtitle artifact timeline or text does not match normalized transcript"
+        )
+    expected_changed_ids = compare_normalized_correction(
+        baseline,
+        normalized,
+        audio_id=job_id,
+        variant_id=variant_id,
+        manifest_path=manifest_path,
     )
-    require_job_artifact_path(artifacts["subtitle"], "artifacts.subtitle", job_dir)
-    require_sha256(artifacts["subtitle_sha256"], "artifacts.subtitle_sha256")
+    if changed_ids != expected_changed_ids and not allow_stale_derived:
+        raise SubtitleJobError("changed_segment_ids does not match normalized transcript")

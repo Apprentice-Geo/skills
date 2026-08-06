@@ -235,14 +235,22 @@ def _video_id_from_normalized_url(normalized_url: str) -> str:
     video_id = match.group(1)
     page_values = parse_qs(urlsplit(normalized_url).query).get("p", [])
     if page_values:
-        return f"{video_id}_p{page_values[-1]}"
+        page = page_values[-1]
+        if not re.fullmatch(r"[1-9][0-9]*", page):
+            raise ValueError("Bilibili page must be a positive integer.")
+        return f"{video_id}_p{page}"
     return video_id
 
 
 def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
     normalized_url = normalize_bilibili_video_url(options.url)
     video_id = _video_id_from_normalized_url(normalized_url)
-    result_dir = (RESULTS_DIR / video_id).resolve()
+    results_root = RESULTS_DIR.resolve()
+    result_dir = (results_root / video_id).resolve()
+    try:
+        result_dir.relative_to(results_root)
+    except ValueError as exc:
+        raise ValueError("Video result path escapes the results directory.") from exc
     return result_dir / JOB_FILENAME, {
         "schema_version": 1,
         "status": "preparing",

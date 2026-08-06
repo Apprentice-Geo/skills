@@ -34,6 +34,14 @@ def write_json_atomic(path: Path, data: Any) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary_path, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
     finally:
         temporary_path.unlink(missing_ok=True)
 

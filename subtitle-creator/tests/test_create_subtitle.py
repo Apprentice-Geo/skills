@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -25,15 +24,18 @@ def run_create(audio_path: Path) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture
-def audio(tmp_path: Path) -> Iterator[tuple[Path, str]]:
+def audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Path, str]]:
     path = tmp_path / "sample.wav"
     content = b"test audio content"
     path.write_bytes(content)
     audio_id = hashlib.sha256(content).hexdigest()
-    job_dir = RESULTS_DIR / audio_id
-    shutil.rmtree(job_dir, ignore_errors=True)
+    monkeypatch.setenv("SUBTITLE_CREATOR_RESULTS_DIR", str(tmp_path / "results"))
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(
+        __import__("scripts.subtitle_job", fromlist=["RESULTS_DIR"]), "RESULTS_DIR", results_dir
+    )
+    monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     yield path, audio_id
-    shutil.rmtree(job_dir, ignore_errors=True)
 
 
 def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None:

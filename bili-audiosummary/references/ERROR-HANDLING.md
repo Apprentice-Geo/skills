@@ -94,7 +94,7 @@ On continue failure:
 - do not edit, delete, or attempt to repair the external transcription directory;
 - report the loading or path-safety reason and let the user or `audio-transcribe` workflow provide a usable result.
 
-Calling continue again with the same manifest is idempotent when `transcript.md` and the prompt exist. A missing prompt is rebuilt from existing Markdown without external revalidation; missing Markdown requires contract and audio-identity validation before it is rendered again. Passing a different manifest to an already bound job is rejected rather than silently replacing it. Existing ready or complete jobs are updated only when continue is explicitly called.
+Calling continue again for an already bound transcription job with the same manifest revalidates the external manifest, the job audio identity, and the expected rendered Markdown before refreshing the prompt. A different manifest is rejected rather than silently replacing it. Existing ready or complete jobs are updated only when continue is explicitly called.
 
 ## Summary Completion
 

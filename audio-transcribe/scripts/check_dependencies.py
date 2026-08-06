@@ -21,6 +21,7 @@ from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
     WHISPER_WEIGHT_PATTERNS,
+    model_has_weights,
 )
 from scripts.model_identity import MODEL_REVISIONS
 
@@ -79,11 +80,7 @@ def model_check(
     required: tuple[str, ...] = (),
 ) -> dict[str, str]:
     missing = [name for name in required if not (directory / name).is_file()]
-    weights = (
-        any(path.is_file() for pattern in patterns for path in directory.glob(pattern))
-        if patterns
-        else directory.is_dir()
-    )
+    weights = model_has_weights(directory, patterns) if patterns else directory.is_dir()
     try:
         marker = json.loads(
             (directory / ".model_identity.json").read_text(encoding="utf-8")
@@ -493,7 +490,9 @@ def main(argv: list[str] | None = None) -> int:
     passed = sum(check["status"] == "pass" for check in report["checks"])
     if passed:
         terminal_lines.append(f"[PASS] Dependencies OK ({passed} checks passed)")
-    terminal_lines.extend(line for line in check_lines if not line.startswith("[PASS] "))
+    terminal_lines.extend(
+        line for line in check_lines if not line.startswith("[PASS] ")
+    )
     terminal_lines.extend(provider_lines)
     terminal_lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
     log_temporary = log_path.with_suffix(".tmp")
