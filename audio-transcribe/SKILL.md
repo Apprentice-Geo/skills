@@ -19,9 +19,10 @@ This skill does not download media or edit another Skill's results.
 
 Run commands from this Skill directory on Windows with Python 3.12 and `uv`.
 
-1. Prepare the environment with `scripts/setup/setup_windows.bat`.
-2. Run `scripts/check_dependencies.bat` before transcription. It is read-only and reports whether dependencies and local models are ready.
-3. Install at least one local model with `uv run --no-sync python -m scripts.setup.install_model --model faster-whisper`. Install the optional Qwen3-ASR dependency group and model only when CUDA is available.
+1. Run the read-only `scripts/check_dependencies.bat` before transcription.
+2. If the initial check exits nonzero, run `scripts/setup/setup_windows.bat` once, then rerun the check once.
+3. If no Provider is ready after setup, install one local model with `uv run --no-sync python -m scripts.setup.install_model --model faster-whisper`, then rerun the check once. Install the optional Qwen3-ASR dependency group and model only when CUDA is available.
+4. If the check still exits nonzero after the applicable one-time repair, stop and report the failed checks. Do not repeat setup or model installation automatically.
 
 The dependency checker does not install, download, or repair anything. Read its terminal summary before selecting a Provider.
 

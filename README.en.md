@@ -13,10 +13,10 @@ This repository contains Agent Skills for personal use. It is not intended to be
 | `subtitle-creator` | Create SRT subtitles from local audio with optional text correction. |
 | `article-format-correction` | Correct the Markdown formatting of the article while preserving its meaning, structure, and the author's expressive style. |
 | `anti-sycophancy-review` | Review claims, plans, predictions, and interpretations without unsupported agreement. |
-| `coding-guidelines` | Apply personal coding collaboration rules for repository work, scoped changes, verification, tests, and delegation. |
+| `coding-guidelines` | Apply personal scope-control, verification, and testing rules for repository work. |
 
-## Inspiration Sources
+## References
 
-`anti-sycophancy-review`: [X post](<https://x.com/kaifulee/status/2067524130673467886>)
+`anti-sycophancy-review`: [X post](<https://x.com/kaifulee/status/2067524130673467886>), [*Ask don't tell: Reducing sycophancy in large language models*](<https://arxiv.org/abs/2602.23971>)
 
 `coding-guidelines`: [andrej-karpathy-skills](<https://github.com/multica-ai/andrej-karpathy-skills>)
