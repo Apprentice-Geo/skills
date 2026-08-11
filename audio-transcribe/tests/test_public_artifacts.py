@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import errno
 import json
 import multiprocessing
+import os
 import time
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
     publish_result,
     recover_public_artifacts,
+    variant_lock,
     write_workspace_result,
 )
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
@@ -98,6 +101,40 @@ def test_variant_lock_serializes_windows_processes(
             second.terminate()
     assert first.exitcode == 0
     assert second.exitcode == 0
+
+
+def test_variant_lock_does_not_unlock_after_acquisition_failure(
+    workspace_tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    acquisition_error = OSError(errno.EDEADLK, "lock acquisition failed")
+    calls: list[int] = []
+    if os.name == "nt":
+        import msvcrt
+
+        lock_module = msvcrt
+        lock_mode = msvcrt.LK_LOCK
+        lock_function = "locking"
+    else:
+        import fcntl
+
+        lock_module = fcntl
+        lock_mode = fcntl.LOCK_EX
+        lock_function = "flock"
+
+    def fail_lock(_fd: int, mode: int, *_args: int) -> None:
+        calls.append(mode)
+        if mode == lock_mode:
+            raise acquisition_error
+        raise PermissionError("attempted to release an unowned lock")
+
+    monkeypatch.setattr(lock_module, lock_function, fail_lock)
+
+    with pytest.raises(OSError) as caught:
+        with variant_lock(workspace_tmp_path / "variant"):
+            pass
+
+    assert caught.value is acquisition_error
+    assert calls == [lock_mode]
 
 
 def test_model_revisions_are_full_pinned_commits() -> None:

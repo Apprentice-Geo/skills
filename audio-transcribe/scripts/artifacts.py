@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator
 
 from audio_transcribe_contract import ResultValidationError, load_result
 
@@ -17,38 +17,46 @@ from scripts.io_utils import (
 PUBLIC_SCHEMA_VERSION = 1
 WORKSPACE_SCHEMA_VERSION = 1
 
-
+# @contextmanager 让这个函数可以配合 with 使用
 @contextmanager
-def variant_lock(variant_dir: Path) -> Iterator[None]:
+def variant_lock(variant_dir: Path) -> Generator[None, None, None]:
     """Hold a process lock while checking or publishing one result variant."""
     variant_dir.mkdir(parents=True, exist_ok=True)
     lock_path = variant_dir / ".variant.lock"
     stream = lock_path.open("a+b")
+    # 锁标记
+    locked = False
     try:
         stream.seek(0, os.SEEK_END)
         if stream.tell() == 0:
+            # 为 Windows 准备一个可供锁定的字节
             stream.write(b"\0")
             stream.flush()
         stream.seek(0)
         if os.name == "nt":
             import msvcrt
-
+            # Windows
             msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
         else:
             import fcntl
-
+            # Unix
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-        yield
+        locked = True
+        # 在 yield 之前设置排他锁
+        yield # 在此处执行 with 中的代码
+        # 完成 with 中的代码后继续
     finally:
-        stream.seek(0)
-        if os.name == "nt":
-            import msvcrt
+        # 只有在确认加锁才执行解锁代码
+        if locked:
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
 
-            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
 
-            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
         stream.close()
 
 
