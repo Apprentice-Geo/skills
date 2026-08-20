@@ -13,9 +13,11 @@ from scripts.io_utils import (
     sha256_file,
     write_json_atomic,
 )
+from scripts.text_normalization import normalize_transcript_text
 
 PUBLIC_SCHEMA_VERSION = 1
 WORKSPACE_SCHEMA_VERSION = 1
+
 
 # @contextmanager 让这个函数可以配合 with 使用
 @contextmanager
@@ -35,15 +37,17 @@ def variant_lock(variant_dir: Path) -> Generator[None, None, None]:
         stream.seek(0)
         if os.name == "nt":
             import msvcrt
+
             # Windows
             msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
         else:
             import fcntl
+
             # Unix
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         locked = True
         # 在 yield 之前设置排他锁
-        yield # 在此处执行 with 中的代码
+        yield  # 在此处执行 with 中的代码
         # 完成 with 中的代码后继续
     finally:
         # 只有在确认加锁才执行解锁代码
@@ -91,6 +95,17 @@ def write_workspace_result(
         raise ResultValidationError(
             "A complete transcription must contain text and timestamps."
         )
+    text = normalize_transcript_text(text, language)
+    items = [
+        AlignmentItem(
+            normalize_transcript_text(item.text, language),
+            item.start,
+            item.end,
+            item.probability,
+        )
+        for item in items
+    ]
+    validate_alignment(text, items, duration)
     write_json_atomic(
         workspace_path,
         {

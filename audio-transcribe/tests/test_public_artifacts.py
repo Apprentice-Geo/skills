@@ -180,6 +180,11 @@ def test_content_identity_reuses_result_after_input_rename(
     assert calls == [1]
     manifest = load_result(first_manifest).manifest
     assert manifest["request"]["provider"] == "faster-whisper"
+    assert manifest["request"]["text_normalization"] == {
+        "schema_version": 1,
+        "unicode_normalization": "NFKC",
+        "zh_conversion": "OpenCC t2s",
+    }
     assert len(manifest["request"]["variant_id"]) == 64
     assert first_manifest.parent.name.endswith(manifest["request"]["variant_id"])
     transcript = read_json(first_manifest.parent / "transcript.json")
@@ -466,3 +471,35 @@ def test_empty_result_never_publishes_complete_manifest(
         )
 
     assert not list(results.rglob("result_manifest.json"))
+
+
+def test_workspace_normalizes_public_text_and_items(workspace_tmp_path: Path) -> None:
+    workspace_path = workspace_tmp_path / "result.json"
+
+    write_workspace_result(
+        workspace_path,
+        text="Ａ臺灣。",
+        items=[AlignmentItem("Ａ臺灣。", 0.0, 0.5, None)],
+        duration=1.0,
+        provider="faster-whisper",
+        language="zh",
+    )
+
+    workspace = read_json(workspace_path)
+    assert workspace["text"] == "A台湾。"
+    assert workspace["items"][0]["text"] == "A台湾。"
+
+
+def test_non_zh_workspace_only_applies_nfkc(workspace_tmp_path: Path) -> None:
+    workspace_path = workspace_tmp_path / "result.json"
+
+    write_workspace_result(
+        workspace_path,
+        text="Ａ臺灣",
+        items=[AlignmentItem("Ａ臺灣", 0.0, 0.5, None)],
+        duration=1.0,
+        provider="faster-whisper",
+        language="yue",
+    )
+
+    assert read_json(workspace_path)["text"] == "A臺灣"

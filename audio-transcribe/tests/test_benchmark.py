@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from benchmark.prepare_audio import safe_cut
-from scripts.benchmark import build_matrix, compare_text, edit_distance
+from scripts.benchmark import build_matrix, compare_text, edit_distance, summarize
 
 
 def test_prepare_audio_module_help() -> None:
@@ -49,3 +49,40 @@ def test_linear_memory_distance_and_language_normalization() -> None:
     assert compare_text("你 好", "你好", "zh")["difference_rate"] == 0
     assert compare_text("Hello, WORLD!", "hello world", "en")["difference_rate"] == 0
     assert compare_text("", "", "en")["difference_rate"] is None
+    comparison = compare_text("Ａ，臺灣！", "A 台湾", "zh")
+    assert comparison["difference_rate"] == 0
+    assert comparison["project_punctuation"] == 2
+    assert comparison["native_punctuation"] == 0
+
+
+def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
+    runs = []
+    for repetition, project, native in [
+        (1, "甲", "甲"),
+        (2, "乙", "甲"),
+        (3, "丙。", "甲!"),
+    ]:
+        comparison = compare_text(project, native, "zh")
+        for mode, text in [("project-slicing", project), ("provider-native", native)]:
+            run = {
+                "status": "succeeded",
+                "provider": "faster-whisper",
+                "language": "zh",
+                "minutes": 8,
+                "mode": mode,
+                "repetition": repetition,
+                "text": text,
+                "wall_seconds": 1.0,
+                "rtf": 0.1,
+                "provider_stage_seconds": 0.5,
+            }
+            if mode == "project-slicing":
+                run["output_comparison"] = comparison
+            runs.append(run)
+
+    markdown = summarize({"runs": runs})
+
+    assert "| zh | 8 | project-slicing" in markdown
+    assert "100.000%" in markdown
+    assert "| zh | 8 | provider-native" in markdown
+    assert markdown.count("100.000%") == 1

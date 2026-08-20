@@ -82,7 +82,7 @@ The language-identification model is required when `--language` is omitted. If i
 - If Qwen3-ASR dependencies, CUDA, ASR weights, or forced-aligner weights are missing, install or repair Qwen3-ASR before retrying.
 - If a Provider returns an unexpected result shape, inspect the pinned dependency version and the adapter before changing the public artifact schema.
 - Do not store third-party model objects, raw Provider responses, or large internal metadata in public artifacts.
-- Do not rewrite Provider text during inference recovery. Public transcript text remains Provider output.
+- Provider chunk text is not rewritten. At the merged workspace/public boundary, apply NFKC to every language and OpenCC `t2s` only to `zh`.
 
 ## Alignment and Empty Results
 
@@ -92,6 +92,7 @@ The language-identification model is required when `--language` is omitted. If i
 - Reject Qwen3-ASR timestamp items with non-null probability.
 - Preserve punctuation-driven segmentation behavior. If sentence output looks wrong, inspect alignment items and segmentation rules rather than editing published `transcript.json` manually.
 - Do not publish `result_manifest.json` when alignment validation fails.
+- If text normalization fails or normalized text and items no longer align, stop without falling back to unnormalized public text.
 
 ## Public Artifact Validation
 
@@ -114,6 +115,8 @@ Do not manually repair public JSON. Rerun the command and let the artifact layer
 If a complete manifest exists, the command first validates it. A valid cache hit returns the existing manifest path and does not rerun inference.
 
 If public artifacts are missing or corrupted, recovery is allowed only when `workspace/result.json` can rebuild `transcript.json` and `raw_timestamps.json` with exactly the SHA-256 digests recorded in the hidden manifest. Successful recovery restores the original manifest byte-for-byte.
+
+The workspace recovery snapshot already contains normalized text. Recovery does not rerun OpenCC or modify Provider chunk caches.
 
 If workspace reconstruction fails or produces different digests, keep the original complete manifest and its last known public artifacts available, report the recovery failure, and retry recovery or transcription on a later run. Do not copy files from another variant or edit digests to match new bytes.
 

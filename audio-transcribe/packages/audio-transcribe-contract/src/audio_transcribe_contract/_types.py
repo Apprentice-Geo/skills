@@ -26,6 +26,7 @@ class _Request(TypedDict):
     vad_parameters: NotRequired[JsonValue]
     planning_parameters: NotRequired[JsonValue]
     segmentation_schema_version: NotRequired[JsonValue]
+    text_normalization: NotRequired[JsonValue]
 
 
 class _Artifacts(TypedDict):

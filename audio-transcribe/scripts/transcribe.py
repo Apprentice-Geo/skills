@@ -23,6 +23,7 @@ from scripts.artifacts import (
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import provider_model_identity
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
+from scripts.text_normalization import TEXT_NORMALIZATION_POLICY
 
 # 采样率 16kHz
 SAMPLE_RATE = 16_000
@@ -254,6 +255,7 @@ def resolve_request(
             "max_chunk_seconds": 300,
         },
         "segmentation_schema_version": 1,
+        "text_normalization": TEXT_NORMALIZATION_POLICY,
     }
     if provider == "faster-whisper":
         request.update(
@@ -461,6 +463,7 @@ def run_transcribe(
         "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
         "planning_parameters": asdict(policy.planning_parameters),
         "segmentation_schema_version": 1,
+        "text_normalization": TEXT_NORMALIZATION_POLICY,
     }
     variant_id = canonical_sha256(canonical_request)
     request = {"variant_id": variant_id, **canonical_request}

@@ -37,6 +37,7 @@ The command prints a manifest path only after the complete public result validat
 
 - `audio_id` is the SHA-256 of audio bytes and is independent of its path.
 - `variant_id` identifies every resolved behavior that can change transcript bytes or timestamps.
+- The canonical request records the text-normalization policy. All languages use NFKC and only `zh` additionally uses OpenCC `t2s`, so policy changes produce a new `variant_id`.
 - A complete manifest is published last and is the only success marker.
 - Public artifact paths stay inside the result directory; indexed model shard paths stay inside the model directory.
 - Recovery restores the original complete manifest byte-for-byte only when rebuilt public artifacts reproduce its recorded digests. If recovery fails, the original complete manifest remains available for a later retry.
@@ -67,6 +68,8 @@ recovery snapshot used for publication. It contains exactly `schema_version`,
 `text`, `items`, `duration`, `provider`, and `language`. The plan and per-chunk
 Provider results remain separate workspace caches. When all chunk caches are
 valid, the pipeline always reruns merge, timestamp offset, alignment validation,
-and sentence segmentation before atomically replacing `result.json`; it does not
+text and item normalization, alignment revalidation, and sentence segmentation before atomically replacing `result.json`; it does not
 load the Provider. Legacy merged results containing `plan`, `words`, or `segments`
 are not read or migrated.
+
+Private `chunk_results/` preserve Provider text. `workspace/result.json` and both public JSON artifacts contain normalized text only. Normalization or post-normalization alignment failure stops publication; recovery deterministically rebuilds from the already-normalized workspace snapshot.

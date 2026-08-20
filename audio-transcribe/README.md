@@ -6,6 +6,7 @@
 
 - 输入音频必须已经存在于本地。
 - Skill 不负责下载媒体，也不修改其他 Skill 的结果。
+- 所有公开转写文本执行 Unicode NFKC；语言为 `zh` 时再通过 OpenCC `t2s` 转为简体。Provider 原始 chunk 仅保留在内部缓存中。
 
 ## 隐私与安全
 

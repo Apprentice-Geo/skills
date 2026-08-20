@@ -179,6 +179,7 @@ def test_public_typed_dict_key_boundaries() -> None:
         "vad_parameters",
         "planning_parameters",
         "segmentation_schema_version",
+        "text_normalization",
     }
 
 

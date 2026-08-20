@@ -19,6 +19,10 @@ import psutil
 
 from scripts.io_utils import read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
+from scripts.text_normalization import (
+    TEXT_NORMALIZATION_POLICY,
+    normalize_transcript_text,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "benchmark" / "data"
@@ -37,10 +41,21 @@ def wav_duration(path: Path) -> float:
 
 
 def normalize_text(text: str, language: str) -> list[str]:
-    text = unicodedata.normalize("NFKC", text)
+    text = normalize_transcript_text(text, language)
     if language == "zh":
-        return list("".join(text.split()))
+        return [
+            char
+            for char in text
+            if not char.isspace() and not unicodedata.category(char).startswith("P")
+        ]
     return re.findall(r"[^\W_]+(?:['’][^\W_]+)*", text.casefold(), re.UNICODE)
+
+
+def punctuation_count(text: str, language: str) -> int:
+    return sum(
+        unicodedata.category(char).startswith("P")
+        for char in normalize_transcript_text(text, language)
+    )
 
 
 def edit_distance(left: list[str], right: list[str]) -> int:
@@ -73,6 +88,8 @@ def compare_text(project: str, native: str, language: str) -> dict[str, Any]:
         "native_units": len(native_units),
         "project_sha256": hashlib.sha256("\0".join(project_units).encode()).hexdigest(),
         "native_sha256": hashlib.sha256("\0".join(native_units).encode()).hexdigest(),
+        "project_punctuation": punctuation_count(project, language),
+        "native_punctuation": punctuation_count(native, language),
         "edit_distance": distance,
         "difference_rate": None if not native_units else distance / len(native_units),
     }
@@ -298,8 +315,8 @@ def summarize(report: dict[str, Any]) -> str:
         lines += [
             f"## {provider}",
             "",
-            "| Language | Minutes | Mode | Median wall | Median RTF | Provider stage | Relative speed | Difference |",
-            "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+            "| Language | Minutes | Mode | Median wall | Median RTF | Provider stage | Relative speed | Difference | Punctuation (project/native) |",
+            "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for language in LANGUAGES:
             for minute in MINUTES:
@@ -315,14 +332,11 @@ def summarize(report: dict[str, Any]) -> str:
                     for mode in MODES
                     if any(item["mode"] == mode for item in pair)
                 }
-                native_text = next(
-                    (
-                        item["text"]
-                        for item in pair
-                        if item["mode"] == "provider-native"
-                    ),
-                    None,
-                )
+                comparisons = [
+                    item["output_comparison"]
+                    for item in pair
+                    if item["mode"] == "project-slicing" and "output_comparison" in item
+                ]
                 for mode in MODES:
                     selected = [item for item in pair if item["mode"] == mode]
                     if not selected:
@@ -333,14 +347,25 @@ def summarize(report: dict[str, Any]) -> str:
                         if mode == "project-slicing" and wall
                         else None
                     )
-                    comparison = (
-                        compare_text(selected[0]["text"], native_text, language)
-                        if native_text is not None
+                    difference = (
+                        statistics.median(
+                            item["difference_rate"]
+                            for item in comparisons
+                            if item["difference_rate"] is not None
+                        )
+                        if any(
+                            item["difference_rate"] is not None for item in comparisons
+                        )
                         else None
                     )
-                    difference = comparison["difference_rate"] if comparison else None
+                    punctuation = (
+                        f"{statistics.median(item['project_punctuation'] for item in comparisons):g}/"
+                        f"{statistics.median(item['native_punctuation'] for item in comparisons):g}"
+                        if comparisons
+                        else "—"
+                    )
                     lines.append(
-                        f"| {language} | {minute} | {mode} | {wall:.3f}s | {statistics.median(item['rtf'] for item in selected):.4f} | {statistics.median(item['provider_stage_seconds'] for item in selected):.3f}s | {f'{speed:.3f}x' if speed is not None else '—'} | {f'{difference:.3%}' if difference is not None else '—'} |"
+                        f"| {language} | {minute} | {mode} | {wall:.3f}s | {statistics.median(item['rtf'] for item in selected):.4f} | {statistics.median(item['provider_stage_seconds'] for item in selected):.3f}s | {f'{speed:.3f}x' if speed is not None else '—'} | {f'{difference:.3%}' if difference is not None and mode == 'project-slicing' else '—'} | {punctuation if mode == 'project-slicing' else '—'} |"
                     )
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -352,12 +377,19 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         read_json(report_path)
         if report_path.exists()
         else {
-            "schema_version": 1,
+            "schema_version": 2,
+            "comparison_policy": {
+                "text_normalization": TEXT_NORMALIZATION_POLICY,
+                "content": "ignore Unicode whitespace and punctuation; pair by repetition",
+                "punctuation": "report Unicode punctuation counts separately",
+            },
             "environment": environment(),
             "warmups": [],
             "runs": [],
         }
     )
+    if report.get("schema_version") != 2:
+        raise ValueError("Benchmark report schema is obsolete; start a new report.")
     prior = {item["run_id"]: item for item in report["runs"]}
     matrix = build_matrix(
         args.provider or PROVIDERS,
@@ -419,7 +451,6 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             native = result if result["mode"] == "provider-native" else counterpart
             comparison = compare_text(project["text"], native["text"], run["language"])
             project["output_comparison"] = comparison
-            native["output_comparison"] = comparison
         write_json_atomic(report_path, report)
         report_path.with_suffix(".md").write_text(summarize(report), encoding="utf-8")
     return report
