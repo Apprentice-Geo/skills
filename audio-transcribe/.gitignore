@@ -8,5 +8,7 @@ __pycache__/
 models/
 results/
 tmp/
+benchmark/data/
+benchmark/tmp/
 .agents/
 .cache/

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
 from scripts.asr.alignment import (
@@ -54,18 +53,3 @@ def merge_chunk_transcripts(
         language=str(plan.provider_request["language"]),
     )
     return text, words, segments
-
-
-def merged_payload(
-    plan: AsrPipelinePlan,
-    text: str,
-    words: list[TranscriptWord],
-    segments: list[dict[str, Any]],
-) -> dict[str, Any]:
-    return {
-        "schema_version": plan.schema_version,
-        "plan": plan.to_dict(),
-        "text": text,
-        "words": [asdict(word) for word in words],
-        "segments": segments,
-    }

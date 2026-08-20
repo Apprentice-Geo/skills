@@ -61,3 +61,12 @@ results/<audio_id>/<provider>-<language>-<variant_id>/
 ```
 
 The manifest records audio identity, resolved request identity, contained artifact paths, and public artifact digests. Successful consumers receive validated manifest, transcript, and timestamp snapshots from `load_result`; no partial result is returned.
+
+`workspace/result.json` is the pipeline's sole merged result and the only private
+recovery snapshot used for publication. It contains exactly `schema_version`,
+`text`, `items`, `duration`, `provider`, and `language`. The plan and per-chunk
+Provider results remain separate workspace caches. When all chunk caches are
+valid, the pipeline always reruns merge, timestamp offset, alignment validation,
+and sentence segmentation before atomically replacing `result.json`; it does not
+load the Provider. Legacy merged results containing `plan`, `words`, or `segments`
+are not read or migrated.

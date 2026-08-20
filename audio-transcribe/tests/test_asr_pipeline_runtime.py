@@ -144,9 +144,16 @@ def test_pipeline_writes_unified_artifacts_and_replays_without_decode(
     assert (workspace / "vad_result.json").is_file()
     assert (workspace / "progress.json").is_file()
     assert (workspace / "metrics.json").is_file()
-    assert read_json(workspace / "result.json")["words"][1]["start"] == pytest.approx(
-        0.0, abs=0.001
-    )
+    result = read_json(workspace / "result.json")
+    assert set(result) == {
+        "schema_version",
+        "text",
+        "items",
+        "duration",
+        "provider",
+        "language",
+    }
+    assert result["items"][1]["start"] == pytest.approx(0.0, abs=0.001)
     assert (
         read_json(workspace / "chunk_results" / "chunk_000.json")["words"][0][
             "probability"
@@ -232,27 +239,34 @@ def test_old_schema_is_rejected_and_rebuilt(
     assert read_json(workspace / "asr_plan.json")["schema_version"] == 1
 
 
-def test_corrupt_merged_result_is_rebuilt_from_chunks_without_decode(
-    workspace_tmp_path: Path, fake_audio, monkeypatch
+@pytest.mark.parametrize("remove", [False, True])
+def test_result_is_rebuilt_from_chunks_without_decode_or_provider(
+    workspace_tmp_path: Path, fake_audio, monkeypatch, remove: bool
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr"
     run_asr_pipeline(audio_path, workspace, FakeProvider(), FakePolicy())
-    result = read_json(workspace / "result.json")
-    result["segments"][0]["text"] = "corrupt"
-    write_json(workspace / "result.json", result)
+    result_path = workspace / "result.json"
+    if remove:
+        result_path.unlink()
+    else:
+        result = read_json(result_path)
+        result["items"][0]["text"] = "corrupt"
+        write_json(result_path, result)
     monkeypatch.setattr(
         "scripts.asr.pipeline.decode_normalized_audio",
         lambda _path: pytest.fail("audio decoded while rebuilding merged result"),
     )
 
+    provider = FakeProvider()
     _info, segments, _source = run_asr_pipeline(
-        audio_path, workspace, FakeProvider(), FakePolicy()
+        audio_path, workspace, provider, FakePolicy()
     )
 
     assert "".join(item["text"] for item in segments).replace(" ", "") == "onetwo"
-    assert "corrupt" not in str(read_json(workspace / "result.json")["segments"])
+    assert "corrupt" not in str(read_json(result_path)["items"])
+    assert provider.prepare_calls == 0
 
 
 def test_missing_vad_is_regenerated_without_loading_model_when_layout_is_unchanged(

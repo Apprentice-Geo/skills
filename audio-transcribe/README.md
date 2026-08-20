@@ -19,3 +19,4 @@
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。
 - [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：安装、模型、Provider、缓存和产物错误处理。
 - [AGENTS.md](AGENTS.md)：开发维护、测试和代码规范。
+- [benchmark/README.md](benchmark/README.md)：准备固定测试音频、分批运行性能实验和读取报告。

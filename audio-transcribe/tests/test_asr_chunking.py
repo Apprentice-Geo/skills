@@ -7,12 +7,14 @@ import numpy as np
 import pytest
 
 from scripts.asr.chunking import (
+    DEFAULT_VAD_PARAMETERS,
     MAX_CHUNK_SAMPLES,
     SAMPLE_RATE,
     NormalizedAudio,
     PlanningParameters,
     candidate_chunk_counts,
     decode_normalized_audio,
+    detect_speech_samples,
     plan_chunks,
     plan_fixed_chunk_count,
 )
@@ -78,6 +80,17 @@ def test_decode_normalizes_once_to_mono_float32(
     assert audio.samples.ndim == 1
     assert audio.sample_rate == SAMPLE_RATE
     assert audio.sample_count == 32
+
+
+def test_detect_speech_samples_reads_faster_whisper_timestamps(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "faster_whisper.vad.get_speech_timestamps",
+        lambda *_args, **_kwargs: [{"start": 10, "end": 20}],
+    )
+
+    assert detect_speech_samples(
+        NormalizedAudio(np.zeros(32, dtype=np.float32)), DEFAULT_VAD_PARAMETERS
+    ) == [(10, 20)]
 
 
 def test_layout_slices_are_zero_copy_and_cover_every_sample() -> None:

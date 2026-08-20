@@ -1,0 +1,22 @@
+{
+  "sources": [
+    {
+      "filename": "chinesecallToArms_librivox.m4b",
+      "language": "zh",
+      "license": "Public Domain Mark 1.0",
+      "reader": "Jing Li",
+      "sha256": "3c8be8bde1cf196f2830102fc9f4f5edae14b512d0e2e017ceac4e8600f216f6",
+      "url": "https://archive.org/download/call_to_arms_jl_librivox/chinesecallToArms_librivox.m4b",
+      "work": "呐喊 (Call to Arms)"
+    },
+    {
+      "filename": "GreatGatsby1_librivox.m4b",
+      "language": "en",
+      "license": "Public Domain Mark 1.0",
+      "reader": "Kara Shallenberg",
+      "sha256": "3c5c1719629f5b7dd225a553d3926cdd573ae73126c02b8734aaaee9feb32805",
+      "url": "https://archive.org/download/greatgatsby_2101_librivox/GreatGatsby1_librivox.m4b",
+      "work": "The Great Gatsby"
+    }
+  ]
+}
