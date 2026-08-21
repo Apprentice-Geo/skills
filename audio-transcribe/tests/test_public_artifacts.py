@@ -16,11 +16,11 @@ from scripts.artifacts import (
     variant_lock,
     write_workspace_result,
 )
-from scripts.asr.alignment import AlignmentItem
+from scripts.asr.alignment import AlignedTranscript, AlignmentItem
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
 from scripts.process_logging import get_logger
-from scripts.transcribe import EngineResult, run_transcribe
+from scripts.transcribe import run_transcribe
 
 
 def _samples() -> list[float]:
@@ -31,12 +31,12 @@ def _engine_calls(calls: list[int]):
     def transcribe(_samples, request, _execution):
         calls.append(1)
         assert request["provider"] == "faster-whisper"
-        return EngineResult(
+        return AlignedTranscript(
             "你好。",
-            [
+            (
                 AlignmentItem("你好", 0.0, 0.5, 0.9),
                 AlignmentItem("。", 0.5, 0.6, None),
-            ],
+            ),
         )
 
     return transcribe
@@ -209,9 +209,9 @@ def test_first_success_log_is_complete_and_cache_calls_do_not_modify_it(
 
     def engine(_samples, _request, _execution):
         get_logger("test").info("engine completed")
-        return EngineResult(
+        return AlignedTranscript(
             "你好。",
-            [AlignmentItem("你好。", 0.0, 0.5, None)],
+            (AlignmentItem("你好。", 0.0, 0.5, None),),
         )
 
     kwargs = {
@@ -473,10 +473,37 @@ def test_empty_result_never_publishes_complete_manifest(
             provider="faster-whisper",
             results_dir=results,
             decoder=lambda _path: _samples(),
-            engine=lambda *_args: EngineResult("", []),
+            engine=lambda *_args: AlignedTranscript("", ()),
         )
 
     assert not list(results.rglob("result_manifest.json"))
+
+
+def test_fake_engine_uses_provider_acceptance_boundary(
+    workspace_tmp_path: Path,
+) -> None:
+    audio = workspace_tmp_path / "audio.bin"
+    audio.write_bytes(b"audio")
+
+    manifest_path = run_transcribe(
+        audio,
+        language="en",
+        provider="faster-whisper",
+        results_dir=workspace_tmp_path / "results",
+        decoder=lambda _path: _samples(),
+        engine=lambda *_args: AlignedTranscript(
+            "echo echo",
+            (
+                AlignmentItem("echo", 0.1001, 0.1004, 0.9),
+                AlignmentItem("echo", 0.1004, 0.5, 0.8),
+            ),
+        ),
+    )
+
+    result = load_result(manifest_path)
+    assert [item["text"] for item in result.raw_timestamps["items"]] == ["echo"]
+    log_text = (manifest_path.parent / "transcribe.log").read_text(encoding="utf-8")
+    assert log_text.count("action=drop_zero_duration_items dropped=1") == 1
 
 
 def test_workspace_normalizes_public_text_and_items(workspace_tmp_path: Path) -> None:

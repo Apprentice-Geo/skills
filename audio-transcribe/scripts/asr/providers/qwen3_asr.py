@@ -223,8 +223,3 @@ class Qwen3AsrProvider:
             "max_new_tokens": request["max_new_tokens"],
             "word_timestamps": words_present,
         }
-
-    def postprocess_segments(
-        self, segments: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        return [{**segment} for segment in segments]

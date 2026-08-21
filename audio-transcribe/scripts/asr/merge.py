@@ -1,53 +1,40 @@
 from __future__ import annotations
 
-from typing import Any
-
 from scripts.asr.alignment import (
     AlignedTranscript,
-    TranscriptWord,
-    validate_alignment_contract,
+    AlignmentItem,
+    offset_alignment,
+    validate_alignment,
 )
 from scripts.asr.chunking import SAMPLE_RATE
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
-from scripts.asr.segmentation import build_sentence_segments
 from scripts.asr.workspace import chunk_key
 
 
 def merge_chunk_transcripts(
     plan: AsrPipelinePlan,
     results: dict[str, ChunkTranscript],
-) -> tuple[str, list[TranscriptWord], list[dict[str, Any]]]:
+) -> AlignedTranscript:
     text_parts: list[str] = []
-    words: list[TranscriptWord] = []
+    items: list[AlignmentItem] = []
     for layout in plan.chunks:
         key = chunk_key(layout.index)
         if key not in results:
             raise RuntimeError(f"Missing ASR chunk result: {key}")
         transcript = results[key]
+        if not transcript.text and not transcript.words:
+            continue
         text_parts.append(transcript.text)
-        # 全局时间戳修正
         offset = layout.start_sample / SAMPLE_RATE
-        words.extend(
-            TranscriptWord(
-                word.text,
-                offset + word.start,
-                offset + word.end,
-                word.probability,
-            )
-            for word in transcript.words
-        )
+        items.extend(offset_alignment(transcript.alignment, offset).items)
     text = " ".join(text_parts)
-    duration = plan.source.duration
-    validate_alignment_contract(
-        text,
-        words,
-        duration,
+    alignment = AlignedTranscript(text, tuple(items))
+    validate_alignment(
+        alignment,
+        plan.source.duration,
         chunk_index="merged",
         language=str(plan.provider_request["language"]),
     )
-    segments = build_sentence_segments(
-        AlignedTranscript(text, tuple(words)),
-        chunk_index="merged",
-        language=str(plan.provider_request["language"]),
-    )
-    return text, words, segments
+    if not alignment.text.strip() or not alignment.items:
+        raise RuntimeError("A complete transcription must contain text and timestamps.")
+    return alignment

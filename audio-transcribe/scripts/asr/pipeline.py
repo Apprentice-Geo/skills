@@ -10,8 +10,6 @@ from scripts.artifacts import write_workspace_result
 from scripts.asr.alignment import (
     ALIGNMENT_POLICY,
     AlignedTranscript,
-    AlignmentItem,
-    TranscriptWord,
     accept_provider_transcript,
 )
 from scripts.asr.chunking import (
@@ -51,7 +49,6 @@ def _metrics(
     plan: AsrPipelinePlan,
     results: dict[str, ChunkTranscript],
     elapsed: float,
-    segment_count: int,
     provider_stage_seconds: float = 0.0,
 ) -> dict[str, Any]:
     speech_loads = [
@@ -87,7 +84,6 @@ def _metrics(
         "chunk_estimated_speech_durations": speech_loads,
         "max_estimated_speech_duration": max(speech_loads, default=0.0),
         "speech_load_msre": msre,
-        "segment_count": segment_count,
         "failed_chunks": [],
         **{
             key: identity[key]
@@ -121,17 +117,15 @@ def _complete_cache_output(
     paths: dict[str, Path],
     started: float,
     message: str,
-) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+) -> tuple[dict[str, Any], str]:
     logger.info("ASR merge: start chunks=%d source=chunk_cache", len(plan.chunks))
-    cached = merge_chunk_transcripts(plan, results)
-    _write_result(paths["result"], plan, cached[0], cached[1])
+    alignment = merge_chunk_transcripts(plan, results)
+    _write_result(paths["result"], plan, alignment)
     logger.info(
-        "ASR merge: complete chunks=%d segments=%d source=chunk_cache",
+        "ASR merge: complete chunks=%d source=chunk_cache",
         len(plan.chunks),
-        len(cached[2]),
     )
     terminal_info(logger, message)
-    _, words, raw_segments = cached
     if not paths["metrics"].exists():
         write_json_atomic(
             paths["metrics"],
@@ -139,26 +133,21 @@ def _complete_cache_output(
                 plan,
                 results,
                 time.perf_counter() - started,
-                len(raw_segments),
             ),
         )
     return (
-        provider.final_info(plan, bool(words)),
-        provider.postprocess_segments(raw_segments),
+        provider.final_info(plan, bool(alignment.items)),
         provider.source,
     )
 
 
 def _write_result(
-    path: Path, plan: AsrPipelinePlan, text: str, words: list[TranscriptWord]
+    path: Path, plan: AsrPipelinePlan, alignment: AlignedTranscript
 ) -> None:
     write_workspace_result(
         path,
-        text=text,
-        items=[
-            AlignmentItem(word.text, word.start, word.end, word.probability)
-            for word in words
-        ],
+        text=alignment.text,
+        items=list(alignment.items),
         duration=plan.source.duration,
         provider=str(plan.provider_request["provider"]),
         language=str(plan.provider_request["language"]),
@@ -173,7 +162,7 @@ def _run_asr_pipeline(
     *,
     prepared_audio: NormalizedAudio | None = None,
     prepared_vad: list[tuple[int, int]] | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+) -> tuple[dict[str, Any], str]:
     started = time.perf_counter()
     paths = workspace_paths(workspace_dir)
     request = {
@@ -405,26 +394,23 @@ def _run_asr_pipeline(
             raise error from next(iter(failures.values()))
         raise error
     logger.info("ASR merge: start chunks=%d source=execution", len(plan.chunks))
-    text, words, raw_segments = merge_chunk_transcripts(plan, results)
+    alignment = merge_chunk_transcripts(plan, results)
     logger.info(
-        "ASR merge: complete chunks=%d segments=%d source=execution",
+        "ASR merge: complete chunks=%d source=execution",
         len(plan.chunks),
-        len(raw_segments),
     )
-    _write_result(paths["result"], plan, text, words)
+    _write_result(paths["result"], plan, alignment)
     write_json_atomic(
         paths["metrics"],
         _metrics(
             plan,
             results,
             time.perf_counter() - started,
-            len(raw_segments),
             provider_stage_seconds,
         ),
     )
     return (
-        provider.final_info(plan, bool(words)),
-        provider.postprocess_segments(raw_segments),
+        provider.final_info(plan, bool(alignment.items)),
         provider.source,
     )
 
@@ -437,7 +423,7 @@ def run_asr_pipeline(
     *,
     prepared_audio: NormalizedAudio | None = None,
     prepared_vad: list[tuple[int, int]] | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
+) -> tuple[dict[str, Any], str]:
     started = time.perf_counter()
     logger.info(
         "ASR pipeline start: provider=%s policy=%s workspace=%s",

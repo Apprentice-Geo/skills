@@ -97,7 +97,6 @@ def write_workspace_result(
     language: str,
 ) -> None:
     alignment = AlignedTranscript(text, tuple(items))
-    validate_alignment(alignment, duration, language=language)
     if not text.strip() or not items:
         raise ResultValidationError(
             "A complete transcription must contain text and timestamps."

@@ -127,10 +127,3 @@ class WhisperProvider:
             "word_timestamps": words_present,
             "text_normalization": None,
         }
-
-    def postprocess_segments(
-        self, segments: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        # Preserve Provider text exactly; public consumers must not receive an
-        # OpenCC rewrite or any other transcript normalization.
-        return [{**segment} for segment in segments]

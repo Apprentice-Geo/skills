@@ -25,10 +25,6 @@ class AsrProvider(Protocol):
         self, plan: AsrPipelinePlan, words_present: bool
     ) -> dict[str, Any]: ...
 
-    def postprocess_segments(
-        self, segments: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]: ...
-
 
 class BatchAsrProvider(AsrProvider, Protocol):
     def transcribe_batch(

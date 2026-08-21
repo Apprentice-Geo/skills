@@ -235,17 +235,6 @@ def test_qwen_provider_preserves_large_last_word_end_overrun_for_acceptance() ->
     assert transcript.words[-1].end == 1.101
 
 
-def test_whisper_preserves_provider_text_in_returned_segment_copy() -> None:
-    provider = WhisperProvider(TranscribeOptions(language="zh", model_path="model"))
-    source = [{"id": 0, "start": 0.0, "end": 1.0, "text": "後臺"}]
-
-    copied = provider.postprocess_segments(source)
-
-    assert source[0]["text"] == "後臺"
-    assert copied[0]["text"] == "後臺"
-    assert copied is not source
-
-
 def test_transcribe_options_from_args_reads_model_path() -> None:
     options = TranscribeOptions.from_args(
         argparse.Namespace(language="en", model_path="custom-whisper")
