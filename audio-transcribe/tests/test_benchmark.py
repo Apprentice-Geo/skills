@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -7,7 +8,14 @@ from pathlib import Path
 import pytest
 
 from benchmark.prepare_audio import safe_cut
-from scripts.benchmark import build_matrix, compare_text, edit_distance, summarize
+from scripts import benchmark
+from scripts.benchmark import (
+    build_matrix,
+    compare_text,
+    edit_distance,
+    native_whisper_configuration,
+    summarize,
+)
 
 
 def test_prepare_audio_module_help() -> None:
@@ -41,6 +49,56 @@ def test_matrix_alternates_modes_and_keeps_repetitions() -> None:
         (2, "project-slicing"),
         (3, "project-slicing"),
         (3, "provider-native"),
+    ]
+
+
+def test_native_whisper_uses_entire_cpu_budget_for_one_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("scripts.asr.execution.whisper_cpu.os.cpu_count", lambda: 8)
+
+    adapter, _policy, identity = native_whisper_configuration(16_000 * 60, "zh")
+
+    assert adapter.options.cpu_threads == 6
+    assert identity["cpu_budget"] == 6
+    assert identity["cpu_threads"] == 6
+    assert identity["num_workers"] == 1
+
+
+def test_each_provider_warms_immediately_before_its_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[tuple[str, int]] = []
+
+    def fake_run_worker(run: dict[str, object], *_args: object) -> dict[str, object]:
+        calls.append((str(run["provider"]), int(run["repetition"])))
+        return {
+            **run,
+            "status": "succeeded",
+            "text": "",
+            "run_id": benchmark.run_id(run),
+            "wall_seconds": 1.0,
+            "rtf": 0.1,
+            "provider_stage_seconds": 0.5,
+        }
+
+    monkeypatch.setattr(benchmark, "run_worker", fake_run_worker)
+    args = argparse.Namespace(
+        report=tmp_path / "report.json",
+        provider=["faster-whisper", "qwen3-asr"],
+        language=["zh"],
+        minutes=[8],
+        mode=["project-slicing"],
+        repetitions=1,
+    )
+
+    benchmark.run_benchmark(args)
+
+    assert calls == [
+        ("faster-whisper", 0),
+        ("faster-whisper", 1),
+        ("qwen3-asr", 0),
+        ("qwen3-asr", 1),
     ]
 
 

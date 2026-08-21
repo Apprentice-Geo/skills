@@ -28,11 +28,11 @@ uv run --no-sync python -m scripts.benchmark
 uv run --no-sync python -m scripts.benchmark --provider faster-whisper --language zh --minutes 8 --mode project-slicing --mode provider-native
 ```
 
-`--repetitions` 控制重复次数，`--report` 指定 JSON 路径。默认报告为 `benchmark/reports/<当天日期>.json`，Markdown 写到同名文件。已有 JSON 会原子合并：成功 run 跳过，失败 run 保留并在下次执行时重试。每个 Provider 的最短样本先预热一次且不进入统计；每次 run 使用独立子进程和 `benchmark/tmp/<run-id>/results/`，不会复用结果、workspace 或模型进程。
+`--repetitions` 控制重复次数，`--report` 指定 JSON 路径。默认报告为 `benchmark/reports/<当天日期>.json`，Markdown 写到同名文件。已有 JSON 会原子合并：成功 run 跳过，失败 run 保留并在下次执行时重试。每个 Provider 在自身测试开始前以最短样本预热一次且不进入统计；每次 run 使用独立子进程和 `benchmark/tmp/<run-id>/results/`，不会复用结果、workspace 或模型进程。
 
 ## 模式与报告
 
 - `project-slicing` 调用生产 `run_transcribe()`，包括 VAD、规划、Provider、合并和公开 artifact 发布。
-- `provider-native` 复用生产 Provider adapter、模型参数和 execution identity，但完整音频只作为一个 Provider 输入，不调用项目 VAD、规划、合并或发布。Qwen3-ASR 0.0.6 在时间戳模式下仍可能原生按最长 180 秒切分。
+- `provider-native` 复用生产 Provider adapter、模型参数和 execution identity，但完整音频只作为一个 Provider 输入，不调用项目 VAD、规划、合并或发布。faster-whisper 的单次原生推理显式使用与 `project-slicing` 相同的 CPU budget 作为 `cpu_threads`，使两种模式拥有相同的 CPU 线程预算。Qwen3-ASR 0.0.6 在时间戳模式下仍可能原生按最长 180 秒切分。
 
 JSON 保留原始 run、失败、预热、环境、模型 revision、wall/Provider stage、RTF、进程树峰值 RSS 和可用时的 NVIDIA 显存。报告 schema 2 按相同 repetition 配对；只有 `project-slicing` run 记录 `output_comparison`。中文内容差异为 NFKC、OpenCC `t2s` 后删除 Unicode 空白与标点的 CER，英文为 NFKC、casefold 后 Unicode 单词 WER，native 是分母；双方 Unicode 标点数量另行记录。Markdown 使用完整配对的差异率和标点数量中位数，缺失或失败 counterpart 不参与。旧 schema 报告不迁移，应重新运行生成。

@@ -215,13 +215,29 @@ def transcript_text(manifest_path: Path) -> str:
     return "".join(str(segment["text"]) for segment in transcript["segments"])
 
 
+def native_whisper_configuration(
+    sample_count: int, language: str
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Give one native Whisper inference the same CPU budget as slicing runs."""
+    from scripts.asr.execution import WhisperCpuPolicy
+    from scripts.asr.providers import WhisperProvider
+    from scripts.runtime_options import TranscribeOptions
+
+    default_options = TranscribeOptions(language=language)
+    budget = WhisperCpuPolicy(default_options).execution_identity(sample_count)[
+        "cpu_budget"
+    ]
+    options = TranscribeOptions(language=language, cpu_threads=int(budget))
+    policy = WhisperCpuPolicy(options)
+    return WhisperProvider(options), policy, policy.execution_identity(sample_count)
+
+
 def worker(
     audio: Path, provider: str, language: str, mode: str, results_dir: Path
 ) -> dict[str, Any]:
     from scripts.asr.chunking import ChunkLayout, decode_normalized_audio
-    from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
-    from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
-    from scripts.runtime_options import TranscribeOptions
+    from scripts.asr.execution import Qwen3AsrCudaPolicy
+    from scripts.asr.providers import Qwen3AsrProvider
     from scripts.transcribe import run_transcribe
 
     audio = audio.resolve()
@@ -249,11 +265,12 @@ def worker(
     else:
         samples = decode_normalized_audio(audio)
         if provider == "faster-whisper":
-            options = TranscribeOptions(language=language)
-            adapter, policy = WhisperProvider(options), WhisperCpuPolicy(options)
+            adapter, policy, identity = native_whisper_configuration(
+                samples.sample_count, language
+            )
         else:
             adapter, policy = Qwen3AsrProvider(language), Qwen3AsrCudaPolicy()
-        identity = policy.execution_identity(samples.sample_count)
+            identity = policy.execution_identity(samples.sample_count)
         provider_identity = adapter.request_identity()
         layout = ChunkLayout(0, 0, samples.sample_count, "source", samples.sample_count)
         provider_started = time.perf_counter()
@@ -420,39 +437,43 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 )
             )
             write_json_atomic(report_path, report)
-    for run in matrix:
-        identifier = run_id(run)
-        if prior.get(identifier, {}).get("status") == "succeeded":
-            continue
-        attempt = 1 + sum(item["run_id"] == identifier for item in report["runs"])
-        result = run_worker(
-            run,
-            DATA_DIR / f"{run['language']}-{run['minutes']}min.wav",
-            TMP_DIR / f"{identifier}-attempt-{attempt}",
-        )
-        result["attempt"] = attempt
-        report["runs"].append(result)
-        prior[identifier] = result
-        counterpart = next(
-            (
-                item
-                for item in report["runs"]
-                if item.get("status") == "succeeded"
-                and item["provider"] == run["provider"]
-                and item["language"] == run["language"]
-                and item["minutes"] == run["minutes"]
-                and item["repetition"] == run["repetition"]
-                and item["mode"] != run["mode"]
-            ),
-            None,
-        )
-        if result.get("status") == "succeeded" and counterpart is not None:
-            project = result if result["mode"] == "project-slicing" else counterpart
-            native = result if result["mode"] == "provider-native" else counterpart
-            comparison = compare_text(project["text"], native["text"], run["language"])
-            project["output_comparison"] = comparison
-        write_json_atomic(report_path, report)
-        report_path.with_suffix(".md").write_text(summarize(report), encoding="utf-8")
+        for run in (item for item in matrix if item["provider"] == provider):
+            identifier = run_id(run)
+            if prior.get(identifier, {}).get("status") == "succeeded":
+                continue
+            attempt = 1 + sum(item["run_id"] == identifier for item in report["runs"])
+            result = run_worker(
+                run,
+                DATA_DIR / f"{run['language']}-{run['minutes']}min.wav",
+                TMP_DIR / f"{identifier}-attempt-{attempt}",
+            )
+            result["attempt"] = attempt
+            report["runs"].append(result)
+            prior[identifier] = result
+            counterpart = next(
+                (
+                    item
+                    for item in report["runs"]
+                    if item.get("status") == "succeeded"
+                    and item["provider"] == run["provider"]
+                    and item["language"] == run["language"]
+                    and item["minutes"] == run["minutes"]
+                    and item["repetition"] == run["repetition"]
+                    and item["mode"] != run["mode"]
+                ),
+                None,
+            )
+            if result.get("status") == "succeeded" and counterpart is not None:
+                project = result if result["mode"] == "project-slicing" else counterpart
+                native = result if result["mode"] == "provider-native" else counterpart
+                comparison = compare_text(
+                    project["text"], native["text"], run["language"]
+                )
+                project["output_comparison"] = comparison
+            write_json_atomic(report_path, report)
+            report_path.with_suffix(".md").write_text(
+                summarize(report), encoding="utf-8"
+            )
     return report
 
 
