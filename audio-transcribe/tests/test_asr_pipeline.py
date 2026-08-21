@@ -24,7 +24,7 @@ def test_chunk_transcript_serializes_probability() -> None:
 
 
 def test_alignment_rejects_word_outside_chunk() -> None:
-    with pytest.raises(AlignmentContractError, match="invalid token time"):
+    with pytest.raises(AlignmentContractError, match="invalid timestamp item"):
         ChunkTranscript(
             chunk_index=0,
             start_sample=0,

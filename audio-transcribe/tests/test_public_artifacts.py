@@ -10,13 +10,13 @@ from pathlib import Path
 import pytest
 from audio_transcribe_contract import ResultValidationError, load_result
 
-from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
     publish_result,
     recover_public_artifacts,
     variant_lock,
     write_workspace_result,
 )
+from scripts.asr.alignment import AlignmentItem
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
 from scripts.process_logging import get_logger
@@ -272,7 +272,7 @@ def test_malformed_manifest_is_hidden_before_recovery(
     assert manifest_path.is_file()
 
 
-def test_segment_end_is_clamped_to_duration_and_recovers_identically(
+def test_quantized_segment_end_recovers_identically(
     workspace_tmp_path: Path,
 ) -> None:
     variant_dir = workspace_tmp_path / "variant"
@@ -287,7 +287,7 @@ def test_segment_end_is_clamped_to_duration_and_recovers_identically(
     write_workspace_result(
         workspace_path,
         text="末",
-        items=[AlignmentItem("末", 0.0, 1.0006, None)],
+        items=[AlignmentItem("末", 0.0, 1.0, None)],
         duration=duration,
         provider="faster-whisper",
         language="zh",
@@ -310,8 +310,8 @@ def test_segment_end_is_clamped_to_duration_and_recovers_identically(
     original_transcript = transcript_path.read_bytes()
     manifest = read_json(manifest_path)
 
-    assert read_json(transcript_path)["segments"][0]["end"] == duration
-    assert read_json(variant_dir / "raw_timestamps.json")["items"][0]["end"] == duration
+    assert read_json(transcript_path)["segments"][0]["end"] == 1.0
+    assert read_json(variant_dir / "raw_timestamps.json")["items"][0]["end"] == 1.0
 
     transcript_path.unlink()
     recover_public_artifacts(manifest_path)

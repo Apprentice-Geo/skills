@@ -6,9 +6,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, TypeVar
 
-from scripts.alignment import AlignmentItem
 from scripts.artifacts import write_workspace_result
 from scripts.asr.alignment import (
+    AlignmentItem,
     TranscriptWord,
 )
 from scripts.asr.chunking import (

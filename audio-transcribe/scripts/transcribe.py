@@ -13,13 +13,13 @@ from typing import Any, Callable, Protocol
 import numpy as np
 from audio_transcribe_contract import load_result
 
-from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
     publish_result,
     recover_public_artifacts,
     variant_lock,
     write_workspace_result,
 )
+from scripts.asr.alignment import AlignmentItem
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import provider_model_identity
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger

@@ -188,7 +188,7 @@ def test_qwen_provider_rejects_large_last_word_end_overrun() -> None:
         ),
     )
 
-    with pytest.raises(AlignmentContractError, match="invalid token time"):
+    with pytest.raises(AlignmentContractError, match="invalid timestamp item"):
         provider.parse_result(result, ChunkLayout(0, 0, 16_000, "audio_end", 1), 0.2)
 
 

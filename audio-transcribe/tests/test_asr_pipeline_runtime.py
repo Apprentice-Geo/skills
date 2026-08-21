@@ -52,7 +52,7 @@ class FakeProvider:
             layout.start_sample,
             layout.end_sample,
             text,
-            (TranscriptWord(text, 0.0, 0.0001, 0.75),),
+            (TranscriptWord(text, 0.0, layout.sample_count / 16_000, 0.75),),
             {"provider": "fake"},
             0.1,
         )

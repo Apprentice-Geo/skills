@@ -3,12 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 from scripts.asr.alignment import (
+    AlignedTranscript,
     TranscriptWord,
-    build_sentence_segments,
     validate_alignment_contract,
 )
 from scripts.asr.chunking import SAMPLE_RATE
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
+from scripts.asr.segmentation import build_sentence_segments
 from scripts.asr.workspace import chunk_key
 
 
@@ -30,8 +31,8 @@ def merge_chunk_transcripts(
         words.extend(
             TranscriptWord(
                 word.text,
-                round(offset + word.start, 3),
-                round(offset + word.end, 3),
+                offset + word.start,
+                offset + word.end,
                 word.probability,
             )
             for word in transcript.words
@@ -46,9 +47,7 @@ def merge_chunk_transcripts(
         language=str(plan.provider_request["language"]),
     )
     segments = build_sentence_segments(
-        text,
-        words,
-        duration,
+        AlignedTranscript(text, tuple(words)),
         chunk_index="merged",
         language=str(plan.provider_request["language"]),
     )
