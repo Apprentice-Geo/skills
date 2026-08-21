@@ -17,10 +17,18 @@ class _Audio(TypedDict):
     duration: _JsonNumber
 
 
+class _AlignmentPolicy(TypedDict):
+    schema_version: Literal[1]
+    timestamp_resolution_ms: Literal[1]
+    zero_duration: Literal["drop_item_and_owned_text"]
+    ordering: Literal["strict"]
+
+
 class _Request(TypedDict):
     variant_id: str
     provider: _Provider
     language: str
+    alignment_policy: _AlignmentPolicy
     provider_identity: NotRequired[JsonValue]
     execution_policy: NotRequired[JsonValue]
     vad_parameters: NotRequired[JsonValue]

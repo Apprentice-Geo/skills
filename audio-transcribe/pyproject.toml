@@ -3,7 +3,7 @@ name = "audio-transcribe"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "audio-transcribe-contract==0.1.1",
+    "audio-transcribe-contract==0.1.2",
     "faster-whisper==1.2.1",
     "ffmpeg-binaries-compat",
     "numpy",
