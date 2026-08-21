@@ -8,6 +8,7 @@ from scripts.asr.alignment import (
     AlignedTranscript,
     AlignmentContractError,
     AlignmentItem,
+    CleanupReport,
     accept_provider_transcript,
     source_character_owners,
     validate_alignment_contract,
@@ -305,6 +306,35 @@ def test_acceptance_normalizes_punctuation_only_remainder_to_empty_chunk() -> No
 
     assert accepted == AlignedTranscript("", ())
     assert report.dropped_zero_duration_items == 1
+
+
+def test_acceptance_aggregates_many_zero_duration_items_without_text_in_report() -> (
+    None
+):
+    zero_times = [155.740 + index * (0.160 / 31) for index in range(32)]
+    accepted, report = accept_provider_transcript(
+        AlignedTranscript(
+            "嗯" * 32 + "保留",
+            (
+                *(
+                    AlignmentItem("嗯", timestamp, timestamp, 0.5)
+                    for timestamp in zero_times
+                ),
+                AlignmentItem("保留", 155.900, 156.0, 0.9),
+            ),
+        ),
+        duration=200.0,
+        chunk_index=3,
+        language="zh",
+    )
+
+    assert accepted.text == "保留"
+    assert report == CleanupReport(
+        dropped_zero_duration_items=32,
+        first_start=155.740,
+        last_end=155.900,
+    )
+    assert "嗯" not in repr(report)
 
 
 @pytest.mark.parametrize(
