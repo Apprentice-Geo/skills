@@ -93,10 +93,18 @@ def _metrics(
     }
 
 
-def _log_cleanup_report(provider: str, transcript: ChunkTranscript) -> None:
+def _log_cleanup_report(
+    provider: str,
+    transcript: ChunkTranscript,
+    warned_chunks: set[int],
+) -> None:
     report = transcript.cleanup_report
-    if report.dropped_zero_duration_items == 0:
+    if (
+        report.dropped_zero_duration_items == 0
+        or transcript.chunk_index in warned_chunks
+    ):
         return
+    warned_chunks.add(transcript.chunk_index)
     logger.warning(
         "ASR timestamp cleanup: provider=%s chunk=%s "
         "action=drop_zero_duration_items dropped=%d "
@@ -164,6 +172,7 @@ def _run_asr_pipeline(
     prepared_vad: list[tuple[int, int]] | None = None,
 ) -> tuple[dict[str, Any], str]:
     started = time.perf_counter()
+    warned_cleanup_chunks: set[int] = set()
     paths = workspace_paths(workspace_dir)
     request = {
         **provider.request_identity(),
@@ -325,7 +334,7 @@ def _run_asr_pipeline(
         layout for layout in plan.chunks if chunk_key(layout.index) not in results
     ]
     for transcript in sorted(results.values(), key=lambda item: item.chunk_index):
-        _log_cleanup_report(provider.name, transcript)
+        _log_cleanup_report(provider.name, transcript, warned_cleanup_chunks)
     write_json_atomic(paths["progress"], rebuild_progress(plan, results))
 
     def cache(transcript: ChunkTranscript) -> None:
@@ -352,7 +361,7 @@ def _run_asr_pipeline(
             words=accepted.items,
             cleanup_report=report,
         )
-        _log_cleanup_report(provider.name, transcript)
+        _log_cleanup_report(provider.name, transcript, warned_cleanup_chunks)
         key = chunk_key(transcript.chunk_index)
         write_json_atomic(
             paths["chunks"] / f"{key}.json", chunk_payload(plan, transcript)

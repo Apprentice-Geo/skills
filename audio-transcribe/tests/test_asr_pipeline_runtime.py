@@ -436,13 +436,28 @@ def test_partial_cache_with_valid_vad_does_not_repeat_vad(
 def test_cleanup_report_is_cached_and_replayed_only_for_partial_resume(
     workspace_tmp_path: Path, fake_audio
 ) -> None:
+    class DuplicateCallbackPolicy(FakePolicy):
+        def execute(self, provider, audio, pending, identity, cache):
+            model = provider.prepare(identity)
+            for layout in pending:
+                transcript = provider.transcribe_one(model, audio.slice(layout), layout)
+                cache(transcript)
+                if layout.index == 0:
+                    cache(transcript)
+            return {}
+
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr"
     first_log = workspace_tmp_path / "first.log"
 
     with LoggingSession(first_log):
-        run_asr_pipeline(audio_path, workspace, ZeroDurationProvider(), FakePolicy())
+        run_asr_pipeline(
+            audio_path,
+            workspace,
+            ZeroDurationProvider(),
+            DuplicateCallbackPolicy(),
+        )
 
     warning = "ASR timestamp cleanup: provider=fake chunk=chunk_000"
     assert first_log.read_text(encoding="utf-8").count(warning) == 1
