@@ -16,7 +16,7 @@ from scripts.artifacts import (
     variant_lock,
     write_workspace_result,
 )
-from scripts.asr.alignment import AlignedTranscript, AlignmentItem
+from scripts.asr.alignment import ALIGNMENT_POLICY, AlignedTranscript, AlignmentItem
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
 from scripts.process_logging import get_logger
@@ -40,6 +40,38 @@ def _engine_calls(calls: list[int]):
         )
 
     return transcribe
+
+
+def _publication_inputs(
+    variant_dir: Path,
+    *,
+    provider: str = "faster-whisper",
+) -> tuple[dict[str, object], dict[str, object]]:
+    canonical_request = {
+        "provider": provider,
+        "language": "en",
+        "alignment_policy": dict(ALIGNMENT_POLICY),
+    }
+    variant_id = canonical_sha256(canonical_request)
+    write_workspace_result(
+        variant_dir / "workspace" / "result.json",
+        text="ok",
+        items=[AlignmentItem("ok", 0.0, 0.5, None)],
+        duration=1.0,
+        provider=provider,
+        language="en",
+    )
+    (variant_dir / "transcribe.log").write_text("test\n", encoding="utf-8")
+    return (
+        {
+            "id": "a" * 64,
+            "size": 10,
+            "sample_count": 16_000,
+            "sample_rate": 16_000,
+            "duration": 1.0,
+        },
+        {"variant_id": variant_id, **canonical_request},
+    )
 
 
 def _hold_variant_lock(
@@ -288,6 +320,7 @@ def test_quantized_segment_end_recovers_identically(
     canonical_request = {
         "provider": "faster-whisper",
         "language": "zh",
+        "alignment_policy": dict(ALIGNMENT_POLICY),
     }
     variant_id = canonical_sha256(canonical_request)
     write_workspace_result(
@@ -393,6 +426,7 @@ def test_workspace_without_current_fields_is_rejected(
     canonical_request = {
         "provider": "faster-whisper",
         "language": "zh",
+        "alignment_policy": dict(ALIGNMENT_POLICY),
     }
     variant_id = canonical_sha256(canonical_request)
     write_json_atomic(
@@ -428,6 +462,89 @@ def test_workspace_without_current_fields_is_rejected(
             },
             request={"variant_id": variant_id, **canonical_request},
         )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda workspace: workspace.__setitem__("extra", True),
+        lambda workspace: workspace.__setitem__("duration", "1.0"),
+        lambda workspace: workspace.__setitem__("duration", 2.0),
+        lambda workspace: workspace.__setitem__("provider", 1),
+        lambda workspace: workspace.__setitem__("provider", "qwen3-asr"),
+        lambda workspace: workspace.__setitem__("language", []),
+        lambda workspace: workspace.__setitem__("language", "zh"),
+        lambda workspace: workspace["items"][0].__setitem__("extra", True),
+        lambda workspace: workspace["items"][0].__setitem__("start", "0.0"),
+        lambda workspace: workspace["items"][0].__setitem__("end", 0.0),
+        lambda workspace: workspace["items"][0].__setitem__("probability", True),
+    ],
+)
+def test_publication_rejects_corrupt_workspace_shape_and_types(
+    workspace_tmp_path: Path,
+    mutate,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    audio, request = _publication_inputs(variant_dir)
+    workspace_path = variant_dir / "workspace" / "result.json"
+    workspace = read_json(workspace_path)
+    mutate(workspace)
+    write_json_atomic(workspace_path, workspace)
+
+    with pytest.raises(ResultValidationError, match="Invalid workspace result"):
+        publish_result(variant_dir, audio=audio, request=request)
+
+    assert not (variant_dir / "result_manifest.json").exists()
+
+
+def test_publication_rejects_qwen_probability_in_workspace(
+    workspace_tmp_path: Path,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    audio, request = _publication_inputs(variant_dir, provider="qwen3-asr")
+    workspace_path = variant_dir / "workspace" / "result.json"
+    workspace = read_json(workspace_path)
+    workspace["items"][0]["probability"] = 0.9
+    write_json_atomic(workspace_path, workspace)
+
+    with pytest.raises(ResultValidationError, match="Invalid workspace result"):
+        publish_result(variant_dir, audio=audio, request=request)
+
+
+def test_candidate_validation_failure_never_publishes_manifest(
+    workspace_tmp_path: Path,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    audio, request = _publication_inputs(variant_dir)
+    request.pop("alignment_policy")
+    request["variant_id"] = canonical_sha256(
+        {key: value for key, value in request.items() if key != "variant_id"}
+    )
+
+    with pytest.raises(ResultValidationError, match="alignment_policy"):
+        publish_result(variant_dir, audio=audio, request=request)
+
+    assert not (variant_dir / "result_manifest.json").exists()
+    assert not (variant_dir / ".result_manifest.json.incomplete").exists()
+
+
+def test_existing_complete_manifest_is_never_overwritten(
+    workspace_tmp_path: Path,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    audio, request = _publication_inputs(variant_dir)
+    manifest_path = publish_result(variant_dir, audio=audio, request=request)
+    before = {
+        path.name: path.read_bytes() for path in variant_dir.iterdir() if path.is_file()
+    }
+
+    with pytest.raises(ResultValidationError, match="already exists"):
+        publish_result(variant_dir, audio=audio, request=request)
+
+    assert {
+        path.name: path.read_bytes() for path in variant_dir.iterdir() if path.is_file()
+    } == before
+    load_result(manifest_path)
 
 
 def test_recovery_refuses_workspace_that_changes_published_digest(
