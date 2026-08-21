@@ -24,7 +24,6 @@ def merge_chunk_transcripts(
         if key not in results:
             raise RuntimeError(f"Missing ASR chunk result: {key}")
         transcript = results[key]
-        transcript.validate(language=str(plan.provider_request["language"]))
         text_parts.append(transcript.text)
         # 全局时间戳修正
         offset = layout.start_sample / SAMPLE_RATE

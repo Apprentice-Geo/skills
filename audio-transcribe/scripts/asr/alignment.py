@@ -239,6 +239,115 @@ def validate_alignment_contract(
     )
 
 
+def _validate_provider_candidate(
+    alignment: AlignedTranscript,
+    *,
+    duration: float,
+    chunk_index: int | str,
+    language: str,
+) -> None:
+    if not math.isfinite(duration) or duration < 0:
+        raise AlignmentContractError(
+            "Alignment duration must be finite and non-negative."
+        )
+    previous_end = 0.0
+    for index, item in enumerate(alignment.items):
+        numeric_values = (item.start, item.end)
+        probability = item.probability
+        valid_numbers = all(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            for value in numeric_values
+        )
+        valid_probability = probability is None or (
+            not isinstance(probability, bool)
+            and isinstance(probability, (int, float))
+            and math.isfinite(probability)
+            and 0.0 <= probability <= 1.0
+        )
+        if not (
+            valid_numbers
+            and item.start >= 0.0
+            and item.start >= previous_end
+            and item.end >= item.start
+            and item.end <= duration
+            and valid_probability
+        ):
+            raise _contract_error(
+                chunk_index=chunk_index,
+                language=language,
+                item_index=index,
+                expected=(
+                    "finite ordered provider time satisfying "
+                    f"0 <= start <= end <= {duration}"
+                ),
+                actual=item,
+                reason="invalid provider timestamp item",
+            )
+        previous_end = item.end
+
+
+def accept_provider_transcript(
+    candidate: AlignedTranscript,
+    *,
+    duration: float,
+    chunk_index: int | str,
+    language: str,
+) -> tuple[AlignedTranscript, CleanupReport]:
+    """Quantize, clean recoverable zero-duration items, and validate a Provider result."""
+    _validate_provider_candidate(
+        candidate,
+        duration=duration,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    quantized = quantize_alignment(candidate)
+    _validate_provider_candidate(
+        quantized,
+        duration=duration,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    owners = source_character_owners(
+        quantized,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    dropped_indexes = {
+        index for index, item in enumerate(quantized.items) if item.start == item.end
+    }
+    dropped_items = [quantized.items[index] for index in sorted(dropped_indexes)]
+    cleaned = AlignedTranscript(
+        "".join(
+            char
+            for char, owner in zip(quantized.text, owners, strict=True)
+            if owner not in dropped_indexes
+        ),
+        tuple(
+            item
+            for index, item in enumerate(quantized.items)
+            if index not in dropped_indexes
+        ),
+    )
+    if not cleaned.items and all(
+        _is_skippable_source_character(char) for char in cleaned.text
+    ):
+        cleaned = AlignedTranscript("", ())
+    validate_alignment(
+        cleaned,
+        duration,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    report = CleanupReport(
+        dropped_zero_duration_items=len(dropped_items),
+        first_start=min((item.start for item in dropped_items), default=None),
+        last_end=max((item.end for item in dropped_items), default=None),
+    )
+    return cleaned, report
+
+
 def quantize_alignment(alignment: AlignedTranscript) -> AlignedTranscript:
     return AlignedTranscript(
         alignment.text,

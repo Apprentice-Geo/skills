@@ -185,6 +185,12 @@ def test_content_identity_reuses_result_after_input_rename(
         "unicode_normalization": "NFKC",
         "zh_conversion": "OpenCC t2s",
     }
+    assert manifest["request"]["alignment_policy"] == {
+        "schema_version": 1,
+        "timestamp_resolution_ms": 1,
+        "zero_duration": "drop_item_and_owned_text",
+        "ordering": "strict",
+    }
     assert len(manifest["request"]["variant_id"]) == 64
     assert first_manifest.parent.name.endswith(manifest["request"]["variant_id"])
     transcript = read_json(first_manifest.parent / "transcript.json")

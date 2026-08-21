@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from scripts.asr.alignment import (
+    ALIGNMENT_POLICY,
+    AlignedTranscript,
     AlignmentContractError,
+    CleanupReport,
     TranscriptWord,
-    validate_alignment_contract,
+    validate_alignment,
 )
 from scripts.asr.chunking import (
     SAMPLE_RATE,
@@ -19,7 +22,7 @@ from scripts.asr.chunking import (
     validate_layouts,
 )
 
-ASR_PIPELINE_SCHEMA_VERSION = 1
+ASR_PIPELINE_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,8 @@ class AsrPipelinePlan:
     def validate(self) -> None:
         if self.schema_version != ASR_PIPELINE_SCHEMA_VERSION:
             raise ValueError("Invalid ASR pipeline schema_version.")
+        if self.provider_request.get("alignment_policy") != ALIGNMENT_POLICY:
+            raise ValueError("Invalid ASR alignment policy.")
         validate_layouts(
             self.chunks, self.source.sample_count, self.planning_parameters
         )
@@ -106,18 +111,60 @@ class ChunkTranscript:
     words: tuple[TranscriptWord, ...]
     provider_metadata: dict[str, Any]
     elapsed_seconds: float
+    cleanup_report: CleanupReport = CleanupReport()
+
+    @property
+    def alignment(self) -> AlignedTranscript:
+        return AlignedTranscript(self.text, self.words)
+
+    def validate_metadata(self) -> None:
+        if type(self.chunk_index) is not int or self.chunk_index < 0:
+            raise AlignmentContractError("Invalid chunk identity.")
+        if (
+            type(self.start_sample) is not int
+            or type(self.end_sample) is not int
+            or self.start_sample < 0
+            or self.end_sample <= self.start_sample
+        ):
+            raise AlignmentContractError("Invalid chunk boundary.")
+        if (
+            isinstance(self.elapsed_seconds, bool)
+            or not isinstance(self.elapsed_seconds, (int, float))
+            or not math.isfinite(self.elapsed_seconds)
+            or self.elapsed_seconds < 0
+        ):
+            raise AlignmentContractError("Invalid chunk elapsed time.")
+        if not isinstance(self.provider_metadata, dict):
+            raise AlignmentContractError("Invalid Provider metadata.")
 
     def validate(self, *, language: str) -> None:
-        if self.chunk_index < 0 or self.start_sample < 0:
-            raise AlignmentContractError("Invalid chunk identity.")
-        if self.end_sample <= self.start_sample:
-            raise AlignmentContractError("Invalid chunk boundary.")
-        if not math.isfinite(self.elapsed_seconds) or self.elapsed_seconds < 0:
-            raise AlignmentContractError("Invalid chunk elapsed time.")
-        validate_alignment_contract(
-            self.text,
-            list(self.words),
+        self.validate_metadata()
+        validate_alignment(
+            self.alignment,
             (self.end_sample - self.start_sample) / SAMPLE_RATE,
             chunk_index=self.chunk_index,
             language=language,
         )
+        report = self.cleanup_report
+        if (
+            isinstance(report.dropped_zero_duration_items, bool)
+            or report.dropped_zero_duration_items < 0
+            or (
+                report.dropped_zero_duration_items == 0
+                and (report.first_start is not None or report.last_end is not None)
+            )
+            or (
+                report.dropped_zero_duration_items > 0
+                and (
+                    report.first_start is None
+                    or report.last_end is None
+                    or not math.isfinite(report.first_start)
+                    or not math.isfinite(report.last_end)
+                    or report.first_start < 0
+                    or report.last_end < report.first_start
+                    or report.last_end
+                    > (self.end_sample - self.start_sample) / SAMPLE_RATE
+                )
+            )
+        ):
+            raise AlignmentContractError("Invalid alignment cleanup report.")

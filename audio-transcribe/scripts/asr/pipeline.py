@@ -8,8 +8,11 @@ from typing import Any, TypeVar
 
 from scripts.artifacts import write_workspace_result
 from scripts.asr.alignment import (
+    ALIGNMENT_POLICY,
+    AlignedTranscript,
     AlignmentItem,
     TranscriptWord,
+    accept_provider_transcript,
 )
 from scripts.asr.chunking import (
     DEFAULT_VAD_PARAMETERS,
@@ -94,6 +97,22 @@ def _metrics(
     }
 
 
+def _log_cleanup_report(provider: str, transcript: ChunkTranscript) -> None:
+    report = transcript.cleanup_report
+    if report.dropped_zero_duration_items == 0:
+        return
+    logger.warning(
+        "ASR timestamp cleanup: provider=%s chunk=%s "
+        "action=drop_zero_duration_items dropped=%d "
+        "first_start=%.3f last_end=%.3f",
+        provider,
+        chunk_key(transcript.chunk_index),
+        report.dropped_zero_duration_items,
+        report.first_start,
+        report.last_end,
+    )
+
+
 def _complete_cache_output(
     *,
     provider: AsrProvider,
@@ -157,7 +176,10 @@ def _run_asr_pipeline(
 ) -> tuple[dict[str, Any], list[dict[str, Any]], str]:
     started = time.perf_counter()
     paths = workspace_paths(workspace_dir)
-    request = provider.request_identity()
+    request = {
+        **provider.request_identity(),
+        "alignment_policy": dict(ALIGNMENT_POLICY),
+    }
     plan = load_matching_plan(
         paths["plan"],
         audio_path,
@@ -313,9 +335,35 @@ def _run_asr_pipeline(
     pending = [
         layout for layout in plan.chunks if chunk_key(layout.index) not in results
     ]
+    for transcript in sorted(results.values(), key=lambda item: item.chunk_index):
+        _log_cleanup_report(provider.name, transcript)
     write_json_atomic(paths["progress"], rebuild_progress(plan, results))
 
     def cache(transcript: ChunkTranscript) -> None:
+        transcript.validate_metadata()
+        try:
+            layout = plan.chunks[transcript.chunk_index]
+        except IndexError as exc:
+            raise RuntimeError("Provider returned an unknown ASR chunk.") from exc
+        if (
+            transcript.chunk_index != layout.index
+            or transcript.start_sample != layout.start_sample
+            or transcript.end_sample != layout.end_sample
+        ):
+            raise RuntimeError("Provider returned mismatched ASR chunk identity.")
+        accepted, report = accept_provider_transcript(
+            AlignedTranscript(transcript.text, transcript.words),
+            duration=layout.sample_count / plan.source.sample_rate,
+            chunk_index=layout.index,
+            language=str(plan.provider_request["language"]),
+        )
+        transcript = replace(
+            transcript,
+            text=accepted.text,
+            words=accepted.items,
+            cleanup_report=report,
+        )
+        _log_cleanup_report(provider.name, transcript)
         key = chunk_key(transcript.chunk_index)
         write_json_atomic(
             paths["chunks"] / f"{key}.json", chunk_payload(plan, transcript)

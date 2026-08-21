@@ -8,6 +8,7 @@ from scripts.asr.alignment import (
     AlignedTranscript,
     AlignmentContractError,
     AlignmentItem,
+    accept_provider_transcript,
     source_character_owners,
     validate_alignment_contract,
 )
@@ -263,3 +264,66 @@ def test_source_character_owners_locate_repeated_text_in_order() -> None:
         2,
         2,
     )
+
+
+def test_acceptance_drops_only_quantized_zero_item_and_its_repeated_text() -> None:
+    candidate = AlignedTranscript(
+        "echo, echo echo",
+        (
+            AlignmentItem("echo", 0.0, 0.4996, 0.9),
+            AlignmentItem("echo", 0.5001, 0.5004, 0.8),
+            AlignmentItem("echo", 0.5004, 1.0, 0.7),
+        ),
+    )
+
+    accepted, report = accept_provider_transcript(
+        candidate,
+        duration=1.0,
+        chunk_index=3,
+        language="en",
+    )
+
+    assert accepted == AlignedTranscript(
+        "echo,  echo",
+        (
+            AlignmentItem("echo", 0.0, 0.5, 0.9),
+            AlignmentItem("echo", 0.5, 1.0, 0.7),
+        ),
+    )
+    assert report.dropped_zero_duration_items == 1
+    assert report.first_start == 0.5
+    assert report.last_end == 0.5
+
+
+def test_acceptance_normalizes_punctuation_only_remainder_to_empty_chunk() -> None:
+    accepted, report = accept_provider_transcript(
+        AlignedTranscript(" word!? ", (AlignmentItem("word", 0.1, 0.1004),)),
+        duration=1.0,
+        chunk_index=0,
+        language="en",
+    )
+
+    assert accepted == AlignedTranscript("", ())
+    assert report.dropped_zero_duration_items == 1
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        AlignmentItem("word", -0.0001, 0.1),
+        AlignmentItem("word", 0.2, 0.1),
+        AlignmentItem("word", 0.0, float("inf")),
+        AlignmentItem("word", 0.0, 1.1),
+        AlignmentItem("word", 0.0, 0.5, float("nan")),
+    ],
+)
+def test_acceptance_rejects_nonrecoverable_timestamp_damage(
+    item: AlignmentItem,
+) -> None:
+    with pytest.raises(AlignmentContractError):
+        accept_provider_transcript(
+            AlignedTranscript("word", (item,)),
+            duration=1.0,
+            chunk_index=0,
+            language="en",
+        )

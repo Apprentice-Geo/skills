@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from scripts.asr.alignment import TranscriptWord, _to_float
+from scripts.asr.alignment import TranscriptWord
 from scripts.asr.chunking import ChunkLayout
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
 from scripts.config import DEFAULT_WHISPER_MODEL_DIR
@@ -86,8 +86,8 @@ class WhisperProvider:
         words = tuple(
             TranscriptWord(
                 text=str(getattr(word, "word", "") or ""),
-                start=_to_float(word.start),
-                end=_to_float(word.end),
+                start=float(word.start),
+                end=float(word.end),
                 probability=(
                     float(probability)
                     if (probability := getattr(word, "probability", None)) is not None
@@ -111,7 +111,6 @@ class WhisperProvider:
             },
             round(time.perf_counter() - started, 3),
         )
-        transcript.validate(language=self.language)
         return transcript
 
     def final_info(self, plan: AsrPipelinePlan, words_present: bool) -> dict[str, Any]:

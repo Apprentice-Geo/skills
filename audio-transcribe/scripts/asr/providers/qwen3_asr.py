@@ -48,11 +48,7 @@ def adapt_qwen_timestamp_items(items: list[Any]) -> list[TranscriptWord]:
         end = getattr(item, "end_time", None)
         if start is None or end is None:
             continue
-        normalized.append(
-            TranscriptWord(
-                text=text, start=round(float(start), 3), end=round(float(end), 3)
-            )
-        )
+        normalized.append(TranscriptWord(text=text, start=float(start), end=float(end)))
     return normalized
 
 
@@ -181,7 +177,6 @@ class Qwen3AsrProvider:
             {},
             round(elapsed_seconds, 3),
         )
-        transcript.validate(language=self.language)
         return transcript
 
     def transcribe_one(

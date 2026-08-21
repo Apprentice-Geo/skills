@@ -8,9 +8,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
-import pytest
 
-from scripts.asr.alignment import AlignmentContractError
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
 from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
 from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
@@ -76,12 +74,52 @@ def test_whisper_provider_forces_word_timestamps_and_preserves_probability() -> 
     assert transcript.words[0].probability == 0.8
 
 
+def test_whisper_provider_preserves_raw_timestamps_without_early_validation() -> None:
+    model = SimpleNamespace(
+        transcribe=lambda samples, **kwargs: (
+            iter(
+                [
+                    SimpleNamespace(
+                        text="hello world",
+                        words=[
+                            SimpleNamespace(
+                                word="hello",
+                                start=0.0004,
+                                end=0.5004,
+                                probability=0.8,
+                            ),
+                            SimpleNamespace(
+                                word="world",
+                                start=0.4,
+                                end=0.9,
+                                probability=0.7,
+                            ),
+                        ],
+                    )
+                ]
+            ),
+            SimpleNamespace(language="en"),
+        )
+    )
+    provider = WhisperProvider(TranscribeOptions(language="en", model_path="model"))
+
+    transcript = provider.transcribe_one(
+        model,
+        np.zeros(16_000, dtype=np.float32),
+        ChunkLayout(0, 0, 16_000, "audio_end", 1),
+    )
+
+    assert transcript.words[0].start == 0.0004
+    assert transcript.words[0].end == 0.5004
+    assert transcript.words[1].start == 0.4
+
+
 def test_qwen_provider_parses_probability_as_none() -> None:
     provider = Qwen3AsrProvider("zh")
     result = SimpleNamespace(
         text="你好",
         time_stamps=SimpleNamespace(
-            items=[SimpleNamespace(text="你好", start_time=0.0, end_time=0.5)]
+            items=[SimpleNamespace(text="你好", start_time=0.0004, end_time=0.5004)]
         ),
     )
 
@@ -90,6 +128,8 @@ def test_qwen_provider_parses_probability_as_none() -> None:
     )
 
     assert transcript.words[0].probability is None
+    assert transcript.words[0].start == 0.0004
+    assert transcript.words[0].end == 0.5004
     identity = provider.request_identity()
     assert identity["provider"] == "qwen3-asr"
     assert identity["max_new_tokens"] > 0
@@ -179,7 +219,7 @@ def test_qwen_provider_clips_small_last_word_end_overrun() -> None:
     assert transcript.words[-1].end == 1.0
 
 
-def test_qwen_provider_rejects_large_last_word_end_overrun() -> None:
+def test_qwen_provider_preserves_large_last_word_end_overrun_for_acceptance() -> None:
     provider = Qwen3AsrProvider("en")
     result = SimpleNamespace(
         text="hello",
@@ -188,8 +228,11 @@ def test_qwen_provider_rejects_large_last_word_end_overrun() -> None:
         ),
     )
 
-    with pytest.raises(AlignmentContractError, match="invalid timestamp item"):
-        provider.parse_result(result, ChunkLayout(0, 0, 16_000, "audio_end", 1), 0.2)
+    transcript = provider.parse_result(
+        result, ChunkLayout(0, 0, 16_000, "audio_end", 1), 0.2
+    )
+
+    assert transcript.words[-1].end == 1.101
 
 
 def test_whisper_preserves_provider_text_in_returned_segment_copy() -> None:

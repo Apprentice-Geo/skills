@@ -19,7 +19,7 @@ from scripts.artifacts import (
     variant_lock,
     write_workspace_result,
 )
-from scripts.asr.alignment import AlignmentItem
+from scripts.asr.alignment import ALIGNMENT_POLICY, AlignmentItem
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import provider_model_identity
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
@@ -256,6 +256,7 @@ def resolve_request(
         },
         "segmentation_schema_version": 1,
         "text_normalization": TEXT_NORMALIZATION_POLICY,
+        "alignment_policy": dict(ALIGNMENT_POLICY),
     }
     if provider == "faster-whisper":
         request.update(
@@ -464,6 +465,7 @@ def run_transcribe(
         "planning_parameters": asdict(policy.planning_parameters),
         "segmentation_schema_version": 1,
         "text_normalization": TEXT_NORMALIZATION_POLICY,
+        "alignment_policy": dict(ALIGNMENT_POLICY),
     }
     variant_id = canonical_sha256(canonical_request)
     request = {"variant_id": variant_id, **canonical_request}

@@ -19,7 +19,7 @@ def test_chunk_transcript_serializes_probability() -> None:
         elapsed_seconds=1.25,
     )
 
-    assert ASR_PIPELINE_SCHEMA_VERSION == 1
+    assert ASR_PIPELINE_SCHEMA_VERSION == 2
     assert asdict(transcript)["words"][0]["probability"] == 0.9
 
 
