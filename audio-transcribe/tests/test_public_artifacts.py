@@ -490,6 +490,50 @@ def test_workspace_normalizes_public_text_and_items(workspace_tmp_path: Path) ->
     assert workspace["items"][0]["text"] == "A台湾。"
 
 
+def test_workspace_projects_phrase_normalization_onto_items(
+    workspace_tmp_path: Path,
+) -> None:
+    workspace_path = workspace_tmp_path / "result.json"
+
+    write_workspace_result(
+        workspace_path,
+        text="彷彿",
+        items=[
+            AlignmentItem("彷", 0.0, 0.2, 0.9),
+            AlignmentItem("彿", 0.2, 0.5, 0.8),
+        ],
+        duration=1.0,
+        provider="faster-whisper",
+        language="zh",
+    )
+
+    assert read_json(workspace_path)["items"] == [
+        {"text": "仿", "start": 0.0, "end": 0.2, "probability": 0.9},
+        {"text": "佛", "start": 0.2, "end": 0.5, "probability": 0.8},
+    ]
+
+
+def test_workspace_merges_items_for_length_changing_normalization(
+    workspace_tmp_path: Path,
+) -> None:
+    workspace_path = workspace_tmp_path / "result.json"
+
+    write_workspace_result(
+        workspace_path,
+        text="㍿",
+        items=[AlignmentItem("㍿", 0.1, 0.6, 0.7)],
+        duration=1.0,
+        provider="faster-whisper",
+        language="en",
+    )
+
+    workspace = read_json(workspace_path)
+    assert workspace["text"] == "株式会社"
+    assert workspace["items"] == [
+        {"text": "株式会社", "start": 0.1, "end": 0.6, "probability": 0.7}
+    ]
+
+
 def test_non_zh_workspace_only_applies_nfkc(workspace_tmp_path: Path) -> None:
     workspace_path = workspace_tmp_path / "result.json"
 

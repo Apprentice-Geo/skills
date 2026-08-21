@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from contextlib import contextmanager
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Generator
 
@@ -81,6 +83,102 @@ def _resolve_artifact_path(manifest_path: Path, relative_path: Any) -> Path:
     return resolved
 
 
+def _project_normalized_items(
+    source: str, normalized: str, items: list[AlignmentItem]
+) -> list[AlignmentItem]:
+    owners: list[int | None] = [None] * len(source)
+    source_index = 0
+    for item_index, item in enumerate(items):
+        for char in item.text:
+            while source[source_index] != char:
+                source_index += 1
+            owners[source_index] = item_index
+            source_index += 1
+
+    fragments: list[tuple[str, object, float, float, float | None]] = []
+
+    def append(text: str, owner_indexes: list[int]) -> None:
+        if not text or not owner_indexes:
+            return
+        unique_owners = list(dict.fromkeys(owner_indexes))
+        owner_items = [items[index] for index in unique_owners]
+        probabilities = [
+            item.probability for item in owner_items if item.probability is not None
+        ]
+        key: object = (
+            ("item", unique_owners[0])
+            if len(unique_owners) == 1
+            else ("group", tuple(unique_owners))
+        )
+        fragment = (
+            text,
+            key,
+            owner_items[0].start,
+            owner_items[-1].end,
+            min(probabilities) if probabilities else None,
+        )
+        if fragments and fragments[-1][1:] == fragment[1:]:
+            previous = fragments[-1]
+            fragments[-1] = (previous[0] + text, *previous[1:])
+        else:
+            fragments.append(fragment)
+
+    def adjacent_owner(position: int) -> int | None:
+        return next(
+            (owner for owner in reversed(owners[:position]) if owner is not None),
+            next((owner for owner in owners[position:] if owner is not None), None),
+        )
+
+    for tag, source_start, source_end, normalized_start, normalized_end in (
+        SequenceMatcher(None, source, normalized, autojunk=False).get_opcodes()
+    ):
+        replacement = normalized[normalized_start:normalized_end]
+        if tag == "equal" or (
+            tag == "replace"
+            and source_end - source_start == normalized_end - normalized_start
+        ):
+            for offset, char in enumerate(replacement):
+                owner = owners[source_start + offset]
+                if owner is not None:
+                    append(char, [owner])
+        elif tag == "replace":
+            affected = [
+                owner
+                for owner in owners[source_start:source_end]
+                if owner is not None
+            ]
+            if affected:
+                append(replacement, affected)
+            else:
+                owner = adjacent_owner(source_start)
+                if owner is not None:
+                    append(
+                        "".join(
+                            char
+                            for char in replacement
+                            if not (
+                                char.isspace()
+                                or unicodedata.category(char).startswith("P")
+                            )
+                        ),
+                        [owner],
+                    )
+        elif tag == "insert":
+            owner = adjacent_owner(source_start)
+            if owner is not None:
+                for char in replacement:
+                    if not (
+                        char.isspace()
+                        or unicodedata.category(char).startswith("P")
+                    ):
+                        append(char, [owner])
+
+    return [
+        AlignmentItem(text, start, end, probability)
+        for text, _, start, end, probability in fragments
+    ]
+
+
 def write_workspace_result(
     workspace_path: Path,
     *,
@@ -95,16 +193,9 @@ def write_workspace_result(
         raise ResultValidationError(
             "A complete transcription must contain text and timestamps."
         )
-    text = normalize_transcript_text(text, language)
-    items = [
-        AlignmentItem(
-            normalize_transcript_text(item.text, language),
-            item.start,
-            item.end,
-            item.probability,
-        )
-        for item in items
-    ]
+    normalized_text = normalize_transcript_text(text, language)
+    items = _project_normalized_items(text, normalized_text, items)
+    text = normalized_text
     validate_alignment(text, items, duration)
     write_json_atomic(
         workspace_path,

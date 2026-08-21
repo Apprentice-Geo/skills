@@ -10,5 +10,6 @@ results/
 tmp/
 benchmark/data/
 benchmark/tmp/
+benchmark/reports/
 .agents/
 .cache/
