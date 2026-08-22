@@ -20,3 +20,5 @@ English version: [README.en.md](README.en.md)
 `anti-sycophancy-review`：[X 帖子](<https://x.com/kaifulee/status/2067524130673467886>)、[《Ask don't tell: Reducing sycophancy in large language models》](<https://arxiv.org/abs/2602.23971>)
 
 `coding-guidelines`：[andrej-karpathy-skills](<https://github.com/multica-ai/andrej-karpathy-skills>)
+
+`article-format-correction`：[chinese-copywriting-guidelines](<https://github.com/sparanoid/chinese-copywriting-guidelines>)

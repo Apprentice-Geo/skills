@@ -2,6 +2,8 @@
 name: coding-guidelines
 description: 用于需要遵循用户范围控制和验证偏好的仓库代码修改。完成最小且完整的改动，保留无关的本地工作，遵循项目约定，并验证可观察行为而不夸大结果。不适用于无需修改仓库的解释性任务。
 license: Apache-2.0
+metadata:
+  Github: https://github.com/Apprentice-Geo/skills/tree/main/coding-guidelines
 ---
 
 # 编码准则

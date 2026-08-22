@@ -3,6 +3,8 @@ name: subtitle-creator
 description: 从本地音频创建或恢复 SRT 字幕任务，并可依据用户提供的源文本校正转写文本。适用于创建 SRT 文件、在不改变时间轴的情况下校正字幕文本，或恢复已有字幕任务。需要转写时，协调已安装的 audio-transcribe Skill。
 compatibility: Windows。需要 uv 和 Python 3.12；需要转写时，还必须安装 audio-transcribe Skill。
 license: Apache-2.0
+metadata:
+  Github: https://github.com/Apprentice-Geo/skills/tree/main/subtitle-creator
 ---
 
 # 字幕创建

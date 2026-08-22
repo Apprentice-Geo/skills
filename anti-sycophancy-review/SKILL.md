@@ -2,6 +2,8 @@
 name: anti-sycophancy-review
 description: 用于对主张、计划、预测和解释进行严格且不迎合的审查与质疑，也适用于一般性的用户观点审查或评价请求。区分有依据的事实与计算、推断、框架和猜测；质疑缺乏依据的假设，标记事后推理，说明重大不确定性，并避免无依据的附和。
 license: Apache-2.0
+metadata:
+  Github: https://github.com/Apprentice-Geo/skills/tree/main/anti-sycophancy-review
 ---
 
 # anti-sycophancy-review
