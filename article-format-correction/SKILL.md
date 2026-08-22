@@ -1,64 +1,68 @@
 ---
 name: article-format-correction
-description: Corrects Markdown technical articles(技术博客), notes, algorithm writeups(算法题解), and debugging records(调试记录) by fixing obvious writing, punctuation, Markdown formatting(格式调整), and formula markup errors while preserving the author's meaning, structure, and expression style. Use when the user asks to revise(修正), correct, format, or proofread(校对) in Markdown articles.
+description: 在保留作者原意、结构和表达风格的前提下，修正 Markdown 技术博客、笔记、算法题解和调试记录中明显的文字、标点、Markdown 格式和公式标记错误。适用于用户要求修正、调整格式或校对 Markdown 文章的场景。
 license: Apache-2.0
 ---
 
 # article-format-correction
 
-Correct Markdown technical articles with a light hand. Fix clear writing, punctuation, Markdown, and formula-markup errors while applying the personal formatting preferences below.
+以轻量方式修正 Markdown 技术文章。在应用下列个人格式偏好的同时，修正明确的文字、标点、Markdown 和公式标记错误。
 
-## Scope and Priority
+## 范围与优先级
 
-Use this skill for proofreading and formatting Chinese or English technical blogs, notes, debugging records, configuration notes, and algorithm writeups. Do not use it for translation, summarization, expansion, heavy rewriting, article generation, or knowledge-system reorganization.
+此 Skill 用于校对和格式化中文或英文技术博客、笔记、调试记录、配置笔记和算法题解。不得用于翻译、总结、扩写、大幅改写、生成文章或重组知识体系。
 
-Use light correction mode by default: fix only errors that are clear from the text itself. User instructions take precedence over this skill. User-specified ranges and "do not modify the rest" instructions are hard boundaries.
+默认使用轻量修正模式：仅修正文中能够明确判断的错误。用户指令的优先级高于此 Skill。用户指定的范围以及「其余内容不要修改」等指令是不可突破的边界。
 
-Unless the user explicitly asks for a broader rewrite, do not add facts, examples, explanations, conclusions, or background knowledge; change the author's meaning, technical conclusions, section order, explanation order, paragraph boundaries, tone, wording habits, or uncertainty level; or replace informal notes with formal documentation language.
+除非用户明确要求更广泛的改写，否则禁止执行以下操作：
 
-## Safe Corrections and Formatting Preferences
+- 添加事实、示例、解释、结论或背景知识；
+- 改变作者原意、技术结论、章节顺序、讲解顺序、段落边界、语气、措辞习惯或不确定程度；
+- 用正式文档语言替换非正式笔记风格。
 
-Correct only clear issues:
+## 安全修正与格式偏好
 
-- Typos, duplicated characters, obvious grammar mistakes, and missing or incorrect punctuation.
-- Chinese-English and Chinese-number spacing when it improves standard technical writing.
-- Malformed headings, lists, tables, links, images, or fences when the intended Markdown is obvious.
-- Missing spaces after Markdown heading markers.
-- Formula markup errors and unmarked mathematical expressions that should be LaTeX.
-- Chinese symbols used in English sentences, code, or formulas, and English symbols used in Chinese sentences.
+仅修正明确的问题：
 
-Apply these personal preferences unless the user specifies otherwise:
+- 错别字、重复字符、明显的语法错误，以及缺失或错误的标点。
+- 在有助于符合标准技术写作习惯时，修正中英文之间和中文与数字之间的空格。
+- 当预期的 Markdown 明确时，修正格式错误的标题、列表、表格、链接、图片或围栏代码块。
+- 补充 Markdown 标题标记后缺失的空格。
+- 修正公式标记错误，以及应使用 LaTeX 却未标记的数学表达式。
+- 修正英文句子、代码或公式中的中文符号，以及中文句子中的英文符号。
 
-- Use Chinese punctuation in Chinese sentences and English half-width punctuation in English, code, and formulas.
-- Exceptionally, use `「」[]` and a half-width space instead of `“”【】` and a full-width space in Chinese sentences.
-- Put a space between bold markers and surrounding text, but not between the markers and their content: `这是 **重点内容**。`.
-- Put angle brackets around every Markdown link destination, including image links and reference definitions: `[示例](<https://example.com>)`.
+除非用户另有指定，否则应用以下个人偏好：
 
-## Formulas and Code
+- 中文句子使用中文标点；英文、代码和公式使用英文半角标点。
+- 中文句子中例外使用 `「」[]` 和半角空格，不使用 `“”【】` 和全角空格。
+- 粗体标记与周围文本之间留一个空格，标记与其内容之间不留空格：`这是 **重点内容**。`。
+- 所有 Markdown 链接目标都使用尖括号包围，包括图片链接和引用定义：`[示例](<https://example.com>)`。
 
-- Keep valid existing LaTeX unchanged.
-- Use `$...$` for short inline formulas and `$$...$$` for long or large standalone formulas; never put spaces between `$` and formula content.
-- Preserve variables, notation, and mathematical meaning. Do not derive, simplify, or reinterpret formulas or code.
-- Rewrite text with clear mathematical meaning as LaTeX, including dynamic-programming recurrences, variable ranges, sums, products, set operations, and simple assignments such as `N = duration_samples`.
-- Convert formula-like fenced blocks and inline code when they clearly express mathematics. When an identifier contains an underscore, preserve it as text: `$N = \text{duration\_samples}$`.
-- Use `` `...` `` for short inline code and fenced code blocks with the correct language for genuine standalone code.
-- Keep genuine program code, commands, logs, and other non-mathematical code unchanged.
+## 公式与代码
 
-Examples:
+- 保持现有有效 LaTeX 不变。
+- 短行内公式使用 `$...$`，较长或较大的独立公式使用 `$$...$$`；`$` 与公式内容之间禁止添加空格。
+- 保留变量、记号和数学含义。不得推导、简化或重新解释公式或代码。
+- 将具有明确数学含义的文本改写为 LaTeX，包括动态规划递推式、变量范围、求和、乘积、集合运算，以及 `N = duration_samples` 等简单赋值。
+- 当围栏代码块和行内代码明确表达数学公式时，将其转换为公式。标识符包含下划线时，将其保留为文本：`$N = \text{duration\_samples}$`。
+- 短行内代码使用 `` `...` ``；真正的独立代码使用带正确语言标记的围栏代码块。
+- 保持真正的程序代码、命令、日志和其他非数学代码不变。
 
-| Before | After | Rule |
+示例：
+
+| 修改前 | 修改后 | 规则 |
 | --- | --- | --- |
-| ``时间复杂度为 O(n log n)`` | ``时间复杂度为 $O(n \log n)$`` | Rewrite unmarked mathematical expressions as LaTeX. |
-| ``统计满足 x\*y=k 的 x，y 数量`` | ``统计满足 $x \times y = k$ 的数对 $x, y$ 数量`` | Rewrite mathematical expressions as LaTeX. |
-| ``n、in【1，2e5】`` | ``$n \in [1,2 \times 10^5]$`` | Rewrite mathematical expressions as LaTeX. |
-| ``递推公式为 dpi=dpi-1+dpi-2，i>=2`` | ``递推公式为 $dp_i = dp_{i-1} + dp_{i-2}, i \ge 2$`` | Rewrite recurrences as LaTeX. |
-| ``N = duration_samples`` | ``$N = \text{duration\_samples}$`` | Rewrite formula-like assignments as LaTeX. |
-| ``N ∈ dp[K][j]`` | ``$N \in dp[K][j]$`` | Rewrite set-membership expressions while preserving array-access notation. |
-| ``score = Σ loadᵢ²`` | ``$score = \sum_i load_i^2$`` | Rewrite summation expressions without inventing missing bounds. |
-| ``zip（）返回一个包含一些元组的迭代器`` | `` `zip()` 返回一个包含一些元组的迭代器 `` | Use inline code for code identifiers. |
-| ``[示例](./example image.png)`` | ``[示例](<./example image.png>)`` | Put angle brackets around link destinations. |
+| ``时间复杂度为 O(n log n)`` | ``时间复杂度为 $O(n \log n)$`` | 将未标记的数学表达式改写为 LaTeX。 |
+| ``统计满足 x\*y=k 的 x，y 数量`` | ``统计满足 $x \times y = k$ 的数对 $x, y$ 数量`` | 将数学表达式改写为 LaTeX。 |
+| ``n、in【1，2e5】`` | ``$n \in [1,2 \times 10^5]$`` | 将数学表达式改写为 LaTeX。 |
+| ``递推公式为 dpi=dpi-1+dpi-2，i>=2`` | ``递推公式为 $dp_i = dp_{i-1} + dp_{i-2}, i \ge 2$`` | 将递推式改写为 LaTeX。 |
+| ``N = duration_samples`` | ``$N = \text{duration\_samples}$`` | 将类似公式的赋值改写为 LaTeX。 |
+| ``N ∈ dp[K][j]`` | ``$N \in dp[K][j]$`` | 改写集合成员关系表达式，同时保留数组访问记法。 |
+| ``score = Σ loadᵢ²`` | ``$score = \sum_i load_i^2$`` | 改写求和表达式，不臆造缺失的上下界。 |
+| ``zip（）返回一个包含一些元组的迭代器`` | `` `zip()` 返回一个包含一些元组的迭代器 `` | 代码标识符使用行内代码格式。 |
+| ``[示例](./example image.png)`` | ``[示例](<./example image.png>)`` | 使用尖括号包围链接目标。 |
 
-For a long or large formula, use an independent display block:
+对于较长或较大的公式，使用独立的展示块：
 
 ```markdown
 $$
@@ -66,38 +70,38 @@ dp_i = \sum_{j=0}^{i-1} dp_j \times w_{j,i}, \quad i \ge 1
 $$
 ```
 
-## Protected Content and Uncertainty
+## 受保护内容与不确定项
 
-Unless there is an explicit formatting error, do not modify:
+除非存在明确的格式错误，否则不得修改：
 
-- Genuine fenced code blocks, genuine inline code, commands, terminal output, or error logs.
-- File paths and URL contents. Markdown link and image destinations still follow the angle-bracket rule.
-- Markdown table structure. Apply formatting rules to ordinary text inside table cells.
-- Version numbers, project-specific names, existing valid LaTeX, and technical terms whose correctness is uncertain.
+- 真正的围栏代码块、真正的行内代码、命令、终端输出或错误日志。
+- 文件路径和 URL 内容。Markdown 链接和图片目标仍须遵循尖括号规则。
+- Markdown 表格结构。表格单元格内的普通文本仍应用格式规则。
+- 版本号、项目专有名称、现有有效 LaTeX，以及无法确定正确性的技术术语。
 
-Do not reformat genuine code, change indentation, normalize code style, or rewrite comments unless the user explicitly asks. A fenced block or inline code span that clearly expresses a mathematical formula is an exception and must be converted according to the formula rules.
+除非用户明确要求，否则不得重新格式化真正的代码、改变缩进、统一代码风格或改写注释。明确表达数学公式的围栏代码块或行内代码属于例外，必须按公式规则转换。
 
-If a term, command, path, version, formula, or technical statement may be wrong but cannot be confidently corrected, keep it unchanged, do not guess, and list it under `需确认项` with a brief reason.
+如果术语、命令、路径、版本、公式或技术陈述可能有误，但无法确信如何修正，则保持原样，不得猜测，并在 `需确认项` 下列出该内容及简要原因。
 
-## Final Check
+## 最终检查
 
-Before finishing, verify:
+完成前验证：
 
-- Markdown is valid; code-fence count and boundaries are correct.
-- Markdown tables retain their row and separator structure.
-- Genuine code, commands, paths, URLs, logs, tables, and valid formulas were not changed accidentally; formula-like code was converted intentionally.
-- Formatting is consistent: unless an explicit exception applies, the same kind of object uses the same format throughout the article.
-- Commands, file paths, version numbers, and project-specific names were not normalized or rewritten accidentally.
-- No facts were added and no technical conclusion changed.
-- The article still reads like the author's personal blog, not formal documentation.
+- Markdown 有效；代码围栏数量和边界正确。
+- Markdown 表格保留原有行和分隔线结构。
+- 真正的代码、命令、路径、URL、日志、表格和有效公式未被意外修改；类似公式的代码经过有意转换。
+- 格式一致：除非存在明确例外，文章中同类对象始终使用相同格式。
+- 命令、文件路径、版本号和项目专有名称未被意外统一或改写。
+- 未添加事实，也未改变技术结论。
+- 文章读起来仍像作者的个人博客，而不是正式文档。
 
-## Output
+## 输出
 
-If editing a file, update the original file. If the user pasted text directly, return the corrected text.
+如果编辑文件，更新原文件。如果用户直接粘贴文本，返回修正后的文本。
 
-Keep the revision note concise and do not list every punctuation, spacing, or formatting change.
+修改说明应简洁，不要逐项列出每一处标点、空格或格式变化。
 
-Use this structure:
+使用以下结构：
 
 ```markdown
 **修改说明**

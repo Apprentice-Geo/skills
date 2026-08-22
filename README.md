@@ -1,6 +1,6 @@
 # Apprentice-Geo/skills
 
-本仓库是个人使用的 Agent Skill 合集，目标不是编写中立、通用的 Skill。仓库中的 Skill 会带有明显的个人工作流、表达偏好、职责边界和实践经验。
+本仓库是个人使用的 Agent Skill 合集，仓库中的 Skill 会带有明显的个人工作流、表达偏好、职责边界和实践经验。
 
 English version: [README.en.md](README.en.md)
 

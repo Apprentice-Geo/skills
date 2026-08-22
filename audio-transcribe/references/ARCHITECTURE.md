@@ -1,8 +1,8 @@
-# Architecture
+# 架构
 
-`audio-transcribe` turns one local audio file into a validated, reusable public result. This is a maintainer map of the stable boundaries; implementation details belong in the modules and tests.
+`audio-transcribe` 把一个本地音频文件转换为经过验证、可复用的公共结果。本文档面向维护者说明稳定边界；实现细节以模块和测试为准。
 
-## Bird's-eye view
+## 全局视图
 
 ```text
 local audio
@@ -13,70 +13,69 @@ local audio
   -> validated result_manifest.json
 ```
 
-The command prints a manifest path only after the complete public result validates. A result is reusable only through that manifest and the `audio-transcribe-contract` loader.
+只有完整公共结果验证成功后，命令才输出 manifest 路径。结果仅能通过该 manifest 和 `audio-transcribe-contract` loader 复用。
 
-## Codemap
+## 代码地图
 
-| Area | Responsibility |
+| 区域 | 职责 |
 | --- | --- |
-| `scripts/transcribe.py` | CLI orchestration, audio identity, provider selection, variant identity, locking, cache, and reporting |
-| `scripts/asr/alignment.py` | sole alignment core: `AlignmentItem`, `AlignedTranscript`, `CleanupReport`, fixed `ALIGNMENT_POLICY`, acceptance, projection, offset, and validation |
-| `scripts/asr/segmentation.py` | sentence segmentation of an already validated global alignment |
-| Other `scripts/asr/` modules | audio preparation, VAD, chunk planning, Provider execution, cache, merge, and workspace output |
-| `scripts/artifacts.py` | manifest-last publication, public artifact recovery, locking, and self-validation |
-| `scripts/model_artifacts.py` | conservative local model readiness checks, including indexed safetensors |
-| `scripts/setup/` | Windows environment and fixed-revision model installation |
-| `packages/audio-transcribe-contract/` | strict read-only validation of public manifests and artifacts for consumers |
-| `tests/` | behavior and contract regression coverage |
+| `scripts/transcribe.py` | CLI 编排、audio identity、provider 选择、variant identity、锁、cache 和报告 |
+| `scripts/asr/alignment.py` | 唯一的 alignment 核心：`AlignmentItem`、`AlignedTranscript`、`CleanupReport`、固定的 `ALIGNMENT_POLICY`，以及接受、投影、偏移和验证 |
+| `scripts/asr/segmentation.py` | 对已经验证的 global alignment 进行句子分段 |
+| 其他 `scripts/asr/` 模块 | 音频准备、VAD、chunk 规划、Provider 执行、cache、合并和 workspace 输出 |
+| `scripts/artifacts.py` | manifest-last 发布、公共 artifact 恢复、锁和自验证 |
+| `scripts/model_artifacts.py` | 保守的本地模型 ready 检查，包括 indexed safetensors |
+| `scripts/setup/` | Windows 环境和固定 revision 的模型安装 |
+| `packages/audio-transcribe-contract/` | 面向 consumer，对公共 manifest 和 artifact 进行严格的只读验证 |
+| `tests/` | 行为与 contract 的回归覆盖 |
 
-## System boundaries
+## 系统边界
 
-- Input is a local audio file; this Skill does not download media or own Bilibili workflow.
-- `workspace/` is private recovery state. `result_manifest.json`, `transcript.json`, and `raw_timestamps.json` are public artifacts.
-- Consumers read the public result through `audio-transcribe-contract`; they do not import this Skill's source or inspect `workspace/`.
-- Model setup and readiness are local concerns. A malformed model index reports an unavailable model rather than escaping an exception into setup or dependency checks.
+- 输入是本地音频文件；此 Skill 不下载媒体。
+- `workspace/` 是私有恢复状态。`result_manifest.json`、`transcript.json` 和 `raw_timestamps.json` 是公共 artifact。
+- consumer 通过 `audio-transcribe-contract` 读取公共结果；不得 import 此 Skill 的源码或检查 `workspace/`。
+- 模型 setup 和 readiness 属于本地职责。model index 格式错误时，应报告模型不可用，不得让异常逃逸到 setup 或依赖检查中。
 
-## Stable invariants
+## 稳定不变量
 
-- `audio_id` is the SHA-256 of audio bytes and is independent of its path.
-- `variant_id` identifies every resolved behavior that can change transcript bytes or timestamps. The canonical request includes both text-normalization policy and the exact fixed `alignment_policy`.
-- `ALIGNMENT_POLICY` is schema v1 with 1 ms timestamp resolution, `drop_item_and_owned_text` zero-duration handling, and strict ordering. A policy change produces a new `variant_id` and ASR plan identity.
-- All languages use NFKC and only `zh` additionally uses OpenCC `t2s`, so normalization-policy changes also produce a new `variant_id`.
-- A complete manifest is published last and is the only success marker.
-- Public artifact paths stay inside the result directory; indexed model shard paths stay inside the model directory.
-- Recovery restores the original complete manifest byte-for-byte only when rebuilt public artifacts reproduce its recorded digests. If recovery fails, the original complete manifest remains available for a later retry.
-- Public manifest and artifact schemas remain v1, while `request.alignment_policy` is required. Older manifests and private caches that predate the policy/cache-v2 identity are intentionally invalid and are regenerated rather than migrated.
+- `audio_id` 是音频字节的 SHA-256，与其路径无关。
+- `variant_id` 标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior。canonical request 同时包含文本规范化 policy 和精确固定的 `alignment_policy`。
+- `ALIGNMENT_POLICY` 使用 schema v1、1 ms timestamp resolution、`drop_item_and_owned_text` zero-duration 处理和严格排序。policy 变化会生成新的 `variant_id` 和 ASR plan identity。
+- 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `variant_id`。
+- 完整 manifest 最后发布，并且是唯一的成功标记。
+- 公共 artifact 路径必须位于结果目录内；indexed model shard 路径必须位于模型目录内。
+- 仅当重建的公共 artifact 能复现 manifest 记录的 digest 时，恢复流程才逐字节还原原始完整 manifest。恢复失败时，保留原始完整 manifest，以便稍后重试。
 
-## Cross-cutting concerns
+## 横切关注点
 
-- Atomic writes and the variant lock protect publication and recovery from partial or concurrent updates.
-- Contract validation checks schema, identity, path containment, digests, timing, and file types without repairing files.
-- Logs contain operational diagnostics but not transcript text, cookies, or model objects; job-facing errors remain concise.
-- Provider selection is resolved before inference and is not silently changed after a failure.
+- 原子写入和 variant lock 防止发布与恢复受到部分更新或并发更新影响。
+- contract 验证检查 schema、identity、路径包含关系、digest、timing 和文件类型，不修复文件。
+- 日志包含运行诊断，但不包含 transcript 文本、Cookie 或模型对象；面向 job 的错误保持简洁。
+- Provider 选择在推理前完成解析，失败后不得静默更改。
 
-## Alignment and validation flow
+## Alignment 与验证流程
 
-Provider adapters only map third-party fields into an `AlignedTranscript` candidate. Every candidate then crosses the same `accept_provider_transcript` boundary:
+Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。随后，每个 candidate 都必须经过同一个 `accept_provider_transcript` 边界：
 
-1. reject negative, non-finite, reversed, overlapping, out-of-range, or invalid-probability values;
-2. quantize timestamps to three decimal places (1 ms);
-3. map source characters to alignment-item owners in source order, allowing unowned punctuation and whitespace without using global text replacement;
-4. remove only items whose quantized `start == end`, together with exactly the source characters owned by those items;
-5. strictly revalidate character alignment, `0 <= start < end <= duration`, non-overlap, and probability.
+1. 拒绝负数、非有限、反向、重叠、超出范围或 probability 无效的值；
+2. 把 timestamp 量化到小数点后三位（1 ms）；
+3. 按 source 顺序把源字符映射给 alignment-item owner，允许没有 owner 的标点和空白，不使用全局文本替换；
+4. 仅移除量化后 `start == end` 的 item，以及恰好归这些 item 所有的源字符；
+5. 严格重新验证字符 alignment、`0 <= start < end <= duration`、不重叠和 probability。
 
-One accepted chunk may become empty when only removable items and unowned punctuation or whitespace remain. Merge ignores empty chunks, but a transcription whose merged result is entirely empty fails.
+如果只剩可移除 item 和没有 owner 的标点或空白，一个 accepted chunk 可能变为空。合并时忽略空 chunk，但合并结果完全为空的转写必须失败。
 
-Merge produces only one global `AlignedTranscript`: it applies each chunk offset, combines non-empty accepted chunks, and validates the global result. Text normalization is projected back through item ownership and followed by another strict validation before `workspace/result.json` is written. Publication strictly reads and revalidates the workspace shape and alignment; it neither coerces field types nor clips timestamps to the audio duration. Sentence segmentation runs exactly once during public conversion and consumes the already validated global alignment.
+合并流程只生成一个 global `AlignedTranscript`：应用每个 chunk offset，组合非空的 accepted chunk，并验证全局结果。写入 `workspace/result.json` 前，通过 item ownership 反向投影文本规范化结果，并再次进行严格验证。发布流程严格读取并重新验证 workspace shape 和 alignment；既不强制转换字段类型，也不把 timestamp 裁剪到音频 duration。句子分段仅在公共转换期间运行一次，并使用已经验证的 global alignment。
 
-For Qwen3-ASR, alignment-item probability remains `null`. For other accepted probabilities, values must be finite and within `[0, 1]`.
+对于 Qwen3-ASR，alignment-item probability 保持 `null`。其他被接受的 probability 必须是有限值，并位于 `[0, 1]` 内。
 
-## Private cache v2
+## 私有 cache v2
 
-The ASR plan and chunk cache use private schema v2 and include the fixed alignment policy in their identity. A chunk is written only after acceptance succeeds. Cache writes do not repeat validation, while every cache read strictly reconstructs and revalidates the accepted transcript. Corrupt, old-schema, or wrong-policy entries are not reused.
+ASR plan 和 chunk cache 使用私有 schema v2，并在 identity 中包含固定 alignment policy。chunk 仅在接受成功后写入。cache 写入不会重复验证，而每次 cache 读取都会严格重建并重新验证 accepted transcript。损坏、旧 schema 或错误 policy 的条目不得复用。
 
-Each chunk payload persists a `CleanupReport` containing only the number of dropped zero-duration items and the earliest dropped start/latest dropped end. It never stores removed transcript text. New inference emits one aggregated `WARNING` for each affected chunk. During a partial resume, each affected cached chunk replays that warning once for the new attempt; a complete manifest cache hit, or an all-chunk cache hit, does not emit a new cleanup warning.
+每个 chunk payload 都持久化一个 `CleanupReport`，其中仅包含被移除的 zero-duration item 数量、最早被移除的 start 和最晚被移除的 end，禁止存储被移除的 transcript 文本。新推理会为每个受影响的 chunk 发出一条聚合 `WARNING`。部分恢复期间，每个受影响的 cached chunk 会为新的 attempt 重放一次该警告；完整 manifest cache hit 或全 chunk cache hit 不会产生新的 cleanup 警告。
 
-## Public result shape
+## 公共结果结构
 
 ```text
 results/<audio_id>/<provider>-<language>-<variant_id>/
@@ -87,24 +86,18 @@ results/<audio_id>/<provider>-<language>-<variant_id>/
 └─ workspace/result.json
 ```
 
-The manifest records audio identity, resolved request identity, contained artifact paths, and public artifact digests. Successful consumers receive validated manifest, transcript, and timestamp snapshots from `load_result`; no partial result is returned.
+manifest 记录 audio identity、resolved request identity、受限于目录内的 artifact 路径，以及公共 artifact digest。成功的 consumer 从 `load_result` 获取经过验证的 manifest、transcript 和 timestamp snapshot；不返回部分结果。
 
-`workspace/result.json` is the pipeline's sole merged result and the only private
-recovery snapshot used for publication. It contains exactly `schema_version`,
-`text`, `items`, `duration`, `provider`, and `language`. The plan and per-chunk
-Provider results remain separate workspace caches. When all chunk caches are
-valid, the pipeline reruns merge, timestamp offset, alignment validation, text and
-item normalization, and alignment revalidation before atomically replacing
-`result.json`; it does not load the Provider. Segments are not stored in the
-workspace. Legacy merged results containing `plan`, `words`, or `segments` are not
-read or migrated.
+`workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `schema_version`、`text`、`items`、`duration`、`provider` 和 `language`。
 
-Private `chunk_results/` preserve Provider text. `workspace/result.json` and both public JSON artifacts contain normalized text only. Normalization or post-normalization alignment failure stops publication; recovery deterministically rebuilds from the already-normalized workspace snapshot.
+plan 和各 chunk 的 Provider 结果仍为独立的 workspace cache。当所有 chunk cache 都有效时，pipeline 会重新执行合并、timestamp offset、alignment 验证、文本与item 规范化以及 alignment 复验，然后原子替换`result.json`；此过程不加载 Provider。workspace 不存储 segment。包含 `plan`、`words` 或 `segments` 的旧版合并结果不会被读取或迁移。
 
-## Public contract and publication
+私有 `chunk_results/` 保留 Provider 文本。`workspace/result.json` 和两个公共 JSON artifact 仅包含规范化文本。规范化失败或规范化后的 alignment 失败会停止发布；恢复流程从已规范化的 workspace snapshot 确定性重建结果。
 
-`audio-transcribe-contract` 0.1.2 is deliberately independent of internal alignment modules. Its `load_result()` API is unchanged, but it contains its own copy of the fixed alignment policy and rejects a missing or modified policy before accepting identity. Raw items must have the exact item shape, non-empty text, valid Provider probability, and timing satisfying `0 <= start < end <= duration` and `start >= previous_end`. Identity, canonical request digest, artifact digest, Provider, language, duration, and path containment must agree across the manifest and artifacts.
+## 公共 contract 与发布
 
-Publication is manifest-last. It first writes `transcript.json` and `raw_timestamps.json`, then writes `.result_manifest.json.incomplete` and validates that candidate with `load_result()`. Only successful validation permits `os.replace()` to atomically create `result_manifest.json`; candidate failure removes the incomplete file and leaves the formal success marker absent. First publication refuses to overwrite an existing formal manifest.
+`audio-transcribe-contract` 0.1.2 被有意设计为独立于内部 alignment 模块。其 `load_result()` API 保持不变，但它包含一份固定 alignment policy 的独立副本，并会在接受 identity 前拒绝缺失或遭修改的 policy。Raw item 必须具有精确的 item shape、非空文本、有效的 Provider probability，以及满足 `0 <= start < end <= duration` 和 `start >= previous_end` 的 timing。manifest 与 artifact 之间的 identity、canonical request digest、artifact digest、Provider、language、duration 和路径包含关系必须一致。
 
-Recovery temporarily uses `.result_manifest.json.recovery`, distinct from the publication candidate. It rebuilds public artifacts from the strictly validated normalized workspace, requires their digests to match the recorded complete result, and restores the original formal manifest bytes. This naming separation does not change the existing multi-file recovery protocol.
+发布采用 manifest-last。流程先写入 `transcript.json` 和 `raw_timestamps.json`，再写入 `.result_manifest.json.incomplete`，并使用 `load_result()` 验证该 candidate。仅当验证成功时，才允许通过 `os.replace()` 原子创建 `result_manifest.json`；candidate 验证失败时删除 incomplete 文件，并且不创建正式成功标记。首次发布拒绝覆盖已有正式 manifest。
+
+恢复流程临时使用 `.result_manifest.json.recovery`，与发布 candidate 区分。它从经过严格验证的规范化 workspace 重建公共 artifact，要求其 digest 与记录的完整结果匹配，并恢复原始正式 manifest 字节。此命名隔离不改变现有的多文件恢复协议。

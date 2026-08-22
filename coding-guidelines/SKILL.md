@@ -1,45 +1,45 @@
 ---
 name: coding-guidelines
-description: Use for repository code changes that require the user's scope-control and verification preferences. Make the smallest complete change, preserve unrelated local work, follow project conventions, and verify observable behavior without overstating results. Do not use for explanations that require no repository changes.
+description: 用于需要遵循用户范围控制和验证偏好的仓库代码修改。完成最小且完整的改动，保留无关的本地工作，遵循项目约定，并验证可观察行为而不夸大结果。不适用于无需修改仓库的解释性任务。
 license: Apache-2.0
 ---
 
-# Coding Guidelines
+# 编码准则
 
-Apply the user's requirements, repository instructions, and established project conventions before these guidelines.
+用户要求、仓库指令和既有项目约定的优先级高于本准则。
 
-## Resolve Material Ambiguity
+## 解决重大歧义
 
-Ask before editing only when ambiguity could materially change scope, user-visible behavior, security, data safety, public APIs, commits, or irreversible actions. State low-risk assumptions briefly and proceed.
+仅当歧义可能实质改变范围、用户可见行为、安全性、数据安全、公共 API、提交或不可逆操作时，才在编辑前询问。简要说明低风险假设并继续执行。
 
-## Keep Changes Scoped
+## 控制改动范围
 
-Make the smallest complete change that satisfies the request.
+完成满足请求所需的最小完整改动。
 
-- Do not add speculative features, configurability, abstractions, or broad error handling.
-- Follow existing project patterns, naming, comment density, and style.
-- Do not refactor, reformat, or clean up unrelated code.
-- Preserve unrelated local edits, untracked files, and user-created artifacts.
-- For documentation-only work, do not change runtime behavior, tests, or dependencies.
-- Remove only the unused code or imports created by the current change.
+- 不要添加推测性的功能、可配置项、抽象或宽泛的错误处理。
+- 遵循现有项目模式、命名、注释密度和风格。
+- 不得重构、重新格式化或清理无关代码。
+- 保留无关的本地修改、未跟踪文件和用户创建的产物。
+- 对于纯文档工作，不得改变运行时行为、测试或依赖。
+- 仅删除由当前改动产生的未使用代码或 import。
 
-Every changed line should trace to the requested behavior or be necessary to keep the change correct.
+每一处改动都应能追溯到所请求的行为，或是维持改动正确性所必需的内容。
 
-## Verify Proportionally
+## 按风险验证
 
-Use the smallest verification loop appropriate to the risk.
+使用与风险相称的最小验证闭环。
 
-- Prefer focused tests, reproduction commands, type checks, lint checks, or direct inspection tied to the changed behavior.
-- For bug fixes, verify the reported symptom and add a regression check when it provides durable protection.
-- Do not claim a check passed unless it was run. Report skipped or blocked checks precisely.
+- 优先使用与改动行为直接相关的聚焦测试、复现命令、类型检查、lint 检查或直接检查。
+- 修复 bug 时，验证报告的症状；如果回归检查能提供长期保护，则添加该检查。
+- 除非实际运行过检查，否则不得声称检查已通过。准确报告跳过或受阻的检查。
 
-## Test Quality
+## 测试质量
 
-Write a test only when its failure would normally indicate a regression in observable behavior or a documented contract.
+仅当测试失败通常意味着可观察行为或已记录契约发生回归时，才编写测试。
 
-- Prefer regression tests for behavior changes, bug fixes, business rules, and meaningful error paths.
-- Do not add tests merely to satisfy TDD, increase coverage, or prove that code was written.
-- Avoid tests of exact documentation or UI wording, private implementation details, mock call sequences, and incidental files, logs, or caches unless they are part of the contract.
-- If no valuable automated test exists, use the smallest relevant verification instead of manufacturing one.
-- Mock only real external boundaries when practical.
-- Call the work TDD only after observing the test fail before implementation and pass afterward.
+- 对行为变更、bug 修复、业务规则和有实际意义的错误路径，优先编写回归测试。
+- 不要仅为了满足 TDD、提高覆盖率或证明代码已编写而添加测试。
+- 除非相关内容属于契约，否则避免测试文档或 UI 的精确措辞、私有实现细节、mock 调用顺序，以及附带的文件、日志或缓存。
+- 如果不存在有价值的自动化测试，应使用最小的相关验证，不要生造测试。
+- 在可行时，仅 mock 真实的外部边界。
+- 只有在观察到测试于实现前失败、实现后通过时，才可称该工作采用了 TDD。

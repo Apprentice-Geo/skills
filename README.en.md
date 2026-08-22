@@ -1,6 +1,6 @@
 # Apprentice-Geo/skills
 
-This repository contains Agent Skills for personal use. It is not intended to be a collection of neutral, general-purpose Skills. The Skills reflect personal workflows, writing preferences, responsibility boundaries, and lessons learned from practice.
+This repository contains Agent Skills for personal use. The Skills reflect personal workflows, writing preferences, responsibility boundaries, and lessons learned from practice.
 
 中文版: [README.md](README.md)
 
