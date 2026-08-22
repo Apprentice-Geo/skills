@@ -19,12 +19,12 @@ def test_chunk_transcript_serializes_probability() -> None:
         elapsed_seconds=1.25,
     )
 
-    assert ASR_PIPELINE_SCHEMA_VERSION == 1
+    assert ASR_PIPELINE_SCHEMA_VERSION == 2
     assert asdict(transcript)["words"][0]["probability"] == 0.9
 
 
 def test_alignment_rejects_word_outside_chunk() -> None:
-    with pytest.raises(AlignmentContractError, match="invalid token time"):
+    with pytest.raises(AlignmentContractError, match="invalid timestamp item"):
         ChunkTranscript(
             chunk_index=0,
             start_sample=0,

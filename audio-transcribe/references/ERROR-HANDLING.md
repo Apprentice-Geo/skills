@@ -82,30 +82,37 @@ The language-identification model is required when `--language` is omitted. If i
 - If Qwen3-ASR dependencies, CUDA, ASR weights, or forced-aligner weights are missing, install or repair Qwen3-ASR before retrying.
 - If a Provider returns an unexpected result shape, inspect the pinned dependency version and the adapter before changing the public artifact schema.
 - Do not store third-party model objects, raw Provider responses, or large internal metadata in public artifacts.
-- Do not rewrite Provider text during inference recovery. Public transcript text remains Provider output.
+- Provider chunk text is not rewritten. At the merged workspace/public boundary, apply NFKC to every language and OpenCC `t2s` only to `zh`.
 
 ## Alignment and Empty Results
 
 - A complete transcription must contain non-empty text and timestamp items.
-- Reject timestamps with negative, non-finite, overlapping, or decreasing times.
+- Provider candidates are quantized to milliseconds before recoverable zero-duration cleanup. A zero-duration item created by quantization is removed together with only its character-owner text; unowned punctuation and whitespace are preserved unless the accepted chunk otherwise becomes empty.
+- A single accepted chunk may be empty and is ignored during merge. If all chunks merge to an empty transcript, stop.
+- Reject timestamps with negative, non-finite, overlapping, decreasing, reversed, or out-of-duration times. Accepted and public items must satisfy `0 <= start < end <= duration` and `start >= previous_end`.
 - Reject empty timestamp item text.
+- Reject non-null probabilities outside `[0, 1]` or any non-finite probability.
 - Reject Qwen3-ASR timestamp items with non-null probability.
 - Preserve punctuation-driven segmentation behavior. If sentence output looks wrong, inspect alignment items and segmentation rules rather than editing published `transcript.json` manually.
 - Do not publish `result_manifest.json` when alignment validation fails.
+- If text normalization fails or normalized text and items no longer align, stop without falling back to unnormalized public text.
+- Do not clip an out-of-range end time to duration or coerce malformed workspace/public fields into strings or floats.
 
 ## Public Artifact Validation
 
 Before using a result, call `audio_transcribe_contract.load_result` with `result_manifest.json`. It validates:
 
-1. schema version is 1 and status is `complete`;
+1. schema version is 1, status is `complete`, and `request.alignment_policy` exactly matches the supported v1 policy;
 2. `audio.id` and `request.variant_id` are 64-character SHA-256 values;
 3. `variant_id` matches the canonical request JSON excluding `variant_id`;
 4. artifact paths are relative to the manifest directory and cannot escape it;
 5. transcript and raw timestamp files exist and match manifest SHA-256 digests;
-6. transcript and raw timestamp schema, identity, Provider, language, duration, and timing contracts are valid;
+6. transcript and raw timestamp schema, exact field shape, identity, Provider, language, duration, probability, and strict timing contracts are valid;
 7. log exists and workspace directory exists.
 
-Relative artifact paths, absolute artifact paths, `..` escapes, wrong schema, non-complete status, digest mismatch, invalid identities, missing logs, or missing workspace make the result unsafe.
+Relative artifact paths, absolute artifact paths, `..` escapes, wrong schema, missing or modified alignment policy, non-complete status, digest mismatch, invalid identities, zero-duration timestamps, missing logs, or missing workspace make the result unsafe. Contract package 0.1.2 validates the policy independently from internal pipeline code.
+
+Public schema remains v1, but results created before `alignment_policy` became required are intentionally incompatible. Do not add the field by hand: it participates in `variant_id`, so retranscribe to produce a new result.
 
 Do not manually repair public JSON. Rerun the command and let the artifact layer validate or recover the result.
 
@@ -113,11 +120,19 @@ Do not manually repair public JSON. Rerun the command and let the artifact layer
 
 If a complete manifest exists, the command first validates it. A valid cache hit returns the existing manifest path and does not rerun inference.
 
+Private ASR caches use schema v2 and are accepted-only. Old-schema, wrong-policy, or malformed chunks are invalidated and recomputed; cache reads strictly revalidate alignment. Do not migrate or hand-edit old cache entries.
+
+When millisecond quantization removes zero-duration items, the log emits one aggregated `WARNING` per affected chunk without transcript text. A partial resume replays one warning for each affected cached chunk so the new attempt remains auditable. A complete manifest hit and an attempt that reuses every chunk cache do not create another cleanup warning.
+
 If public artifacts are missing or corrupted, recovery is allowed only when `workspace/result.json` can rebuild `transcript.json` and `raw_timestamps.json` with exactly the SHA-256 digests recorded in the hidden manifest. Successful recovery restores the original manifest byte-for-byte.
+
+The workspace recovery snapshot already contains normalized text. Recovery revalidates its exact shape and alignment but does not rerun OpenCC or modify Provider chunk caches.
 
 If workspace reconstruction fails or produces different digests, keep the original complete manifest and its last known public artifacts available, report the recovery failure, and retry recovery or transcription on a later run. Do not copy files from another variant or edit digests to match new bytes.
 
 The variant lock protects validation, recovery, inference, and publication from concurrent writers. If a process appears stuck on the lock, inspect running transcription processes before deleting any lock-related file.
+
+During first publication, `.result_manifest.json.incomplete` is only a candidate. The artifact layer validates it through `load_result()` before atomically replacing it with the formal manifest. If candidate validation fails, stop; the candidate is removed and no formal success marker is created. `.result_manifest.json.recovery` is reserved for recovery and must not be treated as a successful result.
 
 ## Logs
 
@@ -143,7 +158,12 @@ Stop without producing or using a transcript when:
 - CPU worker/thread options are invalid or exceed budget;
 - Provider inference fails;
 - alignment validation fails;
+- Provider text cannot be mapped to timestamp items in source order;
+- every accepted chunk is empty after zero-duration cleanup;
 - text or timestamp items are empty;
+- the resolved request lacks the exact supported alignment policy, including when loading an older manifest;
+- workspace or public artifact fields have an invalid type, shape, probability, or out-of-range/zero-duration timestamp;
+- publication candidate validation fails before the formal manifest is installed;
 - public artifact validation fails and recovery cannot reproduce the published digests;
 - no complete `result_manifest.json` validates successfully.
 

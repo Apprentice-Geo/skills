@@ -3,26 +3,29 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import math
-import os
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 import numpy as np
 from audio_transcribe_contract import load_result
 
-from scripts.alignment import AlignmentItem
 from scripts.artifacts import (
     publish_result,
     recover_public_artifacts,
     variant_lock,
     write_workspace_result,
 )
+from scripts.asr.alignment import (
+    ALIGNMENT_POLICY,
+    AlignedTranscript,
+    accept_provider_transcript,
+)
 from scripts.io_utils import canonical_sha256, sha256_file
-from scripts.model_identity import provider_model_identity
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
+from scripts.text_normalization import TEXT_NORMALIZATION_POLICY
 
 # 采样率 16kHz
 SAMPLE_RATE = 16_000
@@ -33,33 +36,13 @@ SUPPORTED_PROVIDERS = ("faster-whisper", "qwen3-asr")
 QWEN3_ASR_LANGUAGES = frozenset(
     {"de", "en", "es", "fr", "it", "ja", "ko", "pt", "ru", "yue", "zh"}
 )
-QWEN3_ASR_LANGUAGE_NAMES = {
-    "de": "German",
-    "en": "English",
-    "es": "Spanish",
-    "fr": "French",
-    "it": "Italian",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "pt": "Portuguese",
-    "ru": "Russian",
-    "yue": "Cantonese",
-    "zh": "Chinese",
-}
-
 logger = get_logger(__name__)
-
-
-@dataclass(frozen=True)
-class EngineResult:
-    text: str
-    items: list[AlignmentItem]
 
 
 class Engine(Protocol):
     def __call__(
         self, samples: Any, request: dict[str, Any], execution: dict[str, Any]
-    ) -> EngineResult: ...
+    ) -> AlignedTranscript: ...
 
 
 def _model_has_weights(directory: Path, pattern: str) -> bool:
@@ -199,190 +182,6 @@ def _select_provider(requested: str | None, language: str) -> str:
     )
 
 
-def _execution_identity(
-    provider: str,
-    *,
-    cpu_threads: int | None,
-    num_workers: int | None,
-) -> dict[str, Any]:
-    if provider == "qwen3-asr":
-        return {
-            "policy": "qwen3-asr-cuda",
-            "batch_size": 4,
-            "batch_isolation": True,
-        }
-    budget = max(1, math.floor((os.cpu_count() or 1) * 0.75))
-    for value, name in ((cpu_threads, "cpu_threads"), (num_workers, "num_workers")):
-        if value is not None and (
-            isinstance(value, bool) or not isinstance(value, int) or value < 1
-        ):
-            raise ValueError(f"{name} must be a positive integer.")
-    workers = num_workers or 1
-    threads = cpu_threads or max(1, budget // workers)
-    if workers * threads > budget:
-        raise ValueError("Whisper worker configuration exceeds the CPU budget.")
-    return {
-        "policy": "whisper-cpu",
-        "cpu_budget": budget,
-        "num_workers": workers,
-        "cpu_threads": threads,
-        "count_strategy": "divisible",
-    }
-
-
-def resolve_request(
-    *,
-    provider: str,
-    language: str,
-    beam_size: int,
-    compute_type: str,
-    execution: dict[str, Any],
-) -> dict[str, Any]:
-    if beam_size < 1:
-        raise ValueError("beam_size must be positive.")
-    model = provider_model_identity(provider)
-    request: dict[str, Any] = {
-        "provider": provider,
-        "language": language,
-        "model": model,
-        "execution_policy": execution,
-        "vad_parameters": {"schema_version": 1, "method": "silero"},
-        "planning_parameters": {
-            "schema_version": 1,
-            "sample_rate": SAMPLE_RATE,
-            "min_chunk_seconds": 30,
-            "max_chunk_seconds": 300,
-        },
-        "segmentation_schema_version": 1,
-    }
-    if provider == "faster-whisper":
-        request.update(
-            {
-                "beam_size": beam_size,
-                "compute_type": compute_type,
-                "device": "cpu",
-                "word_timestamps": True,
-            }
-        )
-    else:
-        request.update(
-            {
-                "device": "cuda:0",
-                "compute_type": "bfloat16",
-                "max_new_tokens": 1024,
-                "return_time_stamps": True,
-            }
-        )
-    return request
-
-
-def _run_faster_whisper(
-    samples: Any, request: dict[str, Any], execution: dict[str, Any]
-) -> EngineResult:
-    try:
-        from faster_whisper import WhisperModel
-    except ImportError as exc:
-        raise RuntimeError("faster-whisper is not installed.") from exc
-    model_path = MODELS_DIR / "faster-whisper-small"
-    if not _model_has_weights(model_path, "model.bin"):
-        raise RuntimeError("The local faster-whisper model is missing.")
-    model = WhisperModel(
-        str(model_path),
-        device="cpu",
-        compute_type=request["compute_type"],
-        cpu_threads=execution["cpu_threads"],
-        num_workers=execution["num_workers"],
-    )
-    raw_segments, _info = model.transcribe(
-        samples,
-        language=request["language"],
-        beam_size=request["beam_size"],
-        vad_filter=True,
-        word_timestamps=True,
-    )
-    segments = list(raw_segments)
-    # Keep Provider text unchanged; public artifacts must not run OpenCC or any
-    # other text normalization.
-    text = "".join(str(getattr(segment, "text", "") or "") for segment in segments)
-    items = [
-        AlignmentItem(
-            text=str(getattr(word, "word", "") or ""),
-            start=round(float(word.start), 3),
-            end=round(float(word.end), 3),
-            probability=(
-                float(probability)
-                if (probability := getattr(word, "probability", None)) is not None
-                else None
-            ),
-        )
-        for segment in segments
-        for word in (getattr(segment, "words", None) or [])
-    ]
-    return EngineResult(text, items)
-
-
-def _run_qwen3_asr(
-    samples: Any, request: dict[str, Any], execution: dict[str, Any]
-) -> EngineResult:
-    try:
-        import torch
-        from qwen_asr import Qwen3ASRModel
-        from transformers import GenerationConfig
-    except ImportError as exc:
-        raise RuntimeError("Qwen3-ASR dependencies are not installed.") from exc
-    if not torch.cuda.is_available():
-        raise RuntimeError("Qwen3-ASR requires an available CUDA GPU.")
-    model_path = MODELS_DIR / "qwen3-asr-0.6b"
-    aligner_path = MODELS_DIR / "qwen3-forcedaligner-0.6b"
-    if not _model_has_weights(
-        model_path, "model*.safetensors"
-    ) or not _model_has_weights(aligner_path, "model*.safetensors"):
-        raise RuntimeError("The local Qwen3-ASR models are missing.")
-    dtype = torch.bfloat16
-    generation_config = GenerationConfig.from_pretrained(
-        str(model_path), temperature=None
-    )
-    model = Qwen3ASRModel.from_pretrained(
-        str(model_path),
-        forced_aligner=str(aligner_path),
-        forced_aligner_kwargs={"dtype": dtype, "device_map": "cuda:0"},
-        dtype=dtype,
-        device_map="cuda:0",
-        max_inference_batch_size=execution["batch_size"],
-        max_new_tokens=request["max_new_tokens"],
-        generation_config=generation_config,
-    )
-    results = model.transcribe(
-        [(samples, SAMPLE_RATE)],
-        language=QWEN3_ASR_LANGUAGE_NAMES[request["language"]],
-        return_time_stamps=True,
-    )
-    if len(results) != 1:
-        raise RuntimeError("Qwen3-ASR returned an unexpected result count.")
-    result = results[0]
-    timestamp_data = getattr(result, "time_stamps", None)
-    items = [
-        AlignmentItem(
-            text=str(getattr(item, "text", "") or ""),
-            start=round(float(item.start_time), 3),
-            end=round(float(item.end_time), 3),
-            probability=None,
-        )
-        for item in list(getattr(timestamp_data, "items", []) or [])
-        if getattr(item, "start_time", None) is not None
-        and getattr(item, "end_time", None) is not None
-    ]
-    return EngineResult(str(getattr(result, "text", "") or ""), items)
-
-
-def _default_engine(
-    samples: Any, request: dict[str, Any], execution: dict[str, Any]
-) -> EngineResult:
-    if request["provider"] == "faster-whisper":
-        return _run_faster_whisper(samples, request, execution)
-    return _run_qwen3_asr(samples, request, execution)
-
-
 def run_transcribe(
     audio_path: Path,
     *,
@@ -396,7 +195,7 @@ def run_transcribe(
     decoder: Callable[[Path], Any] = _decode_audio,
     vad_detector: Callable[[Any], list[tuple[int, int]]] | None = None,
     language_detector: Callable[[Any], str] = _detect_language,
-    engine: Engine = _default_engine,
+    engine: Engine | None = None,
 ) -> Path:
     audio_path = audio_path.resolve()
     if not audio_path.is_file():
@@ -461,6 +260,8 @@ def run_transcribe(
         "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
         "planning_parameters": asdict(policy.planning_parameters),
         "segmentation_schema_version": 1,
+        "text_normalization": TEXT_NORMALIZATION_POLICY,
+        "alignment_policy": dict(ALIGNMENT_POLICY),
     }
     variant_id = canonical_sha256(canonical_request)
     request = {"variant_id": variant_id, **canonical_request}
@@ -494,7 +295,7 @@ def run_transcribe(
             )
             workspace_path = variant_dir / "workspace" / "result.json"
             if not workspace_path.exists():
-                if engine is _default_engine:
+                if engine is None:
                     from scripts.asr.pipeline import run_asr_pipeline
 
                     if provider == "faster-whisper":
@@ -520,11 +321,27 @@ def run_transcribe(
                             prepared_vad=speech_intervals,
                         )
                 else:
-                    result = engine(samples, canonical_request, execution)
+                    candidate = engine(samples, canonical_request, execution)
+                    result, report = accept_provider_transcript(
+                        candidate,
+                        duration=audio["duration"],
+                        chunk_index="whole_audio",
+                        language=resolved_language,
+                    )
+                    if report.dropped_zero_duration_items:
+                        logger.warning(
+                            "ASR timestamp cleanup: provider=%s chunk=whole_audio "
+                            "action=drop_zero_duration_items dropped=%d "
+                            "first_start=%.3f last_end=%.3f",
+                            provider,
+                            report.dropped_zero_duration_items,
+                            report.first_start,
+                            report.last_end,
+                        )
                     write_workspace_result(
                         workspace_path,
                         text=result.text,
-                        items=result.items,
+                        items=list(result.items),
                         duration=audio["duration"],
                         provider=provider,
                         language=resolved_language,

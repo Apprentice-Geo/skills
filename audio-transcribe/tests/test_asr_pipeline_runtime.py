@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from scripts.asr.alignment import TranscriptWord
+from scripts.asr.alignment import AlignmentContractError, TranscriptWord
 from scripts.asr.chunking import (
     ChunkLayout,
     NormalizedAudio,
@@ -18,6 +18,10 @@ from scripts.asr.pipeline import run_asr_pipeline
 from scripts.asr.pipeline_types import ChunkTranscript
 from scripts.process_logging import LoggingSession
 from scripts.utils import read_json, write_json
+
+FAKE_SPLIT = 16_000
+FAKE_SAMPLE_COUNT = 32_000
+CHANGED_SAMPLE_COUNT = 48_000
 
 
 class FakeProvider:
@@ -52,7 +56,7 @@ class FakeProvider:
             layout.start_sample,
             layout.end_sample,
             text,
-            (TranscriptWord(text, 0.0, 0.0001, 0.75),),
+            (TranscriptWord(text, 0.0, layout.sample_count / 16_000, 0.75),),
             {"provider": "fake"},
             0.1,
         )
@@ -60,10 +64,27 @@ class FakeProvider:
     def final_info(self, plan: Any, words_present: bool) -> dict[str, Any]:
         return {"language": self.language, "word_timestamps": words_present}
 
-    def postprocess_segments(
-        self, segments: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        return [{**segment} for segment in segments]
+
+class ZeroDurationProvider(FakeProvider):
+    def transcribe_one(
+        self, prepared: Any, samples: Any, layout: ChunkLayout
+    ) -> ChunkTranscript:
+        if layout.index != 0:
+            return super().transcribe_one(prepared, samples, layout)
+        del prepared, samples
+        self.transcribed_indices.append(layout.index)
+        return ChunkTranscript(
+            layout.index,
+            layout.start_sample,
+            layout.end_sample,
+            "echo echo",
+            (
+                TranscriptWord("echo", 0.1001, 0.1004, 0.9),
+                TranscriptWord("echo", 0.1004, 0.5, 0.8),
+            ),
+            {"provider": "fake"},
+            0.1,
+        )
 
 
 class FakePolicy:
@@ -78,7 +99,9 @@ class FakePolicy:
     ) -> None:
         self.version = version
         self.fail_index = fail_index
-        self.planning_parameters = planning_parameters or PlanningParameters(1, 2)
+        self.planning_parameters = planning_parameters or PlanningParameters(
+            1, FAKE_SAMPLE_COUNT
+        )
         self.layout_from_speech = layout_from_speech
 
     def execution_identity(self, sample_count: int) -> dict[str, Any]:
@@ -88,15 +111,15 @@ class FakePolicy:
         self, sample_count: int, speech: Any, identity: Any
     ) -> tuple[ChunkLayout, ...]:
         del identity
-        assert sample_count == 4
-        if self.layout_from_speech and speech == [(0, 1)]:
+        assert sample_count == FAKE_SAMPLE_COUNT
+        if self.layout_from_speech and speech == [(0, 8_000)]:
             return (
-                ChunkLayout(0, 0, 1, "silence", 1),
-                ChunkLayout(1, 1, 4, "audio_end", 0),
+                ChunkLayout(0, 0, 8_000, "silence", 8_000),
+                ChunkLayout(1, 8_000, FAKE_SAMPLE_COUNT, "audio_end", 0),
             )
         return (
-            ChunkLayout(0, 0, 2, "silence", 1),
-            ChunkLayout(1, 2, 4, "audio_end", 1),
+            ChunkLayout(0, 0, FAKE_SPLIT, "silence", 1),
+            ChunkLayout(1, FAKE_SPLIT, FAKE_SAMPLE_COUNT, "audio_end", 1),
         )
 
     def execute(
@@ -114,7 +137,7 @@ class FakePolicy:
 
 @pytest.fixture
 def fake_audio(monkeypatch):
-    audio = NormalizedAudio(np.zeros(4, dtype=np.float32))
+    audio = NormalizedAudio(np.zeros(FAKE_SAMPLE_COUNT, dtype=np.float32))
     decode = SimpleNamespace(calls=0)
 
     def load(_path: Path) -> NormalizedAudio:
@@ -123,7 +146,8 @@ def fake_audio(monkeypatch):
 
     monkeypatch.setattr("scripts.asr.pipeline.decode_normalized_audio", load)
     monkeypatch.setattr(
-        "scripts.asr.pipeline.detect_speech_samples", lambda *_: [(0, 4)]
+        "scripts.asr.pipeline.detect_speech_samples",
+        lambda *_: [(0, FAKE_SAMPLE_COUNT)],
     )
     return decode
 
@@ -136,17 +160,23 @@ def test_pipeline_writes_unified_artifacts_and_replays_without_decode(
     workspace = workspace_tmp_path / "asr"
     provider = FakeProvider()
 
-    info, segments, source = run_asr_pipeline(
-        audio_path, workspace, provider, FakePolicy()
-    )
+    info, source = run_asr_pipeline(audio_path, workspace, provider, FakePolicy())
 
     assert (workspace / "asr_plan.json").is_file()
     assert (workspace / "vad_result.json").is_file()
     assert (workspace / "progress.json").is_file()
     assert (workspace / "metrics.json").is_file()
-    assert read_json(workspace / "result.json")["words"][1]["start"] == pytest.approx(
-        0.0, abs=0.001
-    )
+    result = read_json(workspace / "result.json")
+    assert set(result) == {
+        "schema_version",
+        "text",
+        "items",
+        "duration",
+        "provider",
+        "language",
+    }
+    assert result["items"][1]["start"] == pytest.approx(1.0, abs=0.001)
+    assert result["text"] == "one two"
     assert (
         read_json(workspace / "chunk_results" / "chunk_000.json")["words"][0][
             "probability"
@@ -154,8 +184,8 @@ def test_pipeline_writes_unified_artifacts_and_replays_without_decode(
         == 0.75
     )
     assert info["word_timestamps"] is True
-    assert "".join(segment["text"] for segment in segments).replace(" ", "") == "onetwo"
     assert source == "fake-asr"
+    assert "segment_count" not in read_json(workspace / "metrics.json")
     assert fake_audio.calls == 1
     assert provider.prepare_calls == 1
 
@@ -180,7 +210,9 @@ def test_identity_change_invalidates_cache(
     policy = FakePolicy(
         2 if change == "execution" else 1,
         planning_parameters=(
-            PlanningParameters(1, 3) if change == "planning" else None
+            PlanningParameters(1, CHANGED_SAMPLE_COUNT)
+            if change == "planning"
+            else None
         ),
     )
     if change == "vad":
@@ -229,30 +261,35 @@ def test_old_schema_is_rejected_and_rebuilt(
     run_asr_pipeline(audio_path, workspace, FakeProvider(), FakePolicy())
 
     assert fake_audio.calls == 2
-    assert read_json(workspace / "asr_plan.json")["schema_version"] == 1
+    assert read_json(workspace / "asr_plan.json")["schema_version"] == 2
 
 
-def test_corrupt_merged_result_is_rebuilt_from_chunks_without_decode(
-    workspace_tmp_path: Path, fake_audio, monkeypatch
+@pytest.mark.parametrize("remove", [False, True])
+def test_result_is_rebuilt_from_chunks_without_decode_or_provider(
+    workspace_tmp_path: Path, fake_audio, monkeypatch, remove: bool
 ) -> None:
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr"
     run_asr_pipeline(audio_path, workspace, FakeProvider(), FakePolicy())
-    result = read_json(workspace / "result.json")
-    result["segments"][0]["text"] = "corrupt"
-    write_json(workspace / "result.json", result)
+    result_path = workspace / "result.json"
+    if remove:
+        result_path.unlink()
+    else:
+        result = read_json(result_path)
+        result["items"][0]["text"] = "corrupt"
+        write_json(result_path, result)
     monkeypatch.setattr(
         "scripts.asr.pipeline.decode_normalized_audio",
         lambda _path: pytest.fail("audio decoded while rebuilding merged result"),
     )
 
-    _info, segments, _source = run_asr_pipeline(
-        audio_path, workspace, FakeProvider(), FakePolicy()
-    )
+    provider = FakeProvider()
+    run_asr_pipeline(audio_path, workspace, provider, FakePolicy())
 
-    assert "".join(item["text"] for item in segments).replace(" ", "") == "onetwo"
-    assert "corrupt" not in str(read_json(workspace / "result.json")["segments"])
+    assert read_json(result_path)["text"] == "one two"
+    assert "corrupt" not in str(read_json(result_path)["items"])
+    assert provider.prepare_calls == 0
 
 
 def test_missing_vad_is_regenerated_without_loading_model_when_layout_is_unchanged(
@@ -266,7 +303,7 @@ def test_missing_vad_is_regenerated_without_loading_model_when_layout_is_unchang
     vad_calls = []
     monkeypatch.setattr(
         "scripts.asr.pipeline.detect_speech_samples",
-        lambda *_args: vad_calls.append(1) or [(0, 4)],
+        lambda *_args: vad_calls.append(1) or [(0, FAKE_SAMPLE_COUNT)],
     )
     provider = FakeProvider()
     caplog.set_level("WARNING")
@@ -288,7 +325,9 @@ def test_missing_vad_is_regenerated_without_loading_model_when_layout_is_unchang
         ),
         (
             lambda payload: payload.update(
-                speech_intervals=[{"start_sample": True, "end_sample": 4}]
+                speech_intervals=[
+                    {"start_sample": True, "end_sample": FAKE_SAMPLE_COUNT}
+                ]
             ),
             "invalid_structure",
         ),
@@ -313,7 +352,7 @@ def test_invalid_vad_reason_is_logged_and_artifact_is_repaired(
     vad_calls = []
     monkeypatch.setattr(
         "scripts.asr.pipeline.detect_speech_samples",
-        lambda *_args: vad_calls.append(1) or [(0, 4)],
+        lambda *_args: vad_calls.append(1) or [(0, FAKE_SAMPLE_COUNT)],
     )
     caplog.set_level("WARNING")
 
@@ -331,13 +370,13 @@ def test_regenerated_vad_layout_change_invalidates_all_chunk_results(
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr"
     policy = FakePolicy(
-        planning_parameters=PlanningParameters(1, 3),
+        planning_parameters=PlanningParameters(1, FAKE_SAMPLE_COUNT),
         layout_from_speech=True,
     )
     run_asr_pipeline(audio_path, workspace, FakeProvider(), policy)
     (workspace / "vad_result.json").unlink()
     monkeypatch.setattr(
-        "scripts.asr.pipeline.detect_speech_samples", lambda *_: [(0, 1)]
+        "scripts.asr.pipeline.detect_speech_samples", lambda *_: [(0, 8_000)]
     )
     provider = FakeProvider()
 
@@ -346,8 +385,8 @@ def test_regenerated_vad_layout_change_invalidates_all_chunk_results(
     assert provider.transcribed_indices == [0, 1]
     chunks = read_json(workspace / "asr_plan.json")["chunks"]
     assert [(chunk["start_sample"], chunk["end_sample"]) for chunk in chunks] == [
-        (0, 1),
-        (1, 4),
+        (0, 8_000),
+        (8_000, FAKE_SAMPLE_COUNT),
     ]
 
 
@@ -357,11 +396,11 @@ def test_valid_vad_layout_mismatch_rebuilds_plan_and_rejects_old_results(
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr"
-    policy = FakePolicy(planning_parameters=PlanningParameters(1, 3))
+    policy = FakePolicy(planning_parameters=PlanningParameters(1, FAKE_SAMPLE_COUNT))
     run_asr_pipeline(audio_path, workspace, FakeProvider(), policy)
     plan = read_json(workspace / "asr_plan.json")
-    plan["chunks"][0].update(end_sample=1)
-    plan["chunks"][1].update(start_sample=1)
+    plan["chunks"][0].update(end_sample=8_000)
+    plan["chunks"][1].update(start_sample=8_000)
     write_json(workspace / "asr_plan.json", plan)
     provider = FakeProvider()
 
@@ -370,8 +409,8 @@ def test_valid_vad_layout_mismatch_rebuilds_plan_and_rejects_old_results(
     assert provider.transcribed_indices == [0, 1]
     chunks = read_json(workspace / "asr_plan.json")["chunks"]
     assert [(chunk["start_sample"], chunk["end_sample"]) for chunk in chunks] == [
-        (0, 2),
-        (2, 4),
+        (0, FAKE_SPLIT),
+        (FAKE_SPLIT, FAKE_SAMPLE_COUNT),
     ]
 
 
@@ -394,33 +433,171 @@ def test_partial_cache_with_valid_vad_does_not_repeat_vad(
     assert provider.transcribed_indices == [1]
 
 
+def test_cleanup_report_is_cached_and_replayed_only_for_partial_resume(
+    workspace_tmp_path: Path, fake_audio
+) -> None:
+    class DuplicateCallbackPolicy(FakePolicy):
+        def execute(self, provider, audio, pending, identity, cache):
+            model = provider.prepare(identity)
+            for layout in pending:
+                transcript = provider.transcribe_one(model, audio.slice(layout), layout)
+                cache(transcript)
+                if layout.index == 0:
+                    cache(transcript)
+            return {}
+
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr"
+    first_log = workspace_tmp_path / "first.log"
+
+    with LoggingSession(first_log):
+        run_asr_pipeline(
+            audio_path,
+            workspace,
+            ZeroDurationProvider(),
+            DuplicateCallbackPolicy(),
+        )
+
+    warning = "ASR timestamp cleanup: provider=fake chunk=chunk_000"
+    assert first_log.read_text(encoding="utf-8").count(warning) == 1
+    payload = read_json(workspace / "chunk_results" / "chunk_000.json")
+    assert payload["text"] == " echo"
+    assert payload["cleanup_report"] == {
+        "dropped_zero_duration_items": 1,
+        "first_start": 0.1,
+        "last_end": 0.1,
+    }
+    assert "echo" not in str(payload["cleanup_report"])
+
+    (workspace / "chunk_results" / "chunk_001.json").unlink()
+    partial_log = workspace_tmp_path / "partial.log"
+    with LoggingSession(partial_log):
+        run_asr_pipeline(audio_path, workspace, ZeroDurationProvider(), FakePolicy())
+
+    assert partial_log.read_text(encoding="utf-8").count(warning) == 1
+
+    complete_log = workspace_tmp_path / "complete.log"
+    with LoggingSession(complete_log):
+        run_asr_pipeline(audio_path, workspace, ZeroDurationProvider(), FakePolicy())
+
+    assert warning not in complete_log.read_text(encoding="utf-8")
+
+
+def test_rejected_provider_candidate_is_not_written_to_chunk_cache(
+    workspace_tmp_path: Path, fake_audio
+) -> None:
+    class InvalidProvider(FakeProvider):
+        def transcribe_one(self, prepared, samples, layout):
+            transcript = super().transcribe_one(prepared, samples, layout)
+            return ChunkTranscript(
+                transcript.chunk_index,
+                transcript.start_sample,
+                transcript.end_sample,
+                transcript.text,
+                (TranscriptWord(transcript.text, -0.1, 0.5, 0.75),),
+                transcript.provider_metadata,
+                transcript.elapsed_seconds,
+            )
+
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr"
+
+    with pytest.raises(AlignmentContractError, match="invalid provider timestamp"):
+        run_asr_pipeline(audio_path, workspace, InvalidProvider(), FakePolicy())
+
+    assert not (workspace / "chunk_results" / "chunk_000.json").exists()
+
+
+def test_merge_ignores_empty_accepted_chunks(
+    workspace_tmp_path: Path, fake_audio
+) -> None:
+    class EmptyFirstProvider(FakeProvider):
+        def transcribe_one(self, prepared, samples, layout):
+            if layout.index == 0:
+                return ChunkTranscript(
+                    layout.index,
+                    layout.start_sample,
+                    layout.end_sample,
+                    "",
+                    (),
+                    {},
+                    0.1,
+                )
+            return super().transcribe_one(prepared, samples, layout)
+
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr"
+
+    run_asr_pipeline(audio_path, workspace, EmptyFirstProvider(), FakePolicy())
+
+    result = read_json(workspace / "result.json")
+    assert result["text"] == "two"
+    assert result["items"][0]["start"] == 1.0
+
+
+def test_merge_rejects_transcription_when_every_chunk_is_empty(
+    workspace_tmp_path: Path, fake_audio
+) -> None:
+    class EmptyProvider(FakeProvider):
+        def transcribe_one(self, _prepared, _samples, layout):
+            return ChunkTranscript(
+                layout.index,
+                layout.start_sample,
+                layout.end_sample,
+                "",
+                (),
+                {},
+                0.1,
+            )
+
+    audio_path = workspace_tmp_path / "audio.m4a"
+    audio_path.write_bytes(b"audio")
+    workspace = workspace_tmp_path / "asr"
+
+    with pytest.raises(RuntimeError, match="must contain text and timestamps"):
+        run_asr_pipeline(audio_path, workspace, EmptyProvider(), FakePolicy())
+
+    assert not (workspace / "result.json").exists()
+
+
 def test_decoded_sample_count_change_reruns_vad_and_invalidates_results(
     workspace_tmp_path: Path, fake_audio, monkeypatch
 ) -> None:
     class FlexiblePolicy(FakePolicy):
         def layouts(self, sample_count, speech, identity):
             del speech, identity
-            if sample_count == 5:
+            if sample_count == CHANGED_SAMPLE_COUNT:
                 return (
-                    ChunkLayout(0, 0, 2, "silence", 2),
-                    ChunkLayout(1, 2, 5, "audio_end", 3),
+                    ChunkLayout(0, 0, FAKE_SPLIT, "silence", FAKE_SPLIT),
+                    ChunkLayout(
+                        1,
+                        FAKE_SPLIT,
+                        CHANGED_SAMPLE_COUNT,
+                        "audio_end",
+                        CHANGED_SAMPLE_COUNT - FAKE_SPLIT,
+                    ),
                 )
             return super().layouts(sample_count, [], {})
 
     audio_path = workspace_tmp_path / "audio.m4a"
     audio_path.write_bytes(b"audio")
     workspace = workspace_tmp_path / "asr"
-    policy = FlexiblePolicy(planning_parameters=PlanningParameters(1, 3))
+    policy = FlexiblePolicy(
+        planning_parameters=PlanningParameters(1, CHANGED_SAMPLE_COUNT)
+    )
     run_asr_pipeline(audio_path, workspace, FakeProvider(), policy)
     (workspace / "chunk_results" / "chunk_001.json").unlink()
     monkeypatch.setattr(
         "scripts.asr.pipeline.decode_normalized_audio",
-        lambda _path: NormalizedAudio(np.zeros(5, dtype=np.float32)),
+        lambda _path: NormalizedAudio(np.zeros(CHANGED_SAMPLE_COUNT, dtype=np.float32)),
     )
     vad_calls = []
     monkeypatch.setattr(
         "scripts.asr.pipeline.detect_speech_samples",
-        lambda *_args: vad_calls.append(1) or [(0, 5)],
+        lambda *_args: vad_calls.append(1) or [(0, CHANGED_SAMPLE_COUNT)],
     )
     provider = FakeProvider()
 
@@ -428,7 +605,10 @@ def test_decoded_sample_count_change_reruns_vad_and_invalidates_results(
 
     assert vad_calls == [1]
     assert provider.transcribed_indices == [0, 1]
-    assert read_json(workspace / "asr_plan.json")["source"]["sample_count"] == 5
+    assert (
+        read_json(workspace / "asr_plan.json")["source"]["sample_count"]
+        == CHANGED_SAMPLE_COUNT
+    )
 
 
 def test_failure_keeps_successful_chunks_and_does_not_write_result(
@@ -511,12 +691,14 @@ def test_pipeline_logs_safe_stage_context_without_transcript_text(
     )
     assert "ASR plan cache: status=miss" in log_text
     assert "ASR audio decode: start" in log_text
-    assert "ASR audio decode: complete samples=4" in log_text
-    assert "ASR VAD: complete intervals=1 speech_samples=4" in log_text
+    assert f"ASR audio decode: complete samples={FAKE_SAMPLE_COUNT}" in log_text
+    assert (
+        f"ASR VAD: complete intervals=1 speech_samples={FAKE_SAMPLE_COUNT}" in log_text
+    )
     assert "ASR plan: status=created chunks=2" in log_text
     assert "[Transcribe] cache: reused=0, pending=2, total=2" in log_text
     assert "ASR execution: start provider=fake policy=fake pending=2" in log_text
-    assert "ASR merge: complete chunks=2 segments=" in log_text
+    assert "ASR merge: complete chunks=2 source=execution" in log_text
     assert "ASR pipeline success: provider=fake policy=fake" in log_text
     assert "one" not in log_text
     assert "two" not in log_text

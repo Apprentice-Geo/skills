@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from scripts.asr.alignment import AlignmentContractError, TranscriptWord
+from scripts.asr.alignment import AlignmentContractError, CleanupReport, TranscriptWord
 from scripts.asr.chunking import VadParameters
 from scripts.asr.pipeline_types import (
     ASR_PIPELINE_SCHEMA_VERSION,
@@ -140,7 +140,6 @@ def load_valid_vad_result(
 
 
 def chunk_payload(plan: AsrPipelinePlan, transcript: ChunkTranscript) -> dict[str, Any]:
-    transcript.validate(language=str(plan.provider_request["language"]))
     return {
         "schema_version": ASR_PIPELINE_SCHEMA_VERSION,
         "plan": plan.to_dict(),
@@ -164,6 +163,7 @@ def transcript_from_payload(data: Any, plan: AsrPipelinePlan) -> ChunkTranscript
             words=tuple(TranscriptWord(**word) for word in data["words"]),
             provider_metadata=dict(data["provider_metadata"]),
             elapsed_seconds=float(data["elapsed_seconds"]),
+            cleanup_report=CleanupReport(**data["cleanup_report"]),
         )
         layout = plan.chunks[transcript.chunk_index]
         if (

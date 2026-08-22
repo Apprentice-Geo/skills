@@ -10,6 +10,12 @@ from ._types import RawTimestamps, Transcript, _Provider
 
 _SHA256_LENGTH = 64
 _PROVIDERS = {"faster-whisper", "qwen3-asr"}
+_ALIGNMENT_POLICY = {
+    "schema_version": 1,
+    "timestamp_resolution_ms": 1,
+    "zero_duration": "drop_item_and_owned_text",
+    "ordering": "strict",
+}
 
 
 class ResultValidationError(ValueError):
@@ -160,6 +166,8 @@ def _validate_manifest(
         raise ResultValidationError("Invalid request.provider.")
     if not isinstance(language, str) or not language:
         raise ResultValidationError("request.language must be a non-empty string.")
+    if request.get("alignment_policy") != _ALIGNMENT_POLICY:
+        raise ResultValidationError("Invalid request.alignment_policy.")
     canonical_request = {
         key: value for key, value in request.items() if key != "variant_id"
     }
@@ -250,9 +258,9 @@ def _validate_raw_timestamps(
                 raise ResultValidationError(
                     "timestamp.probability must be between zero and one."
                 )
-        if start < previous_end or end < start or end > duration:
+        if start < previous_end or end <= start or end > duration:
             raise ResultValidationError(
-                "Raw timestamp times must be monotonic and within duration."
+                "Raw timestamp times must satisfy 0 <= start < end <= duration."
             )
         if provider == "qwen3-asr" and probability is not None:
             raise ResultValidationError(

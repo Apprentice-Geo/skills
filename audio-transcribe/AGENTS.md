@@ -57,6 +57,19 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 uv run --no-sync python -m scripts.transcribe ".\audio.m4a"
 ```
 
+首次准备 benchmark 数据并固定来源摘要：
+
+```powershell
+uv run --no-sync python -m benchmark.prepare_audio --pin-sha256
+```
+
+运行完整或筛选后的 benchmark：
+
+```powershell
+uv run --no-sync python -m scripts.benchmark
+uv run --no-sync python -m scripts.benchmark --provider faster-whisper --language zh --minutes 8
+```
+
 提交前运行检查：
 
 ```powershell
@@ -78,6 +91,7 @@ uv run pytest
 uv run pytest tests/test_public_artifacts.py
 uv run pytest tests/test_cli_output.py tests/test_asr_workspace.py
 uv run pytest tests/test_asr_pipeline.py tests/test_asr_pipeline_runtime.py
+uv run pytest tests/test_benchmark.py tests/test_cli_output.py
 ```
 
 真实转写依赖本地模型、CUDA 条件和输入音频。除非任务明确要求端到端验证，否则先使用常规单元测试和模拟边界完成验证。

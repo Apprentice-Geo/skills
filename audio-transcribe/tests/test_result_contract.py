@@ -55,6 +55,12 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     request = {
         "provider": provider,
         "language": "zh",
+        "alignment_policy": {
+            "schema_version": 1,
+            "timestamp_resolution_ms": 1,
+            "zero_duration": "drop_item_and_owned_text",
+            "ordering": "strict",
+        },
         "provider_identity": {"model": "test"},
         "execution_policy": {
             "policy": "qwen3-asr-cuda" if provider == "qwen3-asr" else "whisper-cpu"
@@ -172,13 +178,19 @@ def test_public_typed_dict_key_boundaries() -> None:
     }
 
     request = get_type_hints(ResultManifest)["request"]
-    assert request.__required_keys__ == {"variant_id", "provider", "language"}
+    assert request.__required_keys__ == {
+        "variant_id",
+        "provider",
+        "language",
+        "alignment_policy",
+    }
     assert request.__optional_keys__ == {
         "provider_identity",
         "execution_policy",
         "vad_parameters",
         "planning_parameters",
         "segmentation_schema_version",
+        "text_normalization",
     }
 
 
@@ -281,6 +293,10 @@ def test_manifest_must_be_a_file(workspace_tmp_path: Path) -> None:
         lambda value: value["audio"].__setitem__("duration", math.inf),
         lambda value: value["request"].__setitem__("provider", "qwen3"),
         lambda value: value["request"].__setitem__("language", ""),
+        lambda value: value["request"].pop("alignment_policy"),
+        lambda value: value["request"]["alignment_policy"].__setitem__(
+            "ordering", "relaxed"
+        ),
         lambda value: value["request"].__setitem__("variant_id", "b" * 64),
         lambda value: value["artifact_sha256"].__setitem__("transcript", "0" * 63),
     ],
@@ -292,6 +308,28 @@ def test_manifest_schema_and_identity_are_strict(
     _rewrite_manifest(manifest_path, mutate)
 
     with pytest.raises(ResultValidationError):
+        load_result(manifest_path)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda request: request.pop("alignment_policy"),
+        lambda request: request["alignment_policy"].__setitem__(
+            "zero_duration", "keep"
+        ),
+    ],
+)
+def test_alignment_policy_is_required_and_exact(
+    workspace_tmp_path: Path, mutate: Callable[[dict[str, Any]], None]
+) -> None:
+    manifest_path = _write_result(workspace_tmp_path / "alignment-policy")
+    _rewrite_manifest(
+        manifest_path,
+        lambda manifest: mutate(manifest["request"]),
+    )
+
+    with pytest.raises(ResultValidationError, match="alignment_policy"):
         load_result(manifest_path)
 
 
@@ -431,6 +469,7 @@ def test_transcript_segment_contract(
         [{"text": "x", "start": True, "end": 0.5, "probability": None}],
         [{"text": "x", "start": 0.0, "end": 1.1, "probability": None}],
         [{"text": "x", "start": 0.6, "end": 0.5, "probability": None}],
+        [{"text": "x", "start": 0.5, "end": 0.5, "probability": None}],
         [
             {"text": "x", "start": 0.0, "end": 0.6, "probability": None},
             {"text": "y", "start": 0.5, "end": 0.8, "probability": None},

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,15 +9,24 @@ from typing import Any, Generator
 
 from audio_transcribe_contract import ResultValidationError, load_result
 
-from scripts.alignment import AlignmentItem, build_sentence_segments, validate_alignment
+from scripts.asr.alignment import (
+    AlignedTranscript,
+    AlignmentContractError,
+    AlignmentItem,
+    project_normalized_text,
+    validate_alignment,
+)
+from scripts.asr.segmentation import build_sentence_segments
 from scripts.io_utils import (
     read_json,
     sha256_file,
     write_json_atomic,
 )
+from scripts.text_normalization import normalize_transcript_text
 
 PUBLIC_SCHEMA_VERSION = 1
 WORKSPACE_SCHEMA_VERSION = 1
+
 
 # @contextmanager 让这个函数可以配合 with 使用
 @contextmanager
@@ -35,15 +46,17 @@ def variant_lock(variant_dir: Path) -> Generator[None, None, None]:
         stream.seek(0)
         if os.name == "nt":
             import msvcrt
+
             # Windows
             msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
         else:
             import fcntl
+
             # Unix
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         locked = True
         # 在 yield 之前设置排他锁
-        yield # 在此处执行 with 中的代码
+        yield  # 在此处执行 with 中的代码
         # 完成 with 中的代码后继续
     finally:
         # 只有在确认加锁才执行解锁代码
@@ -86,16 +99,22 @@ def write_workspace_result(
     provider: str,
     language: str,
 ) -> None:
-    validate_alignment(text, items, duration)
+    alignment = AlignedTranscript(text, tuple(items))
     if not text.strip() or not items:
         raise ResultValidationError(
             "A complete transcription must contain text and timestamps."
         )
+    alignment = project_normalized_text(
+        alignment,
+        normalize_transcript_text(text, language),
+        language=language,
+    )
+    validate_alignment(alignment, duration, language=language)
     write_json_atomic(
         workspace_path,
         {
             "schema_version": WORKSPACE_SCHEMA_VERSION,
-            "text": text,
+            "text": alignment.text,
             "items": [
                 {
                     "text": item.text,
@@ -103,7 +122,7 @@ def write_workspace_result(
                     "end": item.end,
                     "probability": item.probability,
                 }
-                for item in items
+                for item in alignment.items
             ],
             "duration": duration,
             "provider": provider,
@@ -112,27 +131,114 @@ def write_workspace_result(
     )
 
 
-def _public_payloads(
-    workspace_path: Path, *, audio_id: str, variant_id: str
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    workspace = read_json(workspace_path)
+def _workspace_alignment(
+    workspace_path: Path,
+    *,
+    expected_provider: Any,
+    expected_language: Any,
+    expected_duration: Any,
+) -> tuple[AlignedTranscript, float, str, str]:
+    try:
+        workspace = read_json(workspace_path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise ResultValidationError("Invalid workspace result.") from None
+    expected_keys = {
+        "schema_version",
+        "text",
+        "items",
+        "duration",
+        "provider",
+        "language",
+    }
     if (
         not isinstance(workspace, dict)
-        or workspace.get("schema_version") != WORKSPACE_SCHEMA_VERSION
+        or set(workspace) != expected_keys
+        or type(workspace.get("schema_version")) is not int
+        or workspace["schema_version"] != WORKSPACE_SCHEMA_VERSION
+        or not isinstance(workspace["text"], str)
+        or not workspace["text"].strip()
+        or not isinstance(workspace["items"], list)
+        or not workspace["items"]
+        or isinstance(workspace["duration"], bool)
+        or not isinstance(workspace["duration"], (int, float))
+        or not math.isfinite(workspace["duration"])
+        or workspace["duration"] <= 0
+        or workspace["duration"] != expected_duration
+        or not isinstance(workspace["provider"], str)
+        or workspace["provider"] not in {"faster-whisper", "qwen3-asr"}
+        or workspace["provider"] != expected_provider
+        or not isinstance(workspace["language"], str)
+        or not workspace["language"]
+        or workspace["language"] != expected_language
     ):
         raise ResultValidationError("Invalid workspace result.")
-    raw_items = workspace.get("items")
+    items: list[AlignmentItem] = []
+    for raw_item in workspace["items"]:
+        if (
+            not isinstance(raw_item, dict)
+            or set(raw_item) != {"text", "start", "end", "probability"}
+            or not isinstance(raw_item["text"], str)
+            or not raw_item["text"]
+            or any(
+                isinstance(raw_item[field], bool)
+                or not isinstance(raw_item[field], (int, float))
+                for field in ("start", "end")
+            )
+            or (
+                raw_item["probability"] is not None
+                and (
+                    isinstance(raw_item["probability"], bool)
+                    or not isinstance(raw_item["probability"], (int, float))
+                )
+            )
+            or (
+                workspace["provider"] == "qwen3-asr"
+                and raw_item["probability"] is not None
+            )
+        ):
+            raise ResultValidationError("Invalid workspace result.")
+        items.append(
+            AlignmentItem(
+                raw_item["text"],
+                raw_item["start"],
+                raw_item["end"],
+                raw_item["probability"],
+            )
+        )
+    alignment = AlignedTranscript(workspace["text"], tuple(items))
     try:
-        if not isinstance(raw_items, list):
-            raise TypeError("timestamp items must be an array")
-        items = [AlignmentItem(**item) for item in raw_items]
-        duration = float(workspace["duration"])
-        provider = str(workspace["provider"])
-        language = str(workspace["language"])
-        text = str(workspace["text"])
-    except (KeyError, TypeError, ValueError):
+        validate_alignment(
+            alignment,
+            workspace["duration"],
+            language=workspace["language"],
+        )
+    except (AlignmentContractError, TypeError, ValueError):
         raise ResultValidationError("Invalid workspace result.") from None
-    segments = build_sentence_segments(text, items, duration)
+    return (
+        alignment,
+        workspace["duration"],
+        workspace["provider"],
+        workspace["language"],
+    )
+
+
+def _public_payloads(
+    workspace_path: Path,
+    *,
+    audio_id: str,
+    variant_id: str,
+    provider: Any,
+    language: Any,
+    duration: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    alignment, duration, provider, language = _workspace_alignment(
+        workspace_path,
+        expected_provider=provider,
+        expected_language=language,
+        expected_duration=duration,
+    )
+    items = list(alignment.items)
+    segments = build_sentence_segments(alignment, language=language)
     transcript = {
         "schema_version": PUBLIC_SCHEMA_VERSION,
         "audio_id": audio_id,
@@ -152,8 +258,8 @@ def _public_payloads(
         "items": [
             {
                 "text": item.text,
-                "start": min(item.start, duration),
-                "end": min(item.end, duration),
+                "start": item.start,
+                "end": item.end,
                 "probability": item.probability,
             }
             for item in items
@@ -170,10 +276,17 @@ def publish_result(
     workspace_relative: str = "workspace/result.json",
 ) -> Path:
     manifest_path = variant_dir / "result_manifest.json"
+    if manifest_path.exists():
+        raise ResultValidationError("A complete result manifest already exists.")
     variant_id = request["variant_id"]
     workspace_path = _resolve_artifact_path(manifest_path, workspace_relative)
     transcript, raw = _public_payloads(
-        workspace_path, audio_id=audio["id"], variant_id=variant_id
+        workspace_path,
+        audio_id=audio["id"],
+        variant_id=variant_id,
+        provider=request.get("provider"),
+        language=request.get("language"),
+        duration=audio.get("duration"),
     )
     transcript_path = variant_dir / "transcript.json"
     raw_path = variant_dir / "raw_timestamps.json"
@@ -195,16 +308,21 @@ def publish_result(
             "raw_timestamps": sha256_file(raw_path),
         },
     }
-    # The manifest is the success entry and is therefore published last.
-    write_json_atomic(manifest_path, manifest)
-    load_result(manifest_path)
+    candidate_path = variant_dir / ".result_manifest.json.incomplete"
+    try:
+        write_json_atomic(candidate_path, manifest)
+        load_result(candidate_path)
+        os.replace(candidate_path, manifest_path)
+    except Exception:
+        candidate_path.unlink(missing_ok=True)
+        raise
     return manifest_path
 
 
 def recover_public_artifacts(manifest_path: Path) -> dict[str, Any]:
     """Repair public files only when workspace bytes reproduce published digests."""
     original_bytes = manifest_path.read_bytes()
-    hidden_path = manifest_path.with_name(f".{manifest_path.name}.incomplete")
+    hidden_path = manifest_path.with_name(f".{manifest_path.name}.recovery")
     os.replace(manifest_path, hidden_path)
     try:
         original = read_json(hidden_path)
@@ -218,6 +336,9 @@ def recover_public_artifacts(manifest_path: Path) -> dict[str, Any]:
             workspace_path,
             audio_id=audio["id"],
             variant_id=request["variant_id"],
+            provider=request.get("provider"),
+            language=request.get("language"),
+            duration=audio.get("duration"),
         )
         transcript_path = _resolve_artifact_path(
             manifest_path, original["artifacts"]["transcript"]

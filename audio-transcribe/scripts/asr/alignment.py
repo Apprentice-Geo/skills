@@ -4,44 +4,55 @@ import math
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from difflib import SequenceMatcher
+from typing import Any, Final
 
-"""
-合并结果是以标点符号分隔的句子
-使用方可以自行合并为需要的粒度
-"""
-
-# 分隔标点符号
-PUNCTUATION = set("，,；;。.!！？?")
-# 时间容差
-_TIME_EPSILON = 0.001
+PUNCTUATION: Final = frozenset("，,；;。.!！？?")
+ALIGNMENT_POLICY: Final = {
+    "schema_version": 1,
+    "timestamp_resolution_ms": 1,
+    "zero_duration": "drop_item_and_owned_text",
+    "ordering": "strict",
+}
 
 
 class AlignmentContractError(RuntimeError):
-    """Provider text and word timestamps violate strict source mapping."""
+    """Provider text and timestamp items violate the alignment contract."""
 
 
 @dataclass(frozen=True)
-class TranscriptWord:
+class AlignmentItem:
     text: str
     start: float
     end: float
     probability: float | None = None
 
 
-AlignmentItem = TranscriptWord
+@dataclass(frozen=True)
+class AlignedTranscript:
+    text: str
+    items: tuple[AlignmentItem, ...]
 
 
-def _to_float(value: Any) -> float:
+@dataclass(frozen=True)
+class CleanupReport:
+    dropped_zero_duration_items: int = 0
+    first_start: float | None = None
+    last_end: float | None = None
+
+
+# Transitional aliases for pipeline callers. There is only one item definition.
+TranscriptWord = AlignmentItem
+
+
+def quantize_timestamp(value: Any) -> float:
     return round(float(value), 3)
 
 
+_to_float = quantize_timestamp
+
+
 def _is_skippable_source_character(char: str) -> bool:
-    """
-    判断是否是以下两种字符
-    空格、换行、制表符等空白
-    Unicode 分类为标点的字符
-    """
     return char.isspace() or unicodedata.category(char).startswith("P")
 
 
@@ -49,80 +60,69 @@ def _contract_error(
     *,
     chunk_index: int | str,
     language: str,
-    token_index: int,
+    item_index: int,
     expected: Any,
     actual: Any,
     reason: str,
 ) -> AlignmentContractError:
     return AlignmentContractError(
         "ASR alignment contract mismatch: "
-        f"chunk={chunk_index}, language={language}, token_index={token_index}, "
+        f"chunk={chunk_index}, language={language}, item_index={item_index}, "
         f"expected={expected!r}, actual={actual!r}, reason={reason}"
     )
 
 
 def _walk_source_text(
-    text: str,
-    alignment_items: list[AlignmentItem],
+    alignment: AlignedTranscript,
     *,
     chunk_index: int | str,
     language: str,
     on_boundary: Callable[[int, int], None] | None = None,
-) -> None:
-    """
-    遍历源文本
-    按顺序消费时间戳项
-    """
-    for item_index, item in enumerate(alignment_items):
-        # 校验每个时间戳项的文本不为空
-        if item.text:
-            continue
-        raise _contract_error(
-            chunk_index=chunk_index,
-            language=language,
-            token_index=item_index,
-            expected="non-empty alignment text",
-            actual=item.text,
-            reason="empty alignment item",
-        )
+) -> tuple[int | None, ...]:
+    for item_index, item in enumerate(alignment.items):
+        if not item.text:
+            raise _contract_error(
+                chunk_index=chunk_index,
+                language=language,
+                item_index=item_index,
+                expected="non-empty alignment text",
+                actual=item.text,
+                reason="empty alignment item",
+            )
 
-    # 当前处理第几个时间戳项
+    owners: list[int | None] = [None] * len(alignment.text)
     item_index = 0
-    # 当前处理该时间戳项的第几个字符
     item_char_index = 0
     pending_boundary: tuple[int, int] | None = None
-    for source_index, actual_char in enumerate(text):
+    for source_index, actual_char in enumerate(alignment.text):
         expected_char = (
-            alignment_items[item_index].text[item_char_index]
-            if item_index < len(alignment_items)
+            alignment.items[item_index].text[item_char_index]
+            if item_index < len(alignment.items)
             else None
         )
         if actual_char == expected_char:
             if pending_boundary is not None and item_char_index == 0:
                 if on_boundary is not None:
-                    # 触发上一个句子的边界回调
                     on_boundary(*pending_boundary)
                 pending_boundary = None
-
+            owners[source_index] = item_index
             item_char_index += 1
-            if item_char_index == len(alignment_items[item_index].text):
+            if item_char_index == len(alignment.items[item_index].text):
                 item_index += 1
                 item_char_index = 0
                 if actual_char in PUNCTUATION:
                     pending_boundary = (source_index + 1, item_index)
             continue
 
-        # 跳过源文本中不匹配的空白或标点符号
         if _is_skippable_source_character(actual_char):
             if actual_char in PUNCTUATION and item_char_index == 0:
                 pending_boundary = (source_index + 1, item_index)
             continue
-
-        if item_index >= len(alignment_items):
+        if item_index >= len(alignment.items):
             raise _contract_error(
                 chunk_index=chunk_index,
                 language=language,
-                token_index=item_index,
+                item_index=item_index,
                 expected=actual_char,
                 actual="<end-of-alignment>",
                 reason="source text has unmatched content",
@@ -130,21 +130,96 @@ def _walk_source_text(
         raise _contract_error(
             chunk_index=chunk_index,
             language=language,
-            token_index=item_index,
+            item_index=item_index,
             expected=expected_char,
             actual=actual_char,
             reason="alignment text differs from source order",
         )
 
-    if item_index < len(alignment_items):
+    if item_index < len(alignment.items):
         raise _contract_error(
             chunk_index=chunk_index,
             language=language,
-            token_index=item_index,
-            expected=alignment_items[item_index].text[item_char_index],
+            item_index=item_index,
+            expected=alignment.items[item_index].text[item_char_index],
             actual="<end-of-text>",
             reason="alignment text continues after source text",
         )
+    return tuple(owners)
+
+
+def source_character_owners(
+    alignment: AlignedTranscript,
+    *,
+    chunk_index: int | str = "alignment",
+    language: str = "unknown",
+) -> tuple[int | None, ...]:
+    """Map source characters to timestamp items without guessing punctuation owners."""
+    return _walk_source_text(
+        alignment,
+        chunk_index=chunk_index,
+        language=language,
+    )
+
+
+def sentence_boundaries(
+    alignment: AlignedTranscript,
+    *,
+    chunk_index: int | str = "merged",
+    language: str = "unknown",
+) -> tuple[tuple[int, int], ...]:
+    boundaries: list[tuple[int, int]] = []
+    _walk_source_text(
+        alignment,
+        chunk_index=chunk_index,
+        language=language,
+        on_boundary=lambda source_index, item_index: boundaries.append(
+            (source_index, item_index)
+        ),
+    )
+    return tuple(boundaries)
+
+
+def validate_alignment(
+    alignment: AlignedTranscript,
+    duration: float,
+    *,
+    chunk_index: int | str = "alignment",
+    language: str = "unknown",
+) -> None:
+    if not math.isfinite(duration) or duration < 0:
+        raise AlignmentContractError(
+            "Alignment duration must be finite and non-negative."
+        )
+    _walk_source_text(
+        alignment,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    previous_end = 0.0
+    for index, item in enumerate(alignment.items):
+        valid = (
+            math.isfinite(item.start)
+            and math.isfinite(item.end)
+            and item.start >= 0.0
+            and item.start >= previous_end
+            and item.end > item.start
+            and item.end <= duration
+            and (
+                item.probability is None
+                or (math.isfinite(item.probability) and 0.0 <= item.probability <= 1.0)
+            )
+        )
+        if not valid:
+            raise _contract_error(
+                chunk_index=chunk_index,
+                language=language,
+                item_index=index,
+                expected=f"finite ordered time satisfying 0 <= start < end <= {duration}",
+                actual=item,
+                reason="invalid timestamp item",
+            )
+        previous_end = item.end
 
 
 def validate_alignment_contract(
@@ -155,135 +230,251 @@ def validate_alignment_contract(
     chunk_index: int | str,
     language: str,
 ) -> None:
-    """
-    校验
-    文本覆盖和顺序正确
-    时间戳范围和顺序正确
-    """
-    _walk_source_text(
-        text,
-        alignment_items,
-        chunk_index=chunk_index,
-        language=language,
-    )
-    _validate_alignment_times(
-        alignment_items,
+    """Compatibility wrapper while pipeline callers move to AlignedTranscript."""
+    validate_alignment(
+        AlignedTranscript(text, tuple(alignment_items)),
         duration,
         chunk_index=chunk_index,
         language=language,
     )
 
 
-def _validate_alignment_times(
-    alignment_items: list[AlignmentItem],
-    duration: float,
+def _validate_provider_candidate(
+    alignment: AlignedTranscript,
     *,
+    duration: float,
     chunk_index: int | str,
     language: str,
 ) -> None:
-    """
-    校验词级别时间戳合法性
-    """
-    previous_end = 0.0
-    for index, item in enumerate(alignment_items):
-        times = (item.start, item.end)
-        valid = (
-            all(math.isfinite(value) for value in times)
-            and item.start >= 0.0
-            and item.start + _TIME_EPSILON >= previous_end
-            and item.end + _TIME_EPSILON >= item.start
-            and item.end <= duration + _TIME_EPSILON
+    if not math.isfinite(duration) or duration < 0:
+        raise AlignmentContractError(
+            "Alignment duration must be finite and non-negative."
         )
-        if not valid:
+    previous_end = 0.0
+    for index, item in enumerate(alignment.items):
+        numeric_values = (item.start, item.end)
+        probability = item.probability
+        valid_numbers = all(
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            for value in numeric_values
+        )
+        valid_probability = probability is None or (
+            not isinstance(probability, bool)
+            and isinstance(probability, (int, float))
+            and math.isfinite(probability)
+            and 0.0 <= probability <= 1.0
+        )
+        if not (
+            valid_numbers
+            and item.start >= 0.0
+            and item.start >= previous_end
+            and item.end >= item.start
+            and item.end <= duration
+            and valid_probability
+        ):
             raise _contract_error(
                 chunk_index=chunk_index,
                 language=language,
-                token_index=index,
-                expected=f"finite monotonic time in [0, {duration}]",
-                actual={"text": item.text, "start": item.start, "end": item.end},
-                reason="invalid token time",
+                item_index=index,
+                expected=(
+                    "finite ordered provider time satisfying "
+                    f"0 <= start <= end <= {duration}"
+                ),
+                actual=item,
+                reason="invalid provider timestamp item",
             )
         previous_end = item.end
 
 
-def _build_sentence_segments(
-    text: str,
-    alignment_items: list[AlignmentItem],
+def accept_provider_transcript(
+    candidate: AlignedTranscript,
     *,
+    duration: float,
     chunk_index: int | str,
     language: str,
-) -> list[dict[str, Any]]:
-    if not alignment_items:
-        return []
+) -> tuple[AlignedTranscript, CleanupReport]:
+    """Quantize, clean recoverable zero-duration items, and validate a Provider result."""
+    _validate_provider_candidate(
+        candidate,
+        duration=duration,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    quantized = quantize_alignment(candidate)
+    _validate_provider_candidate(
+        quantized,
+        duration=duration,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    owners = source_character_owners(
+        quantized,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    dropped_indexes = {
+        index for index, item in enumerate(quantized.items) if item.start == item.end
+    }
+    dropped_items = [quantized.items[index] for index in sorted(dropped_indexes)]
+    cleaned = AlignedTranscript(
+        "".join(
+            char
+            for char, owner in zip(quantized.text, owners, strict=True)
+            if owner not in dropped_indexes
+        ),
+        tuple(
+            item
+            for index, item in enumerate(quantized.items)
+            if index not in dropped_indexes
+        ),
+    )
+    if not cleaned.items and all(
+        _is_skippable_source_character(char) for char in cleaned.text
+    ):
+        cleaned = AlignedTranscript("", ())
+    validate_alignment(
+        cleaned,
+        duration,
+        chunk_index=chunk_index,
+        language=language,
+    )
+    report = CleanupReport(
+        dropped_zero_duration_items=len(dropped_items),
+        first_start=min((item.start for item in dropped_items), default=None),
+        last_end=max((item.end for item in dropped_items), default=None),
+    )
+    return cleaned, report
 
-    segments: list[dict[str, Any]] = []
-    # 当前句子在完整文本中的起始字符位置
-    sentence_start_char = 0
-    # 当前句子对应的第一个时间戳项
-    sentence_start_item = 0
 
-    def append_sentence(sentence_boundary: int, end_item: int) -> None:
-        nonlocal sentence_start_char, sentence_start_item
-        if end_item == sentence_start_item:
-            sentence_start_char = sentence_boundary
-            return
-        sentence_text = text[sentence_start_char:sentence_boundary].strip()
-        if sentence_text:
-            segments.append(
-                {
-                    "id": len(segments),
-                    "start": _to_float(alignment_items[sentence_start_item].start),
-                    "end": _to_float(alignment_items[end_item - 1].end),
-                    "text": sentence_text,
-                }
+def quantize_alignment(alignment: AlignedTranscript) -> AlignedTranscript:
+    return AlignedTranscript(
+        alignment.text,
+        tuple(
+            AlignmentItem(
+                item.text,
+                quantize_timestamp(item.start),
+                quantize_timestamp(item.end),
+                item.probability,
             )
-        sentence_start_char = sentence_boundary
-        sentence_start_item = end_item
-
-    _walk_source_text(
-        text,
-        alignment_items,
-        chunk_index=chunk_index,
-        language=language,
-        on_boundary=append_sentence,
+            for item in alignment.items
+        ),
     )
 
-    sentence_text = text[sentence_start_char:].strip()
-    if sentence_text:
-        segments.append(
-            {
-                "id": len(segments),
-                "start": _to_float(alignment_items[sentence_start_item].start),
-                "end": _to_float(alignment_items[-1].end),
-                "text": sentence_text,
-            }
-        )
-    return segments
+
+def offset_alignment(alignment: AlignedTranscript, offset: float) -> AlignedTranscript:
+    return AlignedTranscript(
+        alignment.text,
+        tuple(
+            AlignmentItem(
+                item.text,
+                quantize_timestamp(offset + item.start),
+                quantize_timestamp(offset + item.end),
+                item.probability,
+            )
+            for item in alignment.items
+        ),
+    )
 
 
-def build_sentence_segments(
-    text: str,
-    alignment_items: list[AlignmentItem],
-    duration: float | None = None,
+def project_normalized_text(
+    alignment: AlignedTranscript,
+    normalized_text: str,
     *,
-    chunk_index: int | str = "merged",
+    chunk_index: int | str = "normalization",
     language: str = "unknown",
-) -> list[dict[str, Any]]:
-    maximum = (
-        duration
-        if duration is not None
-        else (alignment_items[-1].end if alignment_items else 0.0)
-    )
-    segments = _build_sentence_segments(
-        text,
-        alignment_items,
+) -> AlignedTranscript:
+    owners = source_character_owners(
+        alignment,
         chunk_index=chunk_index,
         language=language,
     )
-    _validate_alignment_times(
-        alignment_items,
-        maximum,
-        chunk_index=chunk_index,
-        language=language,
+    fragments: list[tuple[str, object, float, float, float | None]] = []
+
+    def append(text: str, owner_indexes: list[int]) -> None:
+        if not text or not owner_indexes:
+            return
+        unique_owners = list(dict.fromkeys(owner_indexes))
+        owner_items = [alignment.items[index] for index in unique_owners]
+        probabilities = [
+            item.probability for item in owner_items if item.probability is not None
+        ]
+        key: object = (
+            ("item", unique_owners[0])
+            if len(unique_owners) == 1
+            else ("group", tuple(unique_owners))
+        )
+        fragment = (
+            text,
+            key,
+            owner_items[0].start,
+            owner_items[-1].end,
+            min(probabilities) if probabilities else None,
+        )
+        if fragments and fragments[-1][1:] == fragment[1:]:
+            previous = fragments[-1]
+            fragments[-1] = (previous[0] + text, *previous[1:])
+        else:
+            fragments.append(fragment)
+
+    def adjacent_owner(position: int) -> int | None:
+        return next(
+            (owner for owner in reversed(owners[:position]) if owner is not None),
+            next((owner for owner in owners[position:] if owner is not None), None),
+        )
+
+    for (
+        tag,
+        source_start,
+        source_end,
+        normalized_start,
+        normalized_end,
+    ) in SequenceMatcher(
+        None, alignment.text, normalized_text, autojunk=False
+    ).get_opcodes():
+        replacement = normalized_text[normalized_start:normalized_end]
+        if tag == "equal" or (
+            tag == "replace"
+            and source_end - source_start == normalized_end - normalized_start
+        ):
+            for offset, char in enumerate(replacement):
+                owner = owners[source_start + offset]
+                if owner is not None:
+                    append(char, [owner])
+        elif tag == "replace":
+            affected = [
+                owner for owner in owners[source_start:source_end] if owner is not None
+            ]
+            if affected:
+                append(replacement, affected)
+            else:
+                owner = adjacent_owner(source_start)
+                if owner is not None:
+                    append(
+                        "".join(
+                            char
+                            for char in replacement
+                            if not _is_skippable_source_character(char)
+                        ),
+                        [owner],
+                    )
+        elif tag == "insert":
+            owner = adjacent_owner(source_start)
+            if owner is not None:
+                append(
+                    "".join(
+                        char
+                        for char in replacement
+                        if not _is_skippable_source_character(char)
+                    ),
+                    [owner],
+                )
+
+    return AlignedTranscript(
+        normalized_text,
+        tuple(
+            AlignmentItem(text, start, end, probability)
+            for text, _, start, end, probability in fragments
+        ),
     )
-    return segments

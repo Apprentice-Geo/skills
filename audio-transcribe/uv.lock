@@ -65,6 +65,7 @@ dependencies = [
     { name = "faster-whisper" },
     { name = "ffmpeg-binaries-compat" },
     { name = "numpy" },
+    { name = "opencc" },
     { name = "psutil" },
     { name = "speechbrain" },
     { name = "torch" },
@@ -100,6 +101,7 @@ requires-dist = [
     { name = "librosa", marker = "extra == 'qwen3-asr'" },
     { name = "numba", marker = "extra == 'qwen3-asr'", specifier = ">=0.59.1" },
     { name = "numpy" },
+    { name = "opencc", specifier = "==1.4.1" },
     { name = "psutil" },
     { name = "qwen-asr", marker = "extra == 'qwen3-asr'" },
     { name = "soundfile", marker = "extra == 'qwen3-asr'" },
@@ -120,7 +122,7 @@ dev = [
 
 [[package]]
 name = "audio-transcribe-contract"
-version = "0.1.1"
+version = "0.1.2"
 source = { directory = "packages/audio-transcribe-contract" }
 
 [[package]]
@@ -1061,6 +1063,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/26/81/24dd9b31b0fb912ee19ca53ac1c9764bfd79d58a2ccef564eb693be831a5/onnxruntime-1.27.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7c65a7438632d55dfbc8a02ee60bd6cf7dd9d1ba05a43d4b851452f32338e194", size = 18658316, upload-time = "2026-06-15T22:43:04.012Z" },
     { url = "https://files.pythonhosted.org/packages/4f/88/8ec9db1a4d126bb8b758992beb40d1249df171917d75f44a327eb5f20dda/onnxruntime-1.27.0-cp312-cp312-win_amd64.whl", hash = "sha256:20c321cf187ba496e648acf6b4cf90b4d398b0d17c2a77fdaeba365b908cc1c1", size = 13358769, upload-time = "2026-06-15T22:43:34.581Z" },
     { url = "https://files.pythonhosted.org/packages/ae/9f/fdad359dfcba7e7cd8815569b304a596531d4efa77a75d77f8b4981891a2/onnxruntime-1.27.0-cp312-cp312-win_arm64.whl", hash = "sha256:d0d1f68868e2ef30ef70998ba9bbbc5c305e9b17041e3936751c1b8aa6aade06", size = 13104440, upload-time = "2026-06-15T22:43:22.893Z" },
+]
+
+[[package]]
+name = "opencc"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/4a/9fdb46f75751712f5c2ea76fdffe3d08f2b833301263644e1267ef82c1cd/opencc-1.4.1.tar.gz", hash = "sha256:a2c58215626ac5131c5db277766678d552fc296e9e0299ef183cb67c1a7f30e7", size = 11592892, upload-time = "2026-07-12T14:59:55.166Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/a1/7ffacb33571dd4f37c7eccc38c25559f5b015e4246126e56aa575d3ef0b6/opencc-1.4.1-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:1f4eb3d48bcd4b6a382f27c89e84c12d4e0932c1792d39bb3792e0b51590467b", size = 2096561, upload-time = "2026-07-12T15:03:59.142Z" },
+    { url = "https://files.pythonhosted.org/packages/54/db/eb079ac9a565bf37317108a4c78f8d821cd8e4887baf2ae1912d807ddd33/opencc-1.4.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f44ae128b3ae69651a171a918d2c707a9388838dc791d23935fed2f0066d7ce2", size = 2000503, upload-time = "2026-07-12T14:57:48.436Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/49/f7d5db22d11efe0f36d566f270a85fed8371ad12b690b3120c8862692f65/opencc-1.4.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:3f64c90aa026d5d69ced1f4b5375e0480408597b785075c3c34ab2ae37f66cd0", size = 2343226, upload-time = "2026-07-12T14:59:42.9Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/07/936ded52b9d3278f055fbb182b47ce7e90648cf701ac339f6743eeb9319f/opencc-1.4.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:dd35957fcdb633b1c262a5c36e57306be8db25de972bf5d700cc17cbef3d98b4", size = 2380661, upload-time = "2026-07-12T14:59:50.703Z" },
+    { url = "https://files.pythonhosted.org/packages/41/85/633a7e51940db4c454c4852559b707a0e30b3edbfef1372e6cee197624d0/opencc-1.4.1-cp312-cp312-win_amd64.whl", hash = "sha256:129d2266a3a1c6e01c57344147f96cbda60557a3c91d083403066c34411aee23", size = 2795541, upload-time = "2026-07-12T15:02:58.556Z" },
 ]
 
 [[package]]

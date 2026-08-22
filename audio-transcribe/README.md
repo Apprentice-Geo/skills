@@ -6,6 +6,8 @@
 
 - 输入音频必须已经存在于本地。
 - Skill 不负责下载媒体，也不修改其他 Skill 的结果。
+- 所有公开转写文本执行 Unicode NFKC；语言为 `zh` 时再通过 OpenCC `t2s` 转为简体。Provider 原始 chunk 仅保留在内部缓存中。
+- `result_manifest.json` 是唯一公开入口，必须通过 `audio-transcribe-contract` 验证后读取。当前结果要求固定的 alignment policy；缺少或篡改该策略的旧结果不会被兼容，需要重新转写。
 
 ## 隐私与安全
 
@@ -19,3 +21,4 @@
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。
 - [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：安装、模型、Provider、缓存和产物错误处理。
 - [AGENTS.md](AGENTS.md)：开发维护、测试和代码规范。
+- [benchmark/README.md](benchmark/README.md)：准备固定测试音频、分批运行性能实验和读取报告。

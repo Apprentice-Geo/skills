@@ -3,7 +3,7 @@ name = "bili-audiosummary"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "audio-transcribe-contract==0.1.1",
+    "audio-transcribe-contract==0.1.2",
     "yt-dlp==2026.3.17",
     "ffmpeg-binaries-compat",
 ]
@@ -33,7 +33,7 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 index-strategy = "first-index"
 
 [tool.uv.sources]
-audio-transcribe-contract = { git = "https://github.com/Apprentice-Geo/skills.git", tag = "audio-transcribe-contract-v0.1.1", subdirectory = "audio-transcribe/packages/audio-transcribe-contract" }
+audio-transcribe-contract = { git = "https://github.com/Apprentice-Geo/skills.git", tag = "audio-transcribe-contract-v0.1.2", subdirectory = "audio-transcribe/packages/audio-transcribe-contract" }
 
 [tool.ruff]
 target-version = "py312"
