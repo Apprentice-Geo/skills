@@ -4,8 +4,8 @@ requires-python = "==3.12.*"
 
 [[package]]
 name = "audio-transcribe-contract"
-version = "0.1.1"
-source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.1#c46e86ed84b891c49f6d56958ead86f4a0a98dc7" }
+version = "0.1.2"
+source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.2#91af88d58b8ed1319224b6e80300c93b84084653" }
 
 [[package]]
 name = "colorama"
@@ -131,7 +131,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "audio-transcribe-contract", git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.1" }]
+requires-dist = [{ name = "audio-transcribe-contract", git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.2" }]
 
 [package.metadata.requires-dev]
 dev = [
