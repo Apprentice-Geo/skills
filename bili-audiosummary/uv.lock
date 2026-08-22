@@ -10,7 +10,7 @@ resolution-markers = [
 [[package]]
 name = "audio-transcribe-contract"
 version = "0.1.2"
-source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.2#91af88d58b8ed1319224b6e80300c93b84084653" }
+source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.1.2#ea1defac3712febbcdced3e0c2e92f63c1365337" }
 
 [[package]]
 name = "bili-audiosummary"
