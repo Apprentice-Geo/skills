@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from scripts import check_dependencies
-from scripts.setup.install_core import CORE_IMPORTS
+from scripts.dependency_policy import CORE_IMPORTS
 
 
 def test_model_check_requires_revision_marker_and_required_files(
@@ -37,10 +37,34 @@ def test_report_has_provider_statuses_and_stable_shape() -> None:
         {"id", "status", "expected", "actual", "message", "fix"} <= set(item)
         for item in report["checks"]
     )
-    assert "audio_transcribe_contract" in CORE_IMPORTS
-    assert any(
-        item["id"] == "import:audio_transcribe_contract" for item in report["checks"]
+    assert "opencc" in CORE_IMPORTS
+    checked_imports = {
+        item["id"].removeprefix("import:")
+        for item in report["checks"]
+        if item["id"].startswith("import:")
+    }
+    assert set(CORE_IMPORTS) <= checked_imports
+
+
+def test_missing_core_import_blocks_all_providers() -> None:
+    import_status = {module: True for module in CORE_IMPORTS}
+    import_status["opencc"] = False
+
+    providers = check_dependencies.provider_readiness(
+        import_status,
+        ffmpeg_ok=True,
+        language_ready=True,
+        whisper_model_ready=True,
+        qwen_imports=True,
+        cuda=True,
+        qwen_asr_model_ready=True,
+        qwen_aligner_ready=True,
     )
+
+    assert providers == {
+        "faster-whisper": {"status": "not_ready"},
+        "qwen3-asr": {"status": "not_ready"},
+    }
 
 
 def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(

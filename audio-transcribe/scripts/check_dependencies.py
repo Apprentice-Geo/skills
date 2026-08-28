@@ -17,6 +17,7 @@ from scripts.config import (
     QWEN3_ASR_ALIGNER_MODEL_DIR,
     QWEN3_ASR_MODEL_DIR,
 )
+from scripts.dependency_policy import CORE_IMPORTS
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
@@ -106,6 +107,34 @@ def model_check(
         else "Model directory is incomplete or has the wrong revision marker.",
         f"uv run --no-sync python -m scripts.setup.install_model --model {'qwen3-asr' if 'qwen3-asr' in check_id else 'faster-whisper'}",
     )
+
+
+def provider_readiness(
+    import_status: dict[str, bool],
+    *,
+    ffmpeg_ok: bool,
+    language_ready: bool,
+    whisper_model_ready: bool,
+    qwen_imports: bool,
+    cuda: bool,
+    qwen_asr_model_ready: bool,
+    qwen_aligner_ready: bool,
+) -> dict[str, dict[str, str]]:
+    core_ready = all(import_status.get(module, False) for module in CORE_IMPORTS)
+    whisper_ready = core_ready and ffmpeg_ok and language_ready and whisper_model_ready
+    qwen_ready = (
+        core_ready
+        and qwen_imports
+        and cuda
+        and ffmpeg_ok
+        and language_ready
+        and qwen_asr_model_ready
+        and qwen_aligner_ready
+    )
+    return {
+        "faster-whisper": {"status": "ready" if whisper_ready else "not_ready"},
+        "qwen3-asr": {"status": "ready" if qwen_ready else "not_ready"},
+    }
 
 
 def ffmpeg_checks() -> list[dict[str, str]]:
@@ -256,16 +285,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         )
 
     import_status: dict[str, bool] = {}
-    for module in (
-        "audio_transcribe_contract",
-        "faster_whisper",
-        "ffmpeg_binaries",
-        "numpy",
-        "psutil",
-        "speechbrain",
-        "torch",
-        "torchaudio",
-    ):
+    for module in CORE_IMPORTS:
         imported_ok, actual, stderr = check_module_import(module)
         if imported_ok:
             import_status[module] = True
@@ -387,27 +407,16 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         for check in checks
         if check["id"] in {"ffmpeg", "ffprobe", "ffmpeg-binaries"}
     )
-    whisper_ready = (
-        all(
-            import_status.get(name, False)
-            for name in ("faster_whisper", "ffmpeg_binaries")
-        )
-        and ffmpeg_ok
-        and language["status"] == "pass"
-        and whisper["status"] == "pass"
+    providers = provider_readiness(
+        import_status,
+        ffmpeg_ok=ffmpeg_ok,
+        language_ready=language["status"] == "pass",
+        whisper_model_ready=whisper["status"] == "pass",
+        qwen_imports=qwen_imports,
+        cuda=cuda,
+        qwen_asr_model_ready=qwen_asr["status"] == "pass",
+        qwen_aligner_ready=qwen_aligner["status"] == "pass",
     )
-    qwen_ready = (
-        qwen_imports
-        and cuda
-        and ffmpeg_ok
-        and language["status"] == "pass"
-        and qwen_asr["status"] == "pass"
-        and qwen_aligner["status"] == "pass"
-    )
-    providers = {
-        "faster-whisper": {"status": "ready" if whisper_ready else "not_ready"},
-        "qwen3-asr": {"status": "ready" if qwen_ready else "not_ready"},
-    }
     core_ids = {
         "platform",
         "pyproject.toml",
@@ -418,19 +427,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         "ffmpeg-binaries",
         "ffmpeg",
         "ffprobe",
-    } | {
-        f"import:{name}"
-        for name in (
-            "audio_transcribe_contract",
-            "faster_whisper",
-            "ffmpeg_binaries",
-            "numpy",
-            "psutil",
-            "speechbrain",
-            "torch",
-            "torchaudio",
-        )
-    }
+    } | {f"import:{name}" for name in CORE_IMPORTS}
     core_failed = any(
         check["id"] in core_ids and check["status"] == "fail" for check in checks
     )

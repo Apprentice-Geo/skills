@@ -4,9 +4,8 @@ import json
 from pathlib import Path
 from typing import Mapping
 
+from scripts.dependency_policy import CORE_IMPORTS
 from scripts.process_logging import ProcessLogger, SetupError
-
-CORE_IMPORTS = ("yt_dlp", "ffmpeg_binaries", "audio_transcribe_contract")
 
 FFMPEG_RESOLVER = r"""
 import json

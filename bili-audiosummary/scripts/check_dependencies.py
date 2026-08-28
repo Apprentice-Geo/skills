@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scripts.dependency_policy import CORE_IMPORTS
+
 SCHEMA_VERSION = 1
 SKILL_NAME = "bili-audiosummary"
 
@@ -194,7 +196,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                 "Restore uv, uv.lock and the .venv.",
             )
         )
-    for module in ("yt_dlp", "ffmpeg_binaries", "audio_transcribe_contract"):
+    for module in CORE_IMPORTS:
         try:
             imported = __import__(module)
             value = getattr(imported, "__version__", "importable")

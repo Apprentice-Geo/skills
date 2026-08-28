@@ -2,6 +2,7 @@ import os
 import sys
 from pathlib import Path
 
+from scripts.dependency_policy import CORE_IMPORTS
 from scripts.process_logging import ProcessLogger, ProcessResult, SetupError
 from scripts.setup.install_core import (
     resolve_packaged_ffmpeg,
@@ -28,7 +29,7 @@ def test_verify_core_imports_checks_installed_runtime_modules(
 ) -> None:
     modules_dir = workspace_tmp_path / "modules"
     modules_dir.mkdir()
-    for name in ("yt_dlp", "ffmpeg_binaries", "audio_transcribe_contract"):
+    for name in CORE_IMPORTS:
         (modules_dir / f"{name}.py").write_text("", encoding="utf-8")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(modules_dir)

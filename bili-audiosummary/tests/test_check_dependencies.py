@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from scripts import check_dependencies
+from scripts.dependency_policy import CORE_IMPORTS
 
 
 def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:
@@ -22,6 +23,12 @@ def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:
         if item["id"] == "import:audio_transcribe_contract"
     )
     assert contract["status"] == "pass"
+    checked_imports = {
+        item["id"].removeprefix("import:")
+        for item in report["checks"]
+        if item["id"].startswith("import:")
+    }
+    assert set(CORE_IMPORTS) == checked_imports
 
 
 def test_main_publishes_utf8_json_and_log_without_environment(
