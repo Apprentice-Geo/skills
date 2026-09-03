@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "languages": {
+    "zh": {
+      "source": {
+        "work": "呐喊 (Call to Arms)",
+        "author": "鲁迅",
+        "reader": "Jing Li",
+        "audio_url": "https://archive.org/download/call_to_arms_jl_librivox/chinesecallToArms_librivox.m4b",
+        "text_url": "https://zh.wikisource.org/w/index.php?title=%E5%90%B6%E5%96%8A&oldid=2602489"
+      },
+      "parts": [
+        {
+          "through_minutes": 8,
+          "path": "zh/000-008.txt",
+          "sha256": "620f7e5dfe3ed96cb5ed8a80ae948f0a5ec6fc8b5b8b429c7df37dd7747be930",
+          "sample_audio_sha256": "bb89450d794067b86703fac74c4ac3cb469cdc112c0d08595be971be59dc37b3"
+        },
+        {
+          "through_minutes": 16,
+          "path": "zh/008-016.txt",
+          "sha256": "31827b8b76ffcccd25d910b42b1ec93db94f992391505f9156a8e93bc04ebc22",
+          "sample_audio_sha256": "b08484458346f56a4319e057926d99c53ee5d98fc394bdc62a56b96ceab12c72"
+        },
+        {
+          "through_minutes": 32,
+          "path": "zh/016-032.txt",
+          "sha256": "b6344b0d6dcb25c710821feb476faaf41eac82809fffe80e1425d8c6633d5e6d",
+          "sample_audio_sha256": "28a4c297eb8e9a9f31ad26b304ba7336c39179629df34282846cf9af7286ac8b"
+        },
+        {
+          "through_minutes": 64,
+          "path": "zh/032-064.txt",
+          "sha256": "859fdf2a09491e554fe2e916a051492e937e8e91087fd1679008649c438737a2",
+          "sample_audio_sha256": "b846c2a1e78ac476a111d5c61591932f7c1e43a8c68e9e6b086ee53e2f0f7ba0"
+        }
+      ]
+    },
+    "en": {
+      "source": {
+        "work": "The Great Gatsby",
+        "author": "F. Scott Fitzgerald",
+        "reader": "Kara Shallenberg",
+        "audio_url": "https://archive.org/download/greatgatsby_2101_librivox/GreatGatsby1_librivox.m4b",
+        "text_url": "https://archive.org/details/the-great-gatsby_202101/page/n1/mode/2up"
+      },
+      "parts": [
+        {
+          "through_minutes": 8,
+          "path": "en/000-008.txt",
+          "sha256": "25d90724377d919b3a8378c39930b43fbbb3553a52bde48afab2d2b82743c30c",
+          "sample_audio_sha256": "1124c4f6210b861f40fe339cd75075ac89628de00aa4cfc22a3512cdccc523b6"
+        },
+        {
+          "through_minutes": 16,
+          "path": "en/008-016.txt",
+          "sha256": "ecd8e979ec2be6d0e6033c4559b5c4f479a0ebe0848f4b5e6359b8a1d7a42d1f",
+          "sample_audio_sha256": "b85e71ac85c85a56dcce2116a9845d86053646cf017ac88432b409f6866ff991"
+        },
+        {
+          "through_minutes": 32,
+          "path": "en/016-032.txt",
+          "sha256": "5582c45f3b107a07deef4f3e50b3b81c42de90301f130690f914f0ab5c6425db",
+          "sample_audio_sha256": "1d0c9c918aefc1fe00081c09412bf94d7dce2cf2495c77b26ddf3b11ad786702"
+        },
+        {
+          "through_minutes": 64,
+          "path": "en/032-064.txt",
+          "sha256": "b461d73082e440f0910a3573f9dfa9037776aefbff9c203d8f64b412da81b390",
+          "sample_audio_sha256": "309a72ec552bfcf88884b50965132ba3e7caafa0a0ea85ecea6e485165274ec9"
+        }
+      ]
+    }
+  }
+}

@@ -10,7 +10,9 @@ import pytest
 from benchmark.prepare_audio import safe_cut
 from scripts import benchmark
 from scripts.benchmark import (
+    COMPARISON_POLICY,
     build_matrix,
+    compare_reference,
     compare_text,
     edit_distance,
     native_whisper_configuration,
@@ -52,6 +54,19 @@ def test_matrix_alternates_modes_and_keeps_repetitions() -> None:
     ]
 
 
+def test_worker_directories_do_not_reuse_prior_workspaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path)
+
+    first = benchmark.fresh_worker_directory("same-run")
+    second = benchmark.fresh_worker_directory("same-run")
+
+    assert first.parent == tmp_path
+    assert second.parent == tmp_path
+    assert first != second
+
+
 def test_native_whisper_uses_entire_cpu_budget_for_one_inference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -83,6 +98,31 @@ def test_each_provider_warms_immediately_before_its_runs(
         }
 
     monkeypatch.setattr(benchmark, "run_worker", fake_run_worker)
+    monkeypatch.setattr(
+        benchmark,
+        "load_reference_manifest",
+        lambda _path: {
+            "schema_version": 1,
+            "manifest_sha256": "0" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        benchmark,
+        "load_reference_samples",
+        lambda *_args, **_kwargs: {
+            ("zh", 8): {
+                "language": "zh",
+                "minutes": 8,
+                "text": "参考",
+                "units": ["参", "考"],
+                "audio_sha256": "1" * 64,
+                "reference_sha256": benchmark.unit_digest(["参", "考"]),
+            }
+        },
+    )
+    monkeypatch.setattr(benchmark, "environment", lambda: {})
+    monkeypatch.setattr(benchmark, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path / "tmp")
     args = argparse.Namespace(
         report=tmp_path / "report.json",
         provider=["faster-whisper", "qwen3-asr"],
@@ -113,6 +153,21 @@ def test_linear_memory_distance_and_language_normalization() -> None:
     assert comparison["native_punctuation"] == 0
 
 
+def test_reference_comparison_uses_reference_denominator_and_symmetric_t2s() -> None:
+    comparison = compare_reference("甲乙丙", "甲乙", "zh")
+
+    assert comparison["edit_distance"] == 1
+    assert comparison["reference_units"] == 2
+    assert comparison["error_rate"] == 0.5
+    assert compare_reference("臺灣", "台湾", "zh")["error_rate"] == 0
+    assert compare_reference("台湾", "臺灣", "zh")["error_rate"] == 0
+    english = compare_reference("It's O’Brien", "IT'S O’Brien", "en")
+    assert english["error_rate"] == 0
+    assert english["reference_units"] == 2
+    with pytest.raises(ValueError, match="empty"):
+        compare_reference("anything", "...", "en")
+
+
 def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
     runs = []
     for repetition, project, native in [
@@ -133,14 +188,67 @@ def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
                 "wall_seconds": 1.0,
                 "rtf": 0.1,
                 "provider_stage_seconds": 0.5,
+                "reference_comparison": compare_reference(text, "甲", "zh"),
             }
             if mode == "project-slicing":
                 run["output_comparison"] = comparison
             runs.append(run)
 
-    markdown = summarize({"runs": runs})
+    markdown = summarize(
+        {
+            "comparison_policy": COMPARISON_POLICY,
+            "reference_set": {
+                "schema_version": 1,
+                "manifest_sha256": "0" * 64,
+                "samples": [
+                    {
+                        "language": "zh",
+                        "minutes": 8,
+                        "audio_sha256": "1" * 64,
+                        "reference_sha256": compare_reference("甲", "甲", "zh")[
+                            "reference_sha256"
+                        ],
+                    }
+                ],
+            },
+            "runs": runs,
+        }
+    )
 
     assert "| zh | 8 | project-slicing" in markdown
+    assert "Reference CER/WER" in markdown
+    assert "Mode difference" in markdown
+    assert "Punctuation (hypothesis/reference)" in markdown
+    assert "not an absolute accuracy measure" in markdown
     assert "100.000%" in markdown
     assert "| zh | 8 | provider-native" in markdown
-    assert markdown.count("100.000%") == 1
+    assert markdown.count("100.000%") == 2
+
+
+def test_summary_rejects_success_without_reference_comparison() -> None:
+    report = {
+        "reference_set": {
+            "schema_version": 1,
+            "manifest_sha256": "0" * 64,
+            "samples": [
+                {
+                    "language": "en",
+                    "minutes": 8,
+                    "audio_sha256": "1" * 64,
+                    "reference_sha256": "2" * 64,
+                }
+            ],
+        },
+        "runs": [
+            {
+                "status": "succeeded",
+                "provider": "faster-whisper",
+                "language": "en",
+                "minutes": 8,
+                "mode": "provider-native",
+            }
+        ],
+    }
+
+    with pytest.raises(ValueError, match="reference comparison"):
+        summarize(report)

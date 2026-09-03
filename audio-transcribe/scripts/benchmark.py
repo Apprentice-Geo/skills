@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+import uuid
 import wave
 from datetime import date
 from pathlib import Path
@@ -17,6 +18,11 @@ from typing import Any, Iterable
 
 import psutil
 
+from benchmark.reference import (
+    freeze_reference_set,
+    load_reference_manifest,
+    load_reference_samples,
+)
 from scripts.io_utils import read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
 from scripts.text_normalization import (
@@ -26,11 +32,21 @@ from scripts.text_normalization import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "benchmark" / "data"
+REFERENCE_MANIFEST = ROOT / "benchmark" / "references" / "manifest.json"
 TMP_DIR = ROOT / "benchmark" / "tmp"
 MODES = ("project-slicing", "provider-native")
 PROVIDERS = ("faster-whisper", "qwen3-asr")
 LANGUAGES = ("zh", "en")
 MINUTES = (8, 16, 32, 64)
+REPORT_SCHEMA_VERSION = 3
+COMPARISON_POLICY = {
+    "id": "benchmark-reference-v1",
+    "text_normalization": TEXT_NORMALIZATION_POLICY,
+    "zh_units": "remove Unicode whitespace and punctuation after NFKC and OpenCC t2s",
+    "en_units": "Unicode words after NFKC and casefold; preserve internal ' and ’",
+    "punctuation": "count Unicode punctuation after language normalization",
+    "mode_pairing": "pair project-slicing and provider-native by repetition; provider-native is the denominator",
+}
 
 
 def wav_duration(path: Path) -> float:
@@ -56,6 +72,10 @@ def punctuation_count(text: str, language: str) -> int:
         unicodedata.category(char).startswith("P")
         for char in normalize_transcript_text(text, language)
     )
+
+
+def unit_digest(units: list[str]) -> str:
+    return hashlib.sha256("\0".join(units).encode("utf-8")).hexdigest()
 
 
 def edit_distance(left: list[str], right: list[str]) -> int:
@@ -86,12 +106,31 @@ def compare_text(project: str, native: str, language: str) -> dict[str, Any]:
         "metric": "cer" if language == "zh" else "wer",
         "project_units": len(project_units),
         "native_units": len(native_units),
-        "project_sha256": hashlib.sha256("\0".join(project_units).encode()).hexdigest(),
-        "native_sha256": hashlib.sha256("\0".join(native_units).encode()).hexdigest(),
+        "project_sha256": unit_digest(project_units),
+        "native_sha256": unit_digest(native_units),
         "project_punctuation": punctuation_count(project, language),
         "native_punctuation": punctuation_count(native, language),
         "edit_distance": distance,
         "difference_rate": None if not native_units else distance / len(native_units),
+    }
+
+
+def compare_reference(hypothesis: str, reference: str, language: str) -> dict[str, Any]:
+    hypothesis_units = normalize_text(hypothesis, language)
+    reference_units = normalize_text(reference, language)
+    if not reference_units:
+        raise ValueError("Reference text is empty after normalization")
+    distance = edit_distance(hypothesis_units, reference_units)
+    return {
+        "metric": "cer" if language == "zh" else "wer",
+        "hypothesis_units": len(hypothesis_units),
+        "reference_units": len(reference_units),
+        "hypothesis_sha256": unit_digest(hypothesis_units),
+        "reference_sha256": unit_digest(reference_units),
+        "hypothesis_punctuation": punctuation_count(hypothesis, language),
+        "reference_punctuation": punctuation_count(reference, language),
+        "edit_distance": distance,
+        "error_rate": distance / len(reference_units),
     }
 
 
@@ -127,6 +166,10 @@ def run_id(run: dict[str, Any]) -> str:
         str(run[key])
         for key in ("provider", "language", "minutes", "mode", "repetition")
     )
+
+
+def fresh_worker_directory(label: str) -> Path:
+    return TMP_DIR / f"{label}-{uuid.uuid4().hex}"
 
 
 def sample_gpu_mb() -> tuple[float | None, str | None]:
@@ -317,10 +360,250 @@ def environment() -> dict[str, Any]:
     }
 
 
+_REFERENCE_COMPARISON_FIELDS = {
+    "metric",
+    "hypothesis_units",
+    "reference_units",
+    "hypothesis_sha256",
+    "reference_sha256",
+    "hypothesis_punctuation",
+    "reference_punctuation",
+    "edit_distance",
+    "error_rate",
+}
+
+
+def _valid_digest(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _validate_reference_comparison(value: Any, language: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != _REFERENCE_COMPARISON_FIELDS:
+        raise ValueError("Successful benchmark run has an invalid reference comparison")
+    if value["metric"] != ("cer" if language == "zh" else "wer"):
+        raise ValueError("Reference comparison metric does not match the language")
+    integer_fields = (
+        "hypothesis_units",
+        "reference_units",
+        "hypothesis_punctuation",
+        "reference_punctuation",
+        "edit_distance",
+    )
+    if any(
+        not isinstance(value[field], int)
+        or isinstance(value[field], bool)
+        or value[field] < 0
+        for field in integer_fields
+    ):
+        raise ValueError("Reference comparison counts must be non-negative integers")
+    if value["reference_units"] == 0:
+        raise ValueError("Reference comparison has an empty reference")
+    if not _valid_digest(value["hypothesis_sha256"]) or not _valid_digest(
+        value["reference_sha256"]
+    ):
+        raise ValueError("Reference comparison contains an invalid digest")
+    expected_rate = value["edit_distance"] / value["reference_units"]
+    if (
+        not isinstance(value["error_rate"], (int, float))
+        or isinstance(value["error_rate"], bool)
+        or value["error_rate"] != expected_rate
+    ):
+        raise ValueError("Reference comparison error rate is invalid")
+    return value
+
+
+def _frozen_sample_keys(reference_set: Any) -> set[tuple[str, int]]:
+    if not isinstance(reference_set, dict) or set(reference_set) != {
+        "schema_version",
+        "manifest_sha256",
+        "samples",
+    }:
+        raise ValueError("Benchmark report reference_set is invalid")
+    if not _valid_digest(reference_set["manifest_sha256"]):
+        raise ValueError("Benchmark report reference manifest digest is invalid")
+    samples = reference_set["samples"]
+    if not isinstance(samples, list) or not samples:
+        raise ValueError("Benchmark report reference_set samples are invalid")
+    keys: list[tuple[str, int]] = []
+    for sample in samples:
+        if not isinstance(sample, dict) or set(sample) != {
+            "language",
+            "minutes",
+            "audio_sha256",
+            "reference_sha256",
+        }:
+            raise ValueError("Benchmark report reference sample is invalid")
+        if (
+            sample["language"] not in LANGUAGES
+            or not isinstance(sample["minutes"], int)
+            or isinstance(sample["minutes"], bool)
+            or sample["minutes"] not in MINUTES
+        ):
+            raise ValueError("Benchmark report reference sample identity is invalid")
+        key = (sample["language"], sample["minutes"])
+        if not _valid_digest(sample["audio_sha256"]) or not _valid_digest(
+            sample["reference_sha256"]
+        ):
+            raise ValueError("Benchmark report reference sample digest is invalid")
+        keys.append(key)
+    if keys != sorted(set(keys)):
+        raise ValueError("Benchmark report reference samples must be unique and sorted")
+    return set(keys)
+
+
+def _validate_report(
+    report: Any, references: dict[tuple[str, int], dict[str, Any]]
+) -> dict[str, Any]:
+    if not isinstance(report, dict) or set(report) != {
+        "schema_version",
+        "comparison_policy",
+        "reference_set",
+        "environment",
+        "warmups",
+        "runs",
+    }:
+        raise ValueError("Benchmark report structure is invalid; start a new report.")
+    if report["schema_version"] != REPORT_SCHEMA_VERSION:
+        raise ValueError("Benchmark report schema is obsolete; start a new report.")
+    if report["comparison_policy"] != COMPARISON_POLICY:
+        raise ValueError("Benchmark comparison policy changed; start a new report.")
+    if not isinstance(report["environment"], dict):
+        raise ValueError("Benchmark report environment is invalid")
+    if not isinstance(report["warmups"], list) or not isinstance(report["runs"], list):
+        raise ValueError("Benchmark report runs are invalid")
+
+    for item in report["warmups"]:
+        if not isinstance(item, dict):
+            raise ValueError("Benchmark warmup must be an object")
+        try:
+            provider = item["provider"]
+            language = item["language"]
+            minute = item["minutes"]
+            mode = item["mode"]
+            repetition = item["repetition"]
+            identifier = item["run_id"]
+            status = item["status"]
+        except KeyError as exc:
+            raise ValueError("Benchmark warmup identity is incomplete") from exc
+        if (
+            provider not in PROVIDERS
+            or (language, minute) not in references
+            or mode != "project-slicing"
+            or repetition != 0
+            or status not in ("succeeded", "failed")
+            or identifier != run_id(item)
+            or "reference_comparison" in item
+        ):
+            raise ValueError("Benchmark warmup identity is invalid")
+
+    attempts: dict[str, list[int]] = {}
+    successful: dict[tuple[str, str, str, int, int], dict[str, Any]] = {}
+    for item in report["runs"]:
+        if not isinstance(item, dict):
+            raise ValueError("Benchmark run must be an object")
+        try:
+            provider = item["provider"]
+            language = item["language"]
+            minute = item["minutes"]
+            mode = item["mode"]
+            repetition = item["repetition"]
+            identifier = item["run_id"]
+            attempt = item["attempt"]
+            status = item["status"]
+            audio_sha256 = item["audio_sha256"]
+        except KeyError as exc:
+            raise ValueError("Benchmark run identity is incomplete") from exc
+        if (
+            provider not in PROVIDERS
+            or language not in LANGUAGES
+            or minute not in MINUTES
+            or mode not in MODES
+            or not isinstance(repetition, int)
+            or isinstance(repetition, bool)
+            or repetition < 1
+            or not isinstance(attempt, int)
+            or isinstance(attempt, bool)
+            or attempt < 1
+            or status not in ("succeeded", "failed")
+        ):
+            raise ValueError("Benchmark run identity is invalid")
+        if identifier != run_id(item):
+            raise ValueError("Benchmark run_id does not match its identity")
+        reference = references.get((language, minute))
+        if reference is None or audio_sha256 != reference["audio_sha256"]:
+            raise ValueError(
+                "Benchmark run audio identity does not match reference_set"
+            )
+        attempts.setdefault(identifier, []).append(attempt)
+        if status == "succeeded":
+            if not isinstance(item.get("text"), str):
+                raise ValueError("Successful benchmark run is missing text")
+            actual = _validate_reference_comparison(
+                item.get("reference_comparison"), language
+            )
+            expected = compare_reference(item["text"], reference["text"], language)
+            if actual != expected:
+                raise ValueError(
+                    "Benchmark run reference comparison does not match its text"
+                )
+            key = (provider, language, mode, minute, repetition)
+            if key in successful:
+                raise ValueError("Benchmark report contains duplicate successful runs")
+            successful[key] = item
+        elif "reference_comparison" in item:
+            raise ValueError(
+                "Failed benchmark run must not have a reference comparison"
+            )
+        if mode == "provider-native" and "output_comparison" in item:
+            raise ValueError("provider-native run must not have output_comparison")
+    if any(values != list(range(1, len(values) + 1)) for values in attempts.values()):
+        raise ValueError("Benchmark run attempt sequence is invalid")
+
+    for key, project in successful.items():
+        provider, language, mode, minute, repetition = key
+        if mode != "project-slicing":
+            continue
+        native = successful.get(
+            (provider, language, "provider-native", minute, repetition)
+        )
+        if native is None:
+            if "output_comparison" in project:
+                raise ValueError("Unpaired run must not have output_comparison")
+            continue
+        expected = compare_text(project["text"], native["text"], language)
+        if project.get("output_comparison") != expected:
+            raise ValueError("Paired run output_comparison is invalid")
+    return report
+
+
 def summarize(report: dict[str, Any]) -> str:
+    reference_set_value = report.get("reference_set")
+    _frozen_sample_keys(reference_set_value)
+    if not isinstance(reference_set_value, dict):
+        raise ValueError("Benchmark report reference_set is invalid")
+    reference_set = reference_set_value
+    reference_identities = {
+        (item["language"], item["minutes"]): item for item in reference_set["samples"]
+    }
     successful = [item for item in report["runs"] if item.get("status") == "succeeded"]
+    for item in successful:
+        comparison = _validate_reference_comparison(
+            item.get("reference_comparison"), item["language"]
+        )
+        identity = reference_identities.get((item["language"], item["minutes"]))
+        if (
+            identity is None
+            or comparison["reference_sha256"] != identity["reference_sha256"]
+        ):
+            raise ValueError(
+                "Successful benchmark run reference comparison has the wrong identity"
+            )
     lines = [
         "# Audio transcription benchmark",
+        "",
+        f"Reference manifest SHA256: `{reference_set['manifest_sha256']}`",
+        "",
+        "Reference CER/WER uses source text with Qwen3-ASR assistance under a methodology limited to spot checks at disputed locations and sample boundaries rather than full word-by-word proofreading. It is not an absolute accuracy measure and may retain undetected reading/source differences; review status is documented in benchmark/README.md and the reference plan.",
         "",
         "Only successful runs are summarized.",
         "",
@@ -332,8 +615,8 @@ def summarize(report: dict[str, Any]) -> str:
         lines += [
             f"## {provider}",
             "",
-            "| Language | Minutes | Mode | Median wall | Median RTF | Provider stage | Relative speed | Difference | Punctuation (project/native) |",
-            "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Language | Minutes | Mode | Median wall | Median RTF | Provider stage | Relative speed | Reference CER/WER | Mode difference | Punctuation (hypothesis/reference) |",
+            "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
         for language in LANGUAGES:
             for minute in MINUTES:
@@ -349,7 +632,7 @@ def summarize(report: dict[str, Any]) -> str:
                     for mode in MODES
                     if any(item["mode"] == mode for item in pair)
                 }
-                comparisons = [
+                mode_comparisons = [
                     item["output_comparison"]
                     for item in pair
                     if item["mode"] == "project-slicing" and "output_comparison" in item
@@ -367,22 +650,27 @@ def summarize(report: dict[str, Any]) -> str:
                     difference = (
                         statistics.median(
                             item["difference_rate"]
-                            for item in comparisons
+                            for item in mode_comparisons
                             if item["difference_rate"] is not None
                         )
                         if any(
-                            item["difference_rate"] is not None for item in comparisons
+                            item["difference_rate"] is not None
+                            for item in mode_comparisons
                         )
                         else None
                     )
+                    reference_comparisons = [
+                        item["reference_comparison"] for item in selected
+                    ]
+                    reference_rate = statistics.median(
+                        item["error_rate"] for item in reference_comparisons
+                    )
                     punctuation = (
-                        f"{statistics.median(item['project_punctuation'] for item in comparisons):g}/"
-                        f"{statistics.median(item['native_punctuation'] for item in comparisons):g}"
-                        if comparisons
-                        else "—"
+                        f"{statistics.median(item['hypothesis_punctuation'] for item in reference_comparisons):g}/"
+                        f"{statistics.median(item['reference_punctuation'] for item in reference_comparisons):g}"
                     )
                     lines.append(
-                        f"| {language} | {minute} | {mode} | {wall:.3f}s | {statistics.median(item['rtf'] for item in selected):.4f} | {statistics.median(item['provider_stage_seconds'] for item in selected):.3f}s | {f'{speed:.3f}x' if speed is not None else '—'} | {f'{difference:.3%}' if difference is not None and mode == 'project-slicing' else '—'} | {punctuation if mode == 'project-slicing' else '—'} |"
+                        f"| {language} | {minute} | {mode} | {wall:.3f}s | {statistics.median(item['rtf'] for item in selected):.4f} | {statistics.median(item['provider_stage_seconds'] for item in selected):.3f}s | {f'{speed:.3f}x' if speed is not None else '—'} | {reference_rate:.3%} | {f'{difference:.3%}' if difference is not None and mode == 'project-slicing' else '—'} | {punctuation} |"
                     )
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -390,24 +678,6 @@ def summarize(report: dict[str, Any]) -> str:
 
 def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     report_path = args.report
-    report = (
-        read_json(report_path)
-        if report_path.exists()
-        else {
-            "schema_version": 2,
-            "comparison_policy": {
-                "text_normalization": TEXT_NORMALIZATION_POLICY,
-                "content": "ignore Unicode whitespace and punctuation; pair by repetition",
-                "punctuation": "report Unicode punctuation counts separately",
-            },
-            "environment": environment(),
-            "warmups": [],
-            "runs": [],
-        }
-    )
-    if report.get("schema_version") != 2:
-        raise ValueError("Benchmark report schema is obsolete; start a new report.")
-    prior = {item["run_id"]: item for item in report["runs"]}
     matrix = build_matrix(
         args.provider or PROVIDERS,
         args.language or LANGUAGES,
@@ -415,41 +685,102 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         args.mode or MODES,
         args.repetitions,
     )
+    selected_keys = {(item["language"], item["minutes"]) for item in matrix}
+    reference_manifest = load_reference_manifest(REFERENCE_MANIFEST)
+
+    if report_path.exists():
+        report = read_json(report_path)
+        if (
+            not isinstance(report, dict)
+            or report.get("schema_version") != REPORT_SCHEMA_VERSION
+        ):
+            raise ValueError("Benchmark report schema is obsolete; start a new report.")
+        frozen_keys = _frozen_sample_keys(report.get("reference_set"))
+        if not selected_keys.issubset(frozen_keys):
+            raise ValueError(
+                "Selected samples extend the frozen reference_set; use a new report path."
+            )
+        references = load_reference_samples(
+            reference_manifest,
+            frozen_keys,
+            data_dir=DATA_DIR,
+            samples_manifest_path=DATA_DIR / "samples.json",
+            normalize_units=normalize_text,
+            unit_digest=unit_digest,
+        )
+        if report["reference_set"] != freeze_reference_set(
+            reference_manifest, references
+        ):
+            raise ValueError(
+                "Benchmark reference identity changed; start a new report."
+            )
+        report = _validate_report(report, references)
+    else:
+        references = load_reference_samples(
+            reference_manifest,
+            selected_keys,
+            data_dir=DATA_DIR,
+            samples_manifest_path=DATA_DIR / "samples.json",
+            normalize_units=normalize_text,
+            unit_digest=unit_digest,
+        )
+        report = {
+            "schema_version": REPORT_SCHEMA_VERSION,
+            "comparison_policy": COMPARISON_POLICY,
+            "reference_set": freeze_reference_set(reference_manifest, references),
+            "environment": environment(),
+            "warmups": [],
+            "runs": [],
+        }
+
+    succeeded = {
+        item["run_id"] for item in report["runs"] if item.get("status") == "succeeded"
+    }
     warmed = {
         item["provider"]
         for item in report["warmups"]
         if item.get("status") == "succeeded"
     }
     for provider in dict.fromkeys(item["provider"] for item in matrix):
+        provider_runs = [item for item in matrix if item["provider"] == provider]
         if provider not in warmed:
+            first = provider_runs[0]
             warm = {
                 "provider": provider,
-                "language": "zh",
-                "minutes": 8,
+                "language": first["language"],
+                "minutes": first["minutes"],
                 "mode": "project-slicing",
                 "repetition": 0,
             }
             report["warmups"].append(
                 run_worker(
                     warm,
-                    DATA_DIR / "zh-8min.wav",
-                    TMP_DIR / f"warmup-{provider}-{len(report['warmups']) + 1}",
+                    DATA_DIR / f"{warm['language']}-{warm['minutes']}min.wav",
+                    fresh_worker_directory(
+                        f"warmup-{provider}-{len(report['warmups']) + 1}"
+                    ),
                 )
             )
             write_json_atomic(report_path, report)
-        for run in (item for item in matrix if item["provider"] == provider):
+        for run in provider_runs:
             identifier = run_id(run)
-            if prior.get(identifier, {}).get("status") == "succeeded":
+            if identifier in succeeded:
                 continue
             attempt = 1 + sum(item["run_id"] == identifier for item in report["runs"])
+            reference = references[(run["language"], run["minutes"])]
             result = run_worker(
                 run,
                 DATA_DIR / f"{run['language']}-{run['minutes']}min.wav",
-                TMP_DIR / f"{identifier}-attempt-{attempt}",
+                fresh_worker_directory(f"{identifier}-attempt-{attempt}"),
             )
             result["attempt"] = attempt
+            result["audio_sha256"] = reference["audio_sha256"]
+            if result.get("status") == "succeeded":
+                result["reference_comparison"] = compare_reference(
+                    result["text"], reference["text"], run["language"]
+                )
+                succeeded.add(identifier)
             report["runs"].append(result)
-            prior[identifier] = result
             counterpart = next(
                 (
                     item
@@ -466,13 +797,12 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             if result.get("status") == "succeeded" and counterpart is not None:
                 project = result if result["mode"] == "project-slicing" else counterpart
                 native = result if result["mode"] == "provider-native" else counterpart
-                comparison = compare_text(
+                project["output_comparison"] = compare_text(
                     project["text"], native["text"], run["language"]
                 )
-                project["output_comparison"] = comparison
             write_json_atomic(report_path, report)
             report_path.with_suffix(".md").write_text(
-                summarize(report), encoding="utf-8"
+                summarize(report), encoding="utf-8", newline="\n"
             )
     return report
 
