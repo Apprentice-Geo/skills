@@ -72,7 +72,7 @@
 
 ## KI-005：warmup 与正式 run 不共享模型进程
 
-**状态：已关闭（2026-09-05）。** 每个仍有待执行项的 Provider 使用一个持久 worker session。每种实际模型加载配置首次出现时，以对应正式 run 的相同音频和 mode 预热；正式 run 通过 `run_transcribe()`、pipeline 和 execution policy 的可选 prepared model 通道复用同一 Python 对象。faster-whisper 的 key 包含模型、device、compute type、CPU threads 和 worker 数；Qwen3-ASR 的 key 包含模型、aligner、device、dtype 和 batch size，language 不进入 key。
+**状态：已关闭（2026-09-05）。** 每个仍有待执行项的 Provider 使用一个持久 worker session。每种实际模型加载配置首次出现时，以对应正式 run 的相同音频和 mode 预热；正式 run 通过 `run_transcribe()`、pipeline 和 execution policy 的可选 prepared model 通道复用同一 Python 对象。faster-whisper 的 key 包含模型、device、compute type、CPU threads 和 worker 数；其中 `project-slicing` 使用生产配置，`provider-native` 使用单 worker 和生产 policy 算出的全部 CPU 线程预算，因此二者配置不同时会分别预热。Qwen3-ASR 的 key 包含模型、aligner、device、dtype 和 batch size，language 不进入 key。
 
 Warmup 和正式 run 记录 session ID，报告校验成功 run 必须存在同 session、同配置的成功 warmup。续跑创建新 session 并重新预热；worker 退出后下一项也创建新 session。普通转写 CLI 未提供 prepared model 时仍执行原有 `prepare()` 行为。
 

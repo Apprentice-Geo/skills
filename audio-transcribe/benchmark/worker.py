@@ -35,7 +35,7 @@ def transcript_text(manifest_path: Path) -> str:
 
 
 def provider_runtime(
-    provider: str, language: str, sample_count: int
+    provider: str, language: str, sample_count: int, mode: str
 ) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
     from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
     from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
@@ -46,6 +46,13 @@ def provider_runtime(
         adapter = WhisperProvider(options)
         policy = WhisperCpuPolicy(options)
         identity = policy.execution_identity(sample_count)
+        if mode == "provider-native":
+            identity = {
+                **identity,
+                "num_workers": 1,
+                "cpu_threads": identity["cpu_budget"],
+                "group_size": 1,
+            }
         request = adapter.request_identity()
         configuration = {
             "model": request["model"],
@@ -126,7 +133,7 @@ def worker(
     else:
         samples = decode_normalized_audio(audio)
         adapter, _policy, identity, _configuration = provider_runtime(
-            provider, language, samples.sample_count
+            provider, language, samples.sample_count, mode
         )
         provider_identity = adapter.request_identity()
         layout = ChunkLayout(0, 0, samples.sample_count, "source", samples.sample_count)
@@ -289,7 +296,7 @@ def persistent_worker(
             results_dir = Path(request["results_dir"])
             samples = decode_normalized_audio(audio)
             adapter, _policy, identity, configuration = provider_runtime(
-                provider, run["language"], samples.sample_count
+                provider, run["language"], samples.sample_count, run["mode"]
             )
             key = _configuration_key(configuration)
             action = request.get("action")

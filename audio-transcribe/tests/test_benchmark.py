@@ -83,6 +83,35 @@ def test_worker_directories_do_not_reuse_prior_workspaces(
     assert first != second
 
 
+def test_native_whisper_uses_one_worker_and_entire_cpu_budget_for_long_audio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.asr.execution import WhisperCpuPolicy
+    from scripts.runtime_options import TranscribeOptions
+
+    monkeypatch.setattr("scripts.asr.execution.whisper_cpu.os.cpu_count", lambda: 8)
+    sample_count = 16_000 * 8 * 60
+    expected_project = WhisperCpuPolicy(
+        TranscribeOptions(language="zh")
+    ).execution_identity(sample_count)
+
+    _adapter, _policy, project, project_configuration = (
+        benchmark_worker.provider_runtime(
+            "faster-whisper", "zh", sample_count, "project-slicing"
+        )
+    )
+    _adapter, _policy, native, native_configuration = benchmark_worker.provider_runtime(
+        "faster-whisper", "zh", sample_count, "provider-native"
+    )
+
+    assert project == expected_project
+    assert project_configuration["num_workers"] == project["num_workers"]
+    assert project_configuration["cpu_threads"] == project["cpu_threads"]
+    assert native["cpu_budget"] == project["cpu_budget"] == 6
+    assert native["num_workers"] == native_configuration["num_workers"] == 1
+    assert native["cpu_threads"] == native_configuration["cpu_threads"] == 6
+
+
 def test_gpu_identity_is_sorted_and_uses_total_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -130,11 +159,11 @@ def test_persistent_worker_reuses_model_by_configuration(
     monkeypatch.setattr(
         benchmark_worker,
         "provider_runtime",
-        lambda _provider, _language, sample_count: (
+        lambda _provider, _language, sample_count, mode: (
             Adapter(),
             object(),
             {"policy": "test"},
-            {"model": "test", "workers": sample_count},
+            {"model": "test", "workers": sample_count, "mode": mode},
         ),
     )
 
@@ -156,19 +185,21 @@ def test_persistent_worker_reuses_model_by_configuration(
                 "provider": "faster-whisper",
                 "language": language,
                 "minutes": 8,
-                "mode": "project-slicing",
+                "mode": mode,
                 "repetition": repetition,
             },
             "audio": str(tmp_path / audio),
             "results_dir": str(tmp_path / f"results-{index}"),
         }
-        for index, (action, language, repetition, audio) in enumerate(
+        for index, (action, language, repetition, audio, mode) in enumerate(
             [
-                ("warmup", "zh", 0, "short.wav"),
-                ("warmup", "en", 0, "short.wav"),
-                ("run", "en", 1, "short.wav"),
-                ("warmup", "en", 0, "long.wav"),
-                ("run", "en", 1, "long.wav"),
+                ("warmup", "zh", 0, "short.wav", "project-slicing"),
+                ("warmup", "en", 0, "short.wav", "project-slicing"),
+                ("run", "en", 1, "short.wav", "project-slicing"),
+                ("warmup", "en", 0, "short.wav", "provider-native"),
+                ("run", "en", 1, "short.wav", "provider-native"),
+                ("warmup", "en", 0, "long.wav", "project-slicing"),
+                ("run", "en", 1, "long.wav", "project-slicing"),
             ]
         )
     ]
@@ -190,12 +221,14 @@ def test_persistent_worker_reuses_model_by_configuration(
         json.loads(line.removeprefix(benchmark_worker.PROTOCOL_PREFIX))
         for line in output_stream.getvalue().splitlines()
     ]
-    assert len(prepared_models) == 2
+    assert len(prepared_models) == 3
     assert used_models == [
         prepared_models[0],
         prepared_models[0],
         prepared_models[1],
         prepared_models[1],
+        prepared_models[2],
+        prepared_models[2],
     ]
     assert responses[2]["already_prepared"] is True
     assert all(item["session_id"] == responses[0]["session_id"] for item in responses)
