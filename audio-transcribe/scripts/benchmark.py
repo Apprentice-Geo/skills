@@ -286,16 +286,21 @@ def worker(
     audio = audio.resolve()
     started = time.perf_counter()
     if mode == "project-slicing":
-        manifest = run_transcribe(
+        outcome = run_transcribe(
             audio, language=language, provider=provider, results_dir=results_dir
         )
-        metrics = read_json(manifest.parent / "workspace" / "metrics.json")
+        manifest = outcome.manifest_path
+        if outcome.pipeline_outcome is None:
+            raise RuntimeError(
+                "Fresh project-slicing benchmark run produced no pipeline diagnostics"
+            )
+        metrics = outcome.pipeline_outcome.metrics
         request = read_json(manifest)["request"]
         text = transcript_text(manifest)
         identity = request["execution_policy"]
         provider_identity = request["provider_identity"]
         details = {
-            key: metrics.get(key)
+            key: getattr(metrics, key)
             for key in (
                 "provider_stage_seconds",
                 "chunk_count",

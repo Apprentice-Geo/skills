@@ -2,7 +2,7 @@
 
 ## 状态
 
-- 状态：计划中
+- 状态：实施中（阶段 1、2 已完成；阶段 3–5 待实施）
 - 记录日期：2026-09-04
 - 范围：私有 ASR workspace、pipeline diagnostics、benchmark 报告与代码布局
 

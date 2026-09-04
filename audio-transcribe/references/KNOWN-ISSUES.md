@@ -52,15 +52,13 @@
 
 ## KI-002：损坏 workspace result 阻断 chunk 恢复
 
-**结论：[KNOWN]** 在没有完整 manifest 的路径中，`run_transcribe()` 只检查 `workspace/result.json` 是否存在。文件存在时跳过 pipeline，随后由 `publish_result()` 严格读取；如果文件损坏，调用直接失败，不会利用已有 plan 和 chunks 重建它。
+**结论：[PARTIALLY RESOLVED 2026-09-04]** 没有完整 manifest 时，`run_transcribe()` 现在会先严格验证 `workspace/result.json`；文件损坏或身份不匹配时进入 pipeline，并可利用合法 plan 和 chunks 重建后再发布。
 
 类似地，已有 manifest 的公共 artifact 恢复只尝试使用 workspace snapshot；workspace 也损坏时不会转入 chunk cache 重建。后一个场景还涉及已发布 manifest 的不可变性和 digest 恢复规则，不能仅靠删除文件解决。
 
-影响是恢复能力低于已落盘信息理论上能够提供的能力，用户可能在合法 chunks 已齐全时仍需重新处理或人工移开损坏状态。
+剩余问题仅是“已有完整 manifest，但公共 artifact 与 workspace 同时损坏”的恢复边界。当前仍只尝试 workspace snapshot 恢复，不会转入 chunk pipeline；这涉及已发布 manifest 的不可变性和 digest 规则，需另行决策。
 
-数据流重构已经要求正常 CLI 验证 workspace result 而不是只检查存在性，并在无完整 manifest 的情况下从合法 chunks 重建，因此只覆盖本问题的第一个场景。对于“已有完整 manifest，但公共 artifact 与 workspace 同时损坏”的情况，实施前仍需确认是维持当前失败边界，还是允许 pipeline 重建后仅在公共 digest 完全一致时恢复原 manifest；完成第一个场景后不能直接关闭整个 KI-002。
-
-关闭条件：首先覆盖“无 manifest、workspace result 损坏、plan/chunks 合法”的 CLI 回归测试。对于已有 manifest 的第二个场景必须完成以下二选一决策后才能关闭整个问题：若保持当前失败边界，在架构和错误处理文档中把它声明为有意停止条件，并用测试固定原 manifest 与现有公共 artifact 不被改写；若扩展恢复边界，则覆盖 pipeline 重建后 digest 一致和不一致两种结果。
+关闭条件：对于剩余场景完成以下二选一决策：若保持当前失败边界，在架构和错误处理文档中把它声明为有意停止条件，并用测试固定原 manifest 与现有公共 artifact 不被改写；若扩展恢复边界，则覆盖 pipeline 重建后 digest 一致和不一致两种结果。
 
 ## KI-003：Reference 校验状态与 provenance 不一致
 

@@ -120,9 +120,11 @@ artifact 路径不是相对于 manifest 目录、artifact 使用绝对路径、�
 
 如果存在完整 manifest，命令首先验证它。有效 cache hit 返回现有 manifest 路径，不重新运行推理。
 
-私有 ASR cache 使用 schema v2，且仅存储 accepted 结果。旧 schema、错误 policy 或格式错误的 chunk 会失效并重新计算；cache 读取时严格重新验证 alignment。不得迁移或手动编辑旧 cache 条目。
+私有 ASR cache 只支持当前严格格式，且仅存储 accepted 结果。plan 通过重新计算的 `plan_id` 验证内容身份，chunk 必须绑定当前 `plan_id` 并在读取时重新验证 alignment。旧 schema、未知字段、错误身份、错误 policy 或格式错误的条目会自然失效；不得迁移或手动编辑旧 cache 条目。
 
-毫秒量化移除 zero-duration item 时，日志为每个受影响的 chunk 发出一条不含 transcript 文本的聚合 `WARNING`。部分恢复会为每个受影响的 cached chunk 重放一次警告，使新的 attempt 保持可审计。完整 manifest hit 以及复用所有 chunk cache 的 attempt 不会再次生成 cleanup 警告。
+毫秒量化移除 zero-duration item 时，日志为本次新接受的每个受影响 chunk 发出一条不含 transcript 文本的聚合 `WARNING`。cleanup report 不进入 chunk cache，因此部分或完整 chunk 恢复都不会重放历史警告。
+
+没有完整 manifest 时，命令会严格验证现有 `workspace/result.json`；snapshot 损坏或身份不匹配会进入 pipeline，并尽量从合法 plan/chunks 重建。合法 plan 不依赖 VAD cache；只有 plan miss 时才读取或重算 VAD。新运行不写 `progress.json` 或 `metrics.json`，但不会删除已有遗留文件。
 
 如果公共 artifact 缺失或损坏，仅当 `workspace/result.json` 能够重建 `transcript.json` 和 `raw_timestamps.json`，且其 SHA-256 digest 与隐藏 manifest 中记录的值完全一致时，才允许恢复。恢复成功时逐字节还原原始 manifest。
 

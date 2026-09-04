@@ -69,11 +69,11 @@ Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。
 
 对于 Qwen3-ASR，alignment-item probability 保持 `null`。其他被接受的 probability 必须是有限值，并位于 `[0, 1]` 内。
 
-## 私有 cache v2
+## 私有 cache
 
-ASR plan 和 chunk cache 使用私有 schema v2，并在 identity 中包含固定 alignment policy。chunk 仅在接受成功后写入。cache 写入不会重复验证，而每次 cache 读取都会严格重建并重新验证 accepted transcript。损坏、旧 schema 或错误 policy 的条目不得复用。
+私有 cache 只支持当前代码能够严格解析的格式，不承担 schema 兼容或迁移责任。`asr_plan.json` 通过 canonical plan payload 的 SHA-256 `plan_id` 绑定 source、Provider request、execution policy、VAD、规划参数和 chunk layouts；读取时重新计算身份并验证精确字段、类型和 layout 不变量。旧 schema、未知字段、错误 policy 或损坏数据自然成为 cache miss。
 
-每个 chunk payload 都持久化一个 `CleanupReport`，其中仅包含被移除的 zero-duration item 数量、最早被移除的 start 和最晚被移除的 end，禁止存储被移除的 transcript 文本。新推理会为每个受影响的 chunk 发出一条聚合 `WARNING`。部分恢复期间，每个受影响的 cached chunk 会为新的 attempt 重放一次该警告；完整 manifest cache hit 或全 chunk cache hit 不会产生新的 cleanup 警告。
+`vad_result.json` 只是 plan miss 时的可选输入。合法 plan 是 chunk 恢复的唯一权威，命中时不读取 VAD，也不从 VAD 重新推导 layout。chunk payload 仅保存 `plan_id`、`chunk_index`、accepted text 和 items；边界由 plan 恢复。Provider metadata、elapsed timing 和 `CleanupReport` 不落盘，因此 cleanup warning 只为本次新接受的 candidate 输出，不为 cached chunk 重放。
 
 ## 公共结果结构
 
@@ -83,16 +83,22 @@ results/<audio_id>/<provider>-<language>-<variant_id>/
 ├─ transcript.json
 ├─ raw_timestamps.json
 ├─ transcribe.log
-└─ workspace/result.json
+└─ workspace/
+   ├─ asr_plan.json
+   ├─ vad_result.json
+   ├─ chunk_results/
+   └─ result.json
 ```
 
 manifest 记录 audio identity、resolved request identity、受限于目录内的 artifact 路径，以及公共 artifact digest。成功的 consumer 从 `load_result` 获取经过验证的 manifest、transcript 和 timestamp snapshot；不返回部分结果。
 
-`workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `schema_version`、`text`、`items`、`duration`、`provider` 和 `language`。
+`workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `audio_id`、`variant_id`、`text`、`items`、`duration`、`provider` 和 `language`，并在读取、发布和恢复时与当前请求逐项验证。
 
 plan 和各 chunk 的 Provider 结果仍为独立的 workspace cache。当所有 chunk cache 都有效时，pipeline 会重新执行合并、timestamp offset、alignment 验证、文本与item 规范化以及 alignment 复验，然后原子替换`result.json`；此过程不加载 Provider。workspace 不存储 segment。包含 `plan`、`words` 或 `segments` 的旧版合并结果不会被读取或迁移。
 
 私有 `chunk_results/` 保留 Provider 文本。`workspace/result.json` 和两个公共 JSON artifact 仅包含规范化文本。规范化失败或规范化后的 alignment 失败会停止发布；恢复流程从已规范化的 workspace snapshot 确定性重建结果。
+
+pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗留的这两个文件。进度由 plan、合法 chunk 文件和本次日志推导；diagnostics 通过进程内 `PipelineOutcome` 返回给 benchmark，不属于公开结果合同。
 
 ## 公共 contract 与发布
 

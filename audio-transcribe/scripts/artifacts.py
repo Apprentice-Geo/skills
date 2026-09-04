@@ -25,7 +25,6 @@ from scripts.io_utils import (
 from scripts.text_normalization import normalize_transcript_text
 
 PUBLIC_SCHEMA_VERSION = 1
-WORKSPACE_SCHEMA_VERSION = 1
 
 
 # @contextmanager 让这个函数可以配合 with 使用
@@ -93,6 +92,8 @@ def _resolve_artifact_path(manifest_path: Path, relative_path: Any) -> Path:
 def write_workspace_result(
     workspace_path: Path,
     *,
+    audio_id: str,
+    variant_id: str,
     text: str,
     items: list[AlignmentItem],
     duration: float,
@@ -113,7 +114,11 @@ def write_workspace_result(
     write_json_atomic(
         workspace_path,
         {
-            "schema_version": WORKSPACE_SCHEMA_VERSION,
+            "audio_id": audio_id,
+            "variant_id": variant_id,
+            "provider": provider,
+            "language": language,
+            "duration": duration,
             "text": alignment.text,
             "items": [
                 {
@@ -124,16 +129,15 @@ def write_workspace_result(
                 }
                 for item in alignment.items
             ],
-            "duration": duration,
-            "provider": provider,
-            "language": language,
         },
     )
 
 
-def _workspace_alignment(
+def load_workspace_result(
     workspace_path: Path,
     *,
+    expected_audio_id: Any,
+    expected_variant_id: Any,
     expected_provider: Any,
     expected_language: Any,
     expected_duration: Any,
@@ -143,7 +147,8 @@ def _workspace_alignment(
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise ResultValidationError("Invalid workspace result.") from None
     expected_keys = {
-        "schema_version",
+        "audio_id",
+        "variant_id",
         "text",
         "items",
         "duration",
@@ -153,8 +158,12 @@ def _workspace_alignment(
     if (
         not isinstance(workspace, dict)
         or set(workspace) != expected_keys
-        or type(workspace.get("schema_version")) is not int
-        or workspace["schema_version"] != WORKSPACE_SCHEMA_VERSION
+        or not isinstance(workspace["audio_id"], str)
+        or not workspace["audio_id"]
+        or workspace["audio_id"] != expected_audio_id
+        or not isinstance(workspace["variant_id"], str)
+        or not workspace["variant_id"]
+        or workspace["variant_id"] != expected_variant_id
         or not isinstance(workspace["text"], str)
         or not workspace["text"].strip()
         or not isinstance(workspace["items"], list)
@@ -231,8 +240,10 @@ def _public_payloads(
     language: Any,
     duration: Any,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    alignment, duration, provider, language = _workspace_alignment(
+    alignment, duration, provider, language = load_workspace_result(
         workspace_path,
+        expected_audio_id=audio_id,
+        expected_variant_id=variant_id,
         expected_provider=provider,
         expected_language=language,
         expected_duration=duration,

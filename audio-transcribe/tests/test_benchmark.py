@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -78,6 +80,77 @@ def test_native_whisper_uses_entire_cpu_budget_for_one_inference(
     assert identity["cpu_budget"] == 6
     assert identity["cpu_threads"] == 6
     assert identity["num_workers"] == 1
+
+
+def test_project_slicing_worker_uses_in_memory_pipeline_metrics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_path = tmp_path / "result_manifest.json"
+    transcript_path = tmp_path / "transcript.json"
+    transcript_path.write_text(
+        json.dumps({"segments": [{"text": "transcribed"}]}), encoding="utf-8"
+    )
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "request": {
+                    "execution_policy": {"policy": "test"},
+                    "provider_identity": {"provider": "test"},
+                },
+                "artifacts": {"transcript": transcript_path.name},
+            }
+        ),
+        encoding="utf-8",
+    )
+    metrics = SimpleNamespace(
+        provider_stage_seconds=1.25,
+        chunk_count=2,
+        batch_count=1,
+        hard_cut_count=0,
+        max_estimated_speech_duration=3.5,
+        speech_load_msre=0.125,
+    )
+    monkeypatch.setattr(
+        "scripts.transcribe.run_transcribe",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            manifest_path=manifest_path,
+            pipeline_outcome=SimpleNamespace(metrics=metrics),
+        ),
+    )
+
+    result = benchmark.worker(
+        tmp_path / "audio.wav",
+        "faster-whisper",
+        "zh",
+        "project-slicing",
+        tmp_path,
+    )
+
+    assert result["text"] == "transcribed"
+    assert result["provider_stage_seconds"] == 1.25
+    assert result["chunk_count"] == 2
+    assert result["speech_load_msre"] == 0.125
+
+
+def test_project_slicing_worker_rejects_missing_pipeline_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "scripts.transcribe.run_transcribe",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            manifest_path=tmp_path / "result_manifest.json",
+            pipeline_outcome=None,
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="no pipeline diagnostics"):
+        benchmark.worker(
+            tmp_path / "audio.wav",
+            "faster-whisper",
+            "zh",
+            "project-slicing",
+            tmp_path,
+        )
 
 
 def test_each_provider_warms_immediately_before_its_runs(

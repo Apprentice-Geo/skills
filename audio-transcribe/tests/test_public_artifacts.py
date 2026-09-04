@@ -52,9 +52,12 @@ def _publication_inputs(
         "language": "en",
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }
+    audio_id = "a" * 64
     variant_id = canonical_sha256(canonical_request)
     write_workspace_result(
         variant_dir / "workspace" / "result.json",
+        audio_id=audio_id,
+        variant_id=variant_id,
         text="ok",
         items=[AlignmentItem("ok", 0.0, 0.5, None)],
         duration=1.0,
@@ -64,7 +67,7 @@ def _publication_inputs(
     (variant_dir / "transcribe.log").write_text("test\n", encoding="utf-8")
     return (
         {
-            "id": "a" * 64,
+            "id": audio_id,
             "size": 10,
             "sample_count": 16_000,
             "sample_rate": 16_000,
@@ -197,7 +200,7 @@ def test_content_identity_reuses_result_after_input_rename(
         results_dir=results,
         decoder=lambda _path: _samples(),
         engine=_engine_calls(calls),
-    )
+    ).manifest_path
     first.rename(second)
     second_manifest = run_transcribe(
         second,
@@ -206,7 +209,7 @@ def test_content_identity_reuses_result_after_input_rename(
         results_dir=results,
         decoder=lambda _path: _samples(),
         engine=_engine_calls(calls),
-    )
+    ).manifest_path
 
     assert first_manifest == second_manifest
     assert calls == [1]
@@ -253,13 +256,15 @@ def test_first_success_log_is_complete_and_cache_calls_do_not_modify_it(
         "decoder": lambda _path: _samples(),
         "engine": engine,
     }
-    manifest_path = run_transcribe(audio, **kwargs)
+    manifest_path = run_transcribe(audio, **kwargs).manifest_path
     log_path = manifest_path.parent / "transcribe.log"
     original_log = log_path.read_bytes()
 
     assert b"Transcription invocation:" in original_log
     assert b"engine completed" in original_log
-    assert run_transcribe(audio, **kwargs) == manifest_path
+    cached = run_transcribe(audio, **kwargs)
+    assert cached.manifest_path == manifest_path
+    assert cached.pipeline_outcome is None
     assert log_path.read_bytes() == original_log
 
 
@@ -283,7 +288,9 @@ def test_failed_attempt_log_is_replaced_by_first_success(
     with pytest.raises(RuntimeError, match="expected failure"):
         run_transcribe(audio, engine=fail, **kwargs)
 
-    manifest_path = run_transcribe(audio, engine=_engine_calls([]), **kwargs)
+    manifest_path = run_transcribe(
+        audio, engine=_engine_calls([]), **kwargs
+    ).manifest_path
     log_text = (manifest_path.parent / "transcribe.log").read_text(encoding="utf-8")
     assert "failed attempt marker" not in log_text
     assert "Transcription invocation:" in log_text
@@ -301,7 +308,7 @@ def test_malformed_manifest_is_hidden_before_recovery(
         "decoder": lambda _path: _samples(),
         "engine": _engine_calls([]),
     }
-    manifest_path = run_transcribe(audio, **kwargs)
+    manifest_path = run_transcribe(audio, **kwargs).manifest_path
     manifest_path.write_text("{", encoding="utf-8")
 
     with pytest.raises(ValueError):
@@ -325,6 +332,8 @@ def test_quantized_segment_end_recovers_identically(
     variant_id = canonical_sha256(canonical_request)
     write_workspace_result(
         workspace_path,
+        audio_id=audio_id,
+        variant_id=variant_id,
         text="末",
         items=[AlignmentItem("末", 0.0, 1.0, None)],
         duration=duration,
@@ -394,6 +403,50 @@ def test_preprocessing_decodes_and_runs_vad_once_before_language_resolution(
     assert calls == {"decode": 1, "vad": 1, "language": 1}
 
 
+def test_specified_language_does_not_run_vad_for_engine(
+    workspace_tmp_path: Path,
+) -> None:
+    audio = workspace_tmp_path / "audio.bin"
+    audio.write_bytes(b"audio")
+
+    run_transcribe(
+        audio,
+        language="zh",
+        provider="faster-whisper",
+        results_dir=workspace_tmp_path / "results",
+        decoder=lambda _path: _samples(),
+        vad_detector=lambda _audio: pytest.fail("VAD ran for a specified language"),
+        engine=_engine_calls([]),
+    )
+
+
+def test_invalid_workspace_without_manifest_is_rebuilt(
+    workspace_tmp_path: Path,
+) -> None:
+    audio = workspace_tmp_path / "audio.bin"
+    audio.write_bytes(b"audio")
+    calls: list[int] = []
+    kwargs = {
+        "language": "zh",
+        "provider": "faster-whisper",
+        "results_dir": workspace_tmp_path / "results",
+        "decoder": lambda _path: _samples(),
+        "engine": _engine_calls(calls),
+    }
+    first = run_transcribe(audio, **kwargs).manifest_path
+    workspace_path = first.parent / "workspace" / "result.json"
+    workspace_path.write_text("{", encoding="utf-8")
+    first.unlink()
+    (first.parent / "transcript.json").unlink()
+    (first.parent / "raw_timestamps.json").unlink()
+
+    rebuilt = run_transcribe(audio, **kwargs).manifest_path
+
+    assert rebuilt == first
+    assert calls == [1, 1]
+    load_result(rebuilt)
+
+
 def test_missing_public_artifact_is_rebuilt_without_inference(
     workspace_tmp_path: Path,
 ) -> None:
@@ -407,11 +460,11 @@ def test_missing_public_artifact_is_rebuilt_without_inference(
         "decoder": lambda _path: _samples(),
         "engine": _engine_calls(calls),
     }
-    manifest_path = run_transcribe(audio, **kwargs)
+    manifest_path = run_transcribe(audio, **kwargs).manifest_path
     original_manifest = manifest_path.read_bytes()
     (manifest_path.parent / "transcript.json").unlink()
 
-    assert run_transcribe(audio, **kwargs) == manifest_path
+    assert run_transcribe(audio, **kwargs).manifest_path == manifest_path
     assert calls == [1]
     assert manifest_path.read_bytes() == original_manifest
     load_result(manifest_path)
@@ -468,6 +521,8 @@ def test_workspace_without_current_fields_is_rejected(
     "mutate",
     [
         lambda workspace: workspace.__setitem__("extra", True),
+        lambda workspace: workspace.__setitem__("audio_id", "b" * 64),
+        lambda workspace: workspace.__setitem__("variant_id", "c" * 64),
         lambda workspace: workspace.__setitem__("duration", "1.0"),
         lambda workspace: workspace.__setitem__("duration", 2.0),
         lambda workspace: workspace.__setitem__("provider", 1),
@@ -520,6 +575,10 @@ def test_candidate_validation_failure_never_publishes_manifest(
     request["variant_id"] = canonical_sha256(
         {key: value for key, value in request.items() if key != "variant_id"}
     )
+    workspace_path = variant_dir / "workspace" / "result.json"
+    workspace = read_json(workspace_path)
+    workspace["variant_id"] = request["variant_id"]
+    write_json_atomic(workspace_path, workspace)
 
     with pytest.raises(ResultValidationError, match="alignment_policy"):
         publish_result(variant_dir, audio=audio, request=request)
@@ -559,7 +618,7 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
         "decoder": lambda _path: _samples(),
         "engine": _engine_calls([]),
     }
-    manifest_path = run_transcribe(audio, **kwargs)
+    manifest_path = run_transcribe(audio, **kwargs).manifest_path
     workspace_path = manifest_path.parent / "workspace" / "result.json"
     workspace = read_json(workspace_path)
     workspace["text"] = "再见。"
@@ -572,6 +631,26 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
 
     with pytest.raises(ResultValidationError, match="does not match"):
         run_transcribe(audio, **kwargs)
+
+    assert manifest_path.is_file()
+
+
+@pytest.mark.parametrize("identity_field", ["audio_id", "variant_id"])
+def test_recovery_rejects_workspace_with_wrong_identity(
+    workspace_tmp_path: Path,
+    identity_field: str,
+) -> None:
+    variant_dir = workspace_tmp_path / "variant"
+    audio, request = _publication_inputs(variant_dir)
+    manifest_path = publish_result(variant_dir, audio=audio, request=request)
+    workspace_path = variant_dir / "workspace" / "result.json"
+    workspace = read_json(workspace_path)
+    workspace[identity_field] = "f" * 64
+    write_json_atomic(workspace_path, workspace)
+    (variant_dir / "transcript.json").unlink()
+
+    with pytest.raises(ResultValidationError, match="Invalid workspace result"):
+        recover_public_artifacts(manifest_path)
 
     assert manifest_path.is_file()
 
@@ -615,7 +694,7 @@ def test_fake_engine_uses_provider_acceptance_boundary(
                 AlignmentItem("echo", 0.1004, 0.5, 0.8),
             ),
         ),
-    )
+    ).manifest_path
 
     result = load_result(manifest_path)
     assert [item["text"] for item in result.raw_timestamps["items"]] == ["echo"]
@@ -628,6 +707,8 @@ def test_workspace_normalizes_public_text_and_items(workspace_tmp_path: Path) ->
 
     write_workspace_result(
         workspace_path,
+        audio_id="a" * 64,
+        variant_id="b" * 64,
         text="Ａ臺灣。",
         items=[AlignmentItem("Ａ臺灣。", 0.0, 0.5, None)],
         duration=1.0,
@@ -636,6 +717,9 @@ def test_workspace_normalizes_public_text_and_items(workspace_tmp_path: Path) ->
     )
 
     workspace = read_json(workspace_path)
+    assert workspace["audio_id"] == "a" * 64
+    assert workspace["variant_id"] == "b" * 64
+    assert "schema_version" not in workspace
     assert workspace["text"] == "A台湾。"
     assert workspace["items"][0]["text"] == "A台湾。"
 
@@ -647,6 +731,8 @@ def test_workspace_projects_phrase_normalization_onto_items(
 
     write_workspace_result(
         workspace_path,
+        audio_id="a" * 64,
+        variant_id="b" * 64,
         text="彷彿",
         items=[
             AlignmentItem("彷", 0.0, 0.2, 0.9),
@@ -670,6 +756,8 @@ def test_workspace_merges_items_for_length_changing_normalization(
 
     write_workspace_result(
         workspace_path,
+        audio_id="a" * 64,
+        variant_id="b" * 64,
         text="㍿",
         items=[AlignmentItem("㍿", 0.1, 0.6, 0.7)],
         duration=1.0,
@@ -689,6 +777,8 @@ def test_non_zh_workspace_only_applies_nfkc(workspace_tmp_path: Path) -> None:
 
     write_workspace_result(
         workspace_path,
+        audio_id="a" * 64,
+        variant_id="b" * 64,
         text="Ａ臺灣",
         items=[AlignmentItem("Ａ臺灣", 0.0, 0.5, None)],
         duration=1.0,

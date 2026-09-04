@@ -74,7 +74,9 @@ def test_main_reports_elapsed_time_before_manifest(
     times = iter((10.0, 10.0 + elapsed))
     monkeypatch.setattr(transcribe.time, "perf_counter", lambda: next(times))
     monkeypatch.setattr(
-        transcribe, "run_transcribe", lambda *_args, **_kwargs: manifest
+        transcribe,
+        "run_transcribe",
+        lambda *_args, **_kwargs: transcribe.TranscribeOutcome(manifest, None),
     )
 
     assert transcribe.main(["audio.wav"]) == 0
