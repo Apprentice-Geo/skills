@@ -219,7 +219,7 @@ def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
     assert "Reference CER/WER" in markdown
     assert "Mode difference" in markdown
     assert "Punctuation (hypothesis/reference)" in markdown
-    assert "not an absolute accuracy measure" in markdown
+    assert "not an absolute accuracy measure" not in markdown
     assert "100.000%" in markdown
     assert "| zh | 8 | provider-native" in markdown
     assert markdown.count("100.000%") == 2

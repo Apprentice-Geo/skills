@@ -603,8 +603,6 @@ def summarize(report: dict[str, Any]) -> str:
         "",
         f"Reference manifest SHA256: `{reference_set['manifest_sha256']}`",
         "",
-        "Reference CER/WER uses source text with Qwen3-ASR assistance under a methodology limited to spot checks at disputed locations and sample boundaries rather than full word-by-word proofreading. It is not an absolute accuracy measure and may retain undetected reading/source differences; review status is documented in benchmark/README.md and the reference plan.",
-        "",
         "Only successful runs are summarized.",
         "",
     ]

@@ -11,10 +11,10 @@
 
 - 已加入八个相邻静态文本片段、严格 loader、Reference CER/WER、schema 3 报告、冻结样本集恢复规则、Markdown 摘要和相应测试。loader 还在 worker 前验证所选 WAV 为非空单声道 16 kHz/16-bit PCM，这是计划中“WAV 错误前置失败”的具体实现。
 - 首次真实 smoke 发现旧的确定性 `benchmark/tmp/<run-id>` 路径可能复用另一报告遗留的 workspace；实现改为每次 worker 路径追加随机 nonce，并以全新报告重跑验证，保证计划要求的运行隔离。
-- 隔离后的真实 smoke 使用 faster-whisper、中文 8 分钟、两种 mode、单 repetition：warmup 和正式 `project-slicing` 均报告 `cache: reused=0`，两个正式 run 均成功并写入 Reference CER，配对的 project run 写入 Mode difference；报告为 schema 3。完整 96-run 矩阵仍按计划交由维护者执行。
+- 隔离后的真实 smoke 使用 faster-whisper、中文 8 分钟、两种 mode、单 repetition：warmup 和正式 `project-slicing` 均报告 `cache: reused=0`，两个正式 run 均成功并写入 Reference CER，配对的 project run 写入 Mode difference；报告为 schema 3。维护者随后完成 schema 3 的完整矩阵，96 个正式 run 全部成功，无失败 attempt。
 - 中英文 reference 已由不同制作任务完成，并由未参与制作的任务独立检查固定来源、片段连续性、截点定位、明显错漏和制作标记。中文正文与固定《呐喊》底本机械一致；英文正文与 1925 扫描转写机械一致；底本外口播和截点均有旧报告中 Qwen3-ASR 两种 mode 的一致定位证据。
-- 当前 Agent 环境不能播放或理解本地音频，因此没有完成、也不声称完成计划要求的人耳定点听校。维护者应在发布新的完整 benchmark 报告前，人工复核八个截点、各段片头/片尾口播，以及英文录音可能采用后期修订词的 `confusion/arresting`、`said`、`startlingly`、`restaurants` 和 `surplus flesh` 等位置。除这一验收项外，本文所列实现和自动验证均已完成。
-- 人工校对以后移除了 benchmark\references\manifest.json 原有的 method 和 assistance 字段，文本处理记录见 benchmark\README
+- 自动化实现阶段的 Agent 无法播放或理解本地音频；此后维护者已完成人工听校，包括八个截点、各段片头/片尾口播，以及英文录音可能采用后期修订词的 `confusion/arresting`、`said`、`startlingly`、`restaurants` 和 `surplus flesh` 等位置。本计划要求的人工验收项已完成。
+- 维护者在人工听校后手动移除了 `benchmark/references/manifest.json` 原有的 `method` 和 `assistance` 字段。Reference 制作与文本处理记录保留在 [`benchmark/README.md`](../benchmark/README.md)，不作为 manifest schema 或每份报告的固定字段重复保存。
 
 ## 背景
 
@@ -125,7 +125,7 @@ Reference 由维护者一次性制作并作为普通静态数据提交，不新�
 5. 利用四个累积样本的输出初步定位 8、16、32、64 分钟结束位置，再逐一听取每个截点附近的音频，确认最后一个完整口语单位后把最长正文拆为四个相邻片段。无法唯一确认时停止该语言的制作，不猜测文本。
 6. 通过将来实现的 reference loader 运行一次完整校验，确认片段摘要、四个音频摘要、顺序、路径和规范化后非空。只提交最终片段与 `manifest.json`；临时下载、抽取、对齐命令和中间校订文件不进入仓库。
 
-Qwen3 只承担导航和差异提示职责，不因两个 mode 使用同一模型或重复运行结果一致而提升为 ground truth。后续若进行全量人工听校，应更新 `method`、受影响片段摘要和报告中的 reference identity，而不是无痕覆盖。
+Qwen3 只承担导航和差异提示职责，不因两个 mode 使用同一模型或重复运行结果一致而提升为 ground truth。后续若扩大人工听校范围或修改 reference，应更新受影响片段摘要、报告中的 reference identity，以及 `benchmark/README.md` 的校订记录，而不是无痕覆盖。
 
 ## Benchmark 指标与报告改动
 
@@ -164,7 +164,7 @@ Qwen3 只承担导航和差异提示职责，不因两个 mode 使用同一模�
 - 每个 mode 行增加中位 `Reference CER` 或 `Reference WER`。
 - 保留 `project-slicing` 行上的模式间 Difference，并将标题明确为 `Mode difference`。
 - 标点列以 `hypothesis/reference` 显示当前 mode 与 reference 的数量；原有 project/native 标点比较可留在 JSON 中，不再挤入同一个 Markdown 单元格。
-- 报告开头展示 reference method 和 manifest digest，并固定说明该 reference 为 source-text、Qwen3-assisted、仅争议位置经过人工定点听校而未全量逐字听校，指标不是绝对准确率且可能包含未发现的朗读/底本差异。
+- 报告开头展示 reference manifest digest，不重复写入固定的 method、assistance 或人工听校说明；Reference 来源和校订过程由 `benchmark/README.md` 统一记录。
 - 当某个成功 run 缺少有效 reference comparison 时，摘要生成应失败，不输出看似完整的表格。
 
 ## 实现步骤
@@ -206,7 +206,7 @@ uv run --no-sync python -m scripts.benchmark --report benchmark/reports/<YYYY-MM
 - schema 3 报告写入和 reference identity 相同的断点续跑：成功 run 跳过，失败 attempt 保留并重试；reference identity、comparison policy 或报告结构变化时必须在推理前失败。
 - schema 2 及其他旧 schema 报告不迁移，读取时明确失败并要求使用新的报告路径完整重跑。
 - `output_comparison` 的现有配对和中位数行为不回归。
-- Markdown 同时显示 reference 错误率、mode difference 和 Qwen3-assisted 声明。
+- Markdown 同时显示 reference 错误率和 mode difference，不重复 `benchmark/README.md` 中的 Reference 制作与校订说明。
 - 自动化验证之外，Agent 只运行一次 8 分钟、单 repetition 的真实 smoke test；完整 96-run benchmark 明确由维护者在开发完成后执行。
 
 聚焦验证命令：
@@ -219,7 +219,7 @@ uv run ruff format --check .
 git diff --check
 ```
 
-reference 制作还需运行一次真实数据检查，确认静态文件绑定当前 `samples.json` 的八个摘要。由于本阶段只进行争议位置和截点的人工定点听校，验证结果只能声明数据结构、来源、定位规则、自动一致性与定点复核通过，不能声明整份 reference 已被逐字人耳验证。
+Reference 已完成真实数据检查和本计划要求的人工听校，静态文件绑定当前 `samples.json` 的八个摘要。当前校订范围和制作过程以 `benchmark/README.md` 为准；除非另有明确记录，不把 Reference CER/WER 描述为绝对准确率。
 
 ## 验收标准
 
@@ -228,7 +228,7 @@ reference 制作还需运行一次真实数据检查，确认静态文件绑定�
 - 每个成功 run 都有以 reference 为分母的 CER 或 WER；两种 mode 均可独立比较。
 - 中文 hypothesis 与 reference 均经 NFKC 和 OpenCC `t2s` 后再计算 CER，繁简字形差异不单独计错。
 - 现有 `output_comparison` 继续可用，报告不会把它描述成相对于真实文本的准确率。
-- 报告明确记录 reference 来源、digest、`source-text-qwen3-assisted-spot-checked` 方法和未经全量逐字人工听校的限制。
+- 报告记录 reference manifest digest；reference 来源、Qwen3 辅助定位和已完成的人工听校记录保留在 `benchmark/README.md`，不要求 manifest 或报告保存 `method`、`assistance` 字段。
 - Agent 已通过自动化检查和最短 8 分钟音频的真实 smoke test，不要求其运行完整矩阵。
 - 维护者使用新的固定报告路径运行完整 benchmark；命令中断后可跳过已成功 run 并重试失败 run，最终得到 96 个成功正式 run。
 - 维护者新增一份以完整运行日期命名、可提交的 `references/BENCHMARK-<YYYY-MM-DD>.md`，并保留 2026-08-22 历史记录。

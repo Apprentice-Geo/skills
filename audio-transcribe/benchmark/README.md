@@ -18,7 +18,9 @@ uv run --no-sync python -m benchmark.prepare_audio --pin-sha256
 
 提交到 [references/](references/) 的八个 UTF-8/LF 文本片段为中英文 8、16、32、64 分钟样本提供累积 reference。`manifest.json` 记录作品、作者、朗读者、音频和固定底本 URL，并把每个片段的原始 SHA256、每个 WAV 的 SHA256 与 `benchmark/data/samples.json` 绑定。运行期只读这些文件，不生成、修复或改写 reference。
 
-Reference 以公版原著底本为正文来源，并用 2026-08-22 报告中 Qwen3-ASR 的 `project-slicing` 和 `provider-native` 去重输出辅助定位，再对底本外口播、模型提示的朗读/底本冲突和四个截点定点进行人工听校。
+Reference 以公版原著底本为正文来源，并用 Qwen3-ASR 的 `project-slicing` 和 `provider-native` 去重输出辅助定位，再对底本外口播、朗读/底本冲突和四个截点定点进行人工听校。
+
+人工听校并非对整段录音进行了全量逐字听写式校订；因此该 Reference 是固定评估基准，而不是完整录音 ground truth，Reference CER/WER 也不应表述为绝对准确率。
 
 中文 hypothesis 与 reference 对称执行 NFKC、OpenCC `t2s`，再删除 Unicode 空白和标点，以 reference 字符数为 CER 分母。英文两侧执行 NFKC、`casefold` 后提取 Unicode 单词，保留词内 `'` 和 `’`，以 reference 词数为 WER 分母。标点单独按 Unicode 标点计数。
 
