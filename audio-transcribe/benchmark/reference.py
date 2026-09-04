@@ -11,7 +11,6 @@ from scripts.io_utils import sha256_file
 
 LANGUAGES = ("zh", "en")
 MINUTES = (8, 16, 32, 64)
-REFERENCE_SCHEMA_VERSION = 1
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -86,10 +85,8 @@ def load_reference_manifest(path: Path) -> dict[str, Any]:
     manifest = _require_object(
         value,
         "reference manifest",
-        {"schema_version", "languages"},
+        {"languages"},
     )
-    if manifest["schema_version"] != REFERENCE_SCHEMA_VERSION:
-        raise ValueError("Unsupported reference manifest schema")
 
     languages = _require_object(
         manifest["languages"], "reference languages", set(LANGUAGES)
@@ -163,7 +160,6 @@ def load_reference_manifest(path: Path) -> dict[str, Any]:
             "parts": normalized_parts,
         }
     return {
-        "schema_version": manifest["schema_version"],
         "languages": normalized_languages,
         "manifest_sha256": hashlib.sha256(raw).hexdigest(),
         "root": root,
@@ -312,7 +308,6 @@ def freeze_reference_set(
     manifest: dict[str, Any], samples: dict[tuple[str, int], dict[str, Any]]
 ) -> dict[str, Any]:
     return {
-        "schema_version": manifest["schema_version"],
         "manifest_sha256": manifest["manifest_sha256"],
         "samples": [
             {

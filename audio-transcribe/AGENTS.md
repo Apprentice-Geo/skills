@@ -66,8 +66,8 @@ uv run --no-sync python -m benchmark.prepare_audio --pin-sha256
 运行完整或筛选后的 benchmark：
 
 ```powershell
-uv run --no-sync python -m scripts.benchmark
-uv run --no-sync python -m scripts.benchmark --provider faster-whisper --language zh --minutes 8
+uv run --no-sync python -m benchmark
+uv run --no-sync python -m benchmark --provider faster-whisper --language zh --minutes 8
 ```
 
 提交前运行检查：

@@ -9,22 +9,35 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmark.prepare_audio import safe_cut
-from scripts import benchmark
-from scripts.benchmark import (
+from benchmark import runner as benchmark
+from benchmark import worker as benchmark_worker
+from benchmark.metrics import (
     COMPARISON_POLICY,
-    build_matrix,
     compare_reference,
     compare_text,
     edit_distance,
-    native_whisper_configuration,
-    summarize,
 )
+from benchmark.prepare_audio import safe_cut
+from benchmark.report import summarize
+from benchmark.runner import build_matrix
+from benchmark.worker import native_whisper_configuration, worker
 
 
 def test_prepare_audio_module_help() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "benchmark.prepare_audio", "--help"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("module", ["benchmark", "benchmark.worker"])
+def test_benchmark_module_help(module: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", module, "--help"],
         cwd=Path(__file__).resolve().parents[1],
         capture_output=True,
         text=True,
@@ -59,10 +72,10 @@ def test_matrix_alternates_modes_and_keeps_repetitions() -> None:
 def test_worker_directories_do_not_reuse_prior_workspaces(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path)
+    monkeypatch.setattr(benchmark_worker, "TMP_DIR", tmp_path)
 
-    first = benchmark.fresh_worker_directory("same-run")
-    second = benchmark.fresh_worker_directory("same-run")
+    first = benchmark_worker.fresh_worker_directory("same-run")
+    second = benchmark_worker.fresh_worker_directory("same-run")
 
     assert first.parent == tmp_path
     assert second.parent == tmp_path
@@ -118,7 +131,7 @@ def test_project_slicing_worker_uses_in_memory_pipeline_metrics(
         ),
     )
 
-    result = benchmark.worker(
+    result = worker(
         tmp_path / "audio.wav",
         "faster-whisper",
         "zh",
@@ -144,7 +157,7 @@ def test_project_slicing_worker_rejects_missing_pipeline_diagnostics(
     )
 
     with pytest.raises(RuntimeError, match="no pipeline diagnostics"):
-        benchmark.worker(
+        worker(
             tmp_path / "audio.wav",
             "faster-whisper",
             "zh",
@@ -164,6 +177,8 @@ def test_each_provider_warms_immediately_before_its_runs(
             **run,
             "status": "succeeded",
             "text": "",
+            "execution_identity": {"policy": "test"},
+            "provider_identity": {"provider": run["provider"]},
             "run_id": benchmark.run_id(run),
             "wall_seconds": 1.0,
             "rtf": 0.1,
@@ -175,7 +190,6 @@ def test_each_provider_warms_immediately_before_its_runs(
         benchmark,
         "load_reference_manifest",
         lambda _path: {
-            "schema_version": 1,
             "manifest_sha256": "0" * 64,
         },
     )
@@ -195,7 +209,6 @@ def test_each_provider_warms_immediately_before_its_runs(
     )
     monkeypatch.setattr(benchmark, "environment", lambda: {})
     monkeypatch.setattr(benchmark, "DATA_DIR", tmp_path / "data")
-    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path / "tmp")
     args = argparse.Namespace(
         report=tmp_path / "report.json",
         provider=["faster-whisper", "qwen3-asr"],
@@ -271,7 +284,6 @@ def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
         {
             "comparison_policy": COMPARISON_POLICY,
             "reference_set": {
-                "schema_version": 1,
                 "manifest_sha256": "0" * 64,
                 "samples": [
                     {
@@ -301,7 +313,6 @@ def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
 def test_summary_rejects_success_without_reference_comparison() -> None:
     report = {
         "reference_set": {
-            "schema_version": 1,
             "manifest_sha256": "0" * 64,
             "samples": [
                 {

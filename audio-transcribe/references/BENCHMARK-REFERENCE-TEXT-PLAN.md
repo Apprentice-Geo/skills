@@ -1,5 +1,7 @@
 # Benchmark 固定 Reference 评估计划
 
+> 此文件是已完成的历史实施记录，其中的 schema 3 与 `scripts.benchmark` 描述仅反映当时实现。当前命令和无 schema 报告合同以 [`benchmark/README.md`](../benchmark/README.md) 为准。
+
 ## 状态
 
 - 状态：已实施

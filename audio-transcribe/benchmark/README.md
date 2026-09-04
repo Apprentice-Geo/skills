@@ -29,24 +29,26 @@ Reference 以公版原著底本为正文来源，并用 Qwen3-ASR 的 `project-s
 完整矩阵为 2 种语言 × 2 个 Provider × 4 档长度 × 2 种 mode × 3 次重复：
 
 ```powershell
-uv run --no-sync python -m scripts.benchmark
+uv run --no-sync python -m benchmark
 ```
 
 筛选参数可以重复提供：
 
 ```powershell
-uv run --no-sync python -m scripts.benchmark --provider faster-whisper --language zh --minutes 8 --mode project-slicing --mode provider-native
+uv run --no-sync python -m benchmark --provider faster-whisper --language zh --minutes 8 --mode project-slicing --mode provider-native
 ```
 
-`--repetitions` 控制重复次数，`--report` 指定 JSON 路径。默认报告为 `benchmark/reports/<当天日期>.json`，Markdown 写到同名文件。首次创建 schema 3 报告时会冻结当次选择的“语言 × 时长”样本集合及 reference identity；恢复时可运行这个集合的子集，也可增加 Provider、mode 或 repetition，但不得向同一路径加入新语言或时长。需要扩展样本集合或 reference/comparison policy 已变化时，必须使用新的报告路径。
+`--repetitions` 控制重复次数，`--report` 指定 JSON 路径。默认报告为 `benchmark/reports/<当天日期>.json`，Markdown 写到同名文件。新报告会冻结完整的 Provider、语言、时长、mode 和 repetition config；续跑时，未显式提供的矩阵参数继承报告值，显式参数规范化后必须与完整 config 一致。扩展或缩小矩阵必须使用新报告路径。
 
-已有 schema 3 JSON 会原子合并：成功 run 经 identity 和 Reference CER/WER 重算校验后跳过，失败 attempt 保留并在下次执行时追加重试。schema 2 及更旧报告不迁移、不重评分，必须用新路径完整重跑。每个 Provider 在自身测试开始前使用当前矩阵的第一个已选样本，以 `project-slicing` 和 `repetition=0` 预热一次；warmup 不进入统计，也不计算 Reference CER/WER。每次 worker 使用独立子进程和带随机 nonce 的 `benchmark/tmp/<run-id>-<nonce>/results/`，不会复用旧报告或先前运行留下的结果、workspace 和模型进程。
+当前格式 JSON 会原子保存恢复点：成功 run 按 identity 跳过，失败 attempt 保留并在下次执行时追加重试。旧格式不迁移、不重评分，也不为已有成功 run 重新计算指标；无法按当前结构读取时必须使用新报告路径。每个 Provider 在自身测试开始前使用 config 的第一个样本，以 `project-slicing` 和 `repetition=0` 预热一次；warmup 不进入统计，也不计算 Reference CER/WER。每次 worker 使用独立子进程和带随机 nonce 的 `benchmark/tmp/<run-id>-<nonce>/results/`，不会复用旧报告或先前运行留下的结果、workspace 和模型进程。
+
+续跑不会根据代码提交、依赖、模型 revision、Provider identity、execution identity 或机器自动拒绝已有报告。恢复提示假设这些条件没有变化；任何条件变化后都应使用新报告路径，否则报告可能混合不可直接比较的结果。顶层 `environment` 仅是报告创建时的快照。
 
 ## 模式与报告
 
 - `project-slicing` 调用生产 `run_transcribe()`，包括 VAD、规划、Provider、合并和公开 artifact 发布。
 - `provider-native` 复用生产 Provider adapter、模型参数和 execution identity，但完整音频只作为一个 Provider 输入，不调用项目 VAD、规划、合并或发布。faster-whisper 的单次原生推理显式使用与 `project-slicing` 相同的 CPU budget 作为 `cpu_threads`，使两种模式拥有相同的 CPU 线程预算。Qwen3-ASR 0.0.6 在时间戳模式下仍可能原生按最长 180 秒切分。
 
-JSON 保留原始 run、失败、预热、环境、模型 revision、wall/Provider stage、RTF、进程树峰值 RSS 和可用时的 NVIDIA 显存。schema 3 报告级 `reference_set` 固定 manifest、音频和规范化 reference 摘要；每个正式 run 记录 `audio_sha256`，每个成功 run 记录以 reference 为分母的 `reference_comparison`。
+JSON 保留冻结 config、原始 run、失败、预热、环境、模型 revision、wall/Provider stage、RTF、进程树峰值 RSS 和可用时的 NVIDIA 显存。报告级 `reference_set` 固定 manifest、音频和规范化 reference 摘要；每个正式 run 记录 `audio_sha256`，每个成功 run 记录以 reference 为分母的 `reference_comparison`。报告与 reference manifest 都只支持当前结构，不包含内部 schema 版本。
 
 现有模式间比较仍按相同 repetition 配对，只有配对成功的 `project-slicing` run 记录 `output_comparison`：中文为 CER、英文为 WER，`provider-native` 是分母。它只表示两种执行模式的输出差异，与 Reference CER/WER 含义不同。Markdown 对每个 mode 显示 Reference CER/WER 中位数和 `hypothesis/reference` 标点中位数，仅在 `project-slicing` 行显示 `Mode difference`；缺失或失败 counterpart 不参与模式差异。

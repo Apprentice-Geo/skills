@@ -11,12 +11,13 @@ from typing import Any
 
 import pytest
 
+from benchmark import runner as benchmark
 from benchmark.reference import (
     freeze_reference_set,
     load_reference_manifest,
     load_reference_samples,
 )
-from scripts import benchmark
+from benchmark.report import write_report
 from scripts.io_utils import sha256_file, write_json_atomic
 
 
@@ -97,10 +98,7 @@ def _reference_tree(
             },
             "parts": parts,
         }
-    manifest = {
-        "schema_version": 1,
-        "languages": languages,
-    }
+    manifest = {"languages": languages}
     manifest_path = reference_root / "manifest.json"
     write_json_atomic(manifest_path, manifest)
     return manifest_path, data, data / "samples.json", manifest
@@ -138,7 +136,7 @@ def _load(
             ),
             "unknown fields",
         ),
-        (lambda value: value.update({"schema_version": "1"}), "schema"),
+        (lambda value: value.update({"schema_version": 1}), "unknown fields"),
         (
             lambda value: value["languages"].update({"fr": value["languages"]["en"]}),
             "unknown fields",
@@ -328,6 +326,17 @@ def _args(
     )
 
 
+def _resume_args(report: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        report=report,
+        provider=None,
+        language=None,
+        minutes=None,
+        mode=None,
+        repetitions=None,
+    )
+
+
 def _fake_worker(calls: list[dict[str, Any]], fail_first: bool = False):
     def run(run: dict[str, Any], sample: Path, _directory: Path) -> dict[str, Any]:
         calls.append({**run, "sample": sample})
@@ -340,6 +349,8 @@ def _fake_worker(calls: list[dict[str, Any]], fail_first: bool = False):
             **run,
             "status": "failed" if failed else "succeeded",
             **({"error": "expected"} if failed else {"text": "reference"}),
+            "execution_identity": {"policy": "test"},
+            "provider_identity": {"provider": run["provider"]},
             "run_id": benchmark.run_id(run),
             "wall_seconds": 1.0,
             "rtf": 0.1,
@@ -349,7 +360,7 @@ def _fake_worker(calls: list[dict[str, Any]], fail_first: bool = False):
     return run
 
 
-def test_orchestration_freezes_samples_warms_selected_and_allows_subset_resume(
+def test_orchestration_freezes_config_and_requires_exact_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manifest_path, data, _samples_path, _value = _reference_tree(
@@ -360,7 +371,6 @@ def test_orchestration_freezes_samples_warms_selected_and_allows_subset_resume(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path / "tmp")
     monkeypatch.setattr(benchmark, "environment", lambda: {"test": True})
     monkeypatch.setattr(benchmark, "run_worker", _fake_worker(calls))
     report_path = tmp_path / "report.json"
@@ -379,23 +389,12 @@ def test_orchestration_freezes_samples_warms_selected_and_allows_subset_resume(
     assert report["runs"][0]["reference_comparison"]["metric"] == "wer"
 
     calls.clear()
-    resumed = benchmark.run_benchmark(_args(report_path, minutes=8))
+    resumed = benchmark.run_benchmark(_resume_args(report_path))
     assert resumed["runs"] == report["runs"]
     assert calls == []
 
-    extension = _args(report_path, minutes=8)
-    extension.mode = ["provider-native"]
-    extension.repetitions = 2
-    extended = benchmark.run_benchmark(extension)
-    assert [item["mode"] for item in calls] == [
-        "provider-native",
-        "provider-native",
-    ]
-    assert "output_comparison" in extended["runs"][0]
-
-    calls.clear()
-    with pytest.raises(ValueError, match="extend the frozen"):
-        benchmark.run_benchmark(_args(report_path, language="en", minutes=32))
+    with pytest.raises(ValueError, match="config differs"):
+        benchmark.run_benchmark(_args(report_path, minutes=8))
     assert calls == []
 
 
@@ -408,7 +407,6 @@ def test_orchestration_preserves_failure_and_retries(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path / "tmp")
     monkeypatch.setattr(benchmark, "environment", lambda: {})
     monkeypatch.setattr(benchmark, "run_worker", _fake_worker(calls, fail_first=True))
     args = _args(tmp_path / "report.json", language="zh", minutes=8)
@@ -420,7 +418,92 @@ def test_orchestration_preserves_failure_and_retries(
     assert second["runs"][1]["status"] == "succeeded"
 
 
-def test_orchestration_rejects_schema2_and_reference_errors_before_environment_or_worker(
+def test_worker_result_does_not_consume_attempt_before_report_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_path, data, _samples_path, _value = _reference_tree(
+        tmp_path, actual_samples={("zh", 8)}
+    )
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
+    monkeypatch.setattr(benchmark, "DATA_DIR", data)
+    monkeypatch.setattr(benchmark, "environment", lambda: {})
+    monkeypatch.setattr(benchmark, "run_worker", _fake_worker(calls))
+    writes = 0
+
+    def interrupt_second_write(path: Path, report: dict[str, Any]) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise RuntimeError("interrupted before report commit")
+        write_report(path, report)
+
+    monkeypatch.setattr(benchmark, "write_report", interrupt_second_write)
+    args = _args(tmp_path / "report.json", language="zh", minutes=8)
+
+    with pytest.raises(RuntimeError, match="before report commit"):
+        benchmark.run_benchmark(args)
+
+    persisted = json.loads(args.report.read_text(encoding="utf-8"))
+    assert persisted["runs"] == []
+    monkeypatch.setattr(benchmark, "write_report", write_report)
+    resumed = benchmark.run_benchmark(_resume_args(args.report))
+    assert [item["attempt"] for item in resumed["runs"]] == [1]
+
+
+def test_report_rejects_config_outsiders_and_missing_pair_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_path, data, _samples_path, _value = _reference_tree(
+        tmp_path, actual_samples={("en", 8)}
+    )
+    monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
+    monkeypatch.setattr(benchmark, "DATA_DIR", data)
+    monkeypatch.setattr(benchmark, "environment", lambda: {})
+    monkeypatch.setattr(benchmark, "run_worker", _fake_worker([]))
+    args = _args(tmp_path / "report.json", language="en", minutes=8)
+    args.mode = ["project-slicing", "provider-native"]
+    benchmark.run_benchmark(args)
+    pristine = json.loads(args.report.read_text(encoding="utf-8"))
+
+    mutations = [
+        lambda report: report["runs"][0].update({"repetition": 2}),
+        lambda report: report["warmups"][0].update({"provider": "qwen3-asr"}),
+        lambda report: report["runs"][0].pop("output_comparison"),
+        lambda report: report["runs"][0]["output_comparison"].update(
+            {"project_sha256": "f" * 64}
+        ),
+    ]
+    for mutation in mutations:
+        changed = deepcopy(pristine)
+        mutation(changed)
+        write_json_atomic(args.report, changed)
+        with pytest.raises(ValueError):
+            benchmark.run_benchmark(_resume_args(args.report))
+
+
+def test_resume_does_not_recompute_existing_success_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_path, data, _samples_path, _value = _reference_tree(
+        tmp_path, actual_samples={("en", 8)}
+    )
+    monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
+    monkeypatch.setattr(benchmark, "DATA_DIR", data)
+    monkeypatch.setattr(benchmark, "environment", lambda: {})
+    monkeypatch.setattr(benchmark, "run_worker", _fake_worker([]))
+    args = _args(tmp_path / "report.json", language="en", minutes=8)
+    benchmark.run_benchmark(args)
+    report = json.loads(args.report.read_text(encoding="utf-8"))
+    report["runs"][0]["text"] = "not rescored on resume"
+    write_json_atomic(args.report, report)
+
+    resumed = benchmark.run_benchmark(_resume_args(args.report))
+
+    assert resumed["runs"][0]["text"] == "not rescored on resume"
+
+
+def test_orchestration_rejects_invalid_report_and_reference_before_worker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manifest_path, data, _samples_path, value = _reference_tree(
@@ -440,12 +523,12 @@ def test_orchestration_rejects_schema2_and_reference_errors_before_environment_o
     assert calls == []
 
     write_json_atomic(args.report, {"schema_version": 2})
-    with pytest.raises(ValueError, match="schema is obsolete"):
+    with pytest.raises(ValueError, match="structure is invalid"):
         benchmark.run_benchmark(args)
     assert calls == []
 
 
-def test_report_rejects_policy_identity_and_reference_comparison_drift(
+def test_report_rejects_identity_and_invalid_comparison_shape(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     manifest_path, data, _samples_path, _value = _reference_tree(
@@ -453,7 +536,6 @@ def test_report_rejects_policy_identity_and_reference_comparison_drift(
     )
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "TMP_DIR", tmp_path / "tmp")
     monkeypatch.setattr(benchmark, "environment", lambda: {})
     monkeypatch.setattr(benchmark, "run_worker", _fake_worker([]))
     args = _args(tmp_path / "report.json", language="en", minutes=8)
@@ -461,10 +543,6 @@ def test_report_rejects_policy_identity_and_reference_comparison_drift(
     pristine = json.loads(args.report.read_text(encoding="utf-8"))
 
     for mutation, message in [
-        (
-            lambda report: report["comparison_policy"].update({"id": "changed"}),
-            "comparison policy",
-        ),
         (
             lambda report: report["runs"][0].update({"run_id": "changed"}),
             "run_id",

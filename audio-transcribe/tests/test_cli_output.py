@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import logging
 from pathlib import Path
 
 import pytest
 
-from scripts import benchmark, transcribe
+from benchmark import runner as benchmark
+from scripts import transcribe
 from scripts.process_logging import filtered_log_messages
 
 
@@ -137,4 +139,34 @@ def test_benchmark_parse_args_rejects_model_provider_alias() -> None:
 def test_benchmark_defaults_to_three_repetitions() -> None:
     args = benchmark.parse_args([])
 
-    assert args.repetitions == 3
+    config = benchmark.resolve_config(args)
+
+    assert args.repetitions is None
+    assert config["repetitions"] == 3
+
+
+def test_benchmark_config_is_canonical_and_partial_resume_inherits() -> None:
+    args = benchmark.parse_args(
+        [
+            "--provider",
+            "qwen3-asr",
+            "--provider",
+            "faster-whisper",
+            "--provider",
+            "qwen3-asr",
+            "--language",
+            "en",
+        ]
+    )
+    config = benchmark.resolve_config(args)
+
+    assert config["providers"] == ["faster-whisper", "qwen3-asr"]
+    assert config["languages"] == ["en"]
+    resumed = argparse.Namespace(
+        provider=["qwen3-asr", "faster-whisper"],
+        language=None,
+        minutes=None,
+        mode=None,
+        repetitions=None,
+    )
+    assert benchmark.resolve_config(resumed, config) == config

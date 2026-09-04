@@ -78,7 +78,7 @@
 
 ## KI-005：warmup 与正式 run 不共享模型进程
 
-**结论：[KNOWN]** 每次 `run_worker()` 都启动新的 `python -m scripts.benchmark --worker` 子进程。warmup 完成后该进程退出，每个正式 run 又在新进程中重新导入依赖、初始化 runtime 并加载模型。
+**结论：[KNOWN]** 每次 `run_worker()` 都启动新的 `python -m benchmark.worker` 子进程。warmup 完成后该进程退出，每个正式 run 又在新进程中重新导入依赖、初始化 runtime 并加载模型。
 
 因此 warmup 可能预热操作系统文件缓存、驱动或设备级缓存，但不会保留 Python 对象、已加载模型、CUDA allocator 或当前 Provider 进程内状态。把它理解为“正式 run 的模型预热”是不准确的。[INFERRED] 它可能减少一部分冷存储影响，但具体效果尚未单独测量。
 
