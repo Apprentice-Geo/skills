@@ -8,7 +8,6 @@ dependencies = [
     "ffmpeg-binaries-compat",
     "numpy",
     "OpenCC==1.4.1",
-    "psutil",
     "speechbrain",
     "torch",
     "torchaudio",

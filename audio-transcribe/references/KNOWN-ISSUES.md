@@ -26,10 +26,10 @@
 | KI-001 | 运行时声明的模型 revision 未与本地安装状态核对 | P1 | 延后，需独立正确性改动 |
 | KI-002 | 损坏的 workspace result 无法从正常 CLI 进入 chunk 重建 | P1 | 部分纳入；已发布结果场景待决策 |
 | KI-003 | Reference 人工校验状态和 provenance 文档相互冲突 | P1 | 已关闭（2026-09-04） |
-| KI-004 | benchmark 续跑身份不绑定代码、环境和实际模型 | P2 | 重构计划接受此风险，但必须明确限制 |
-| KI-005 | warmup 不会预热正式 run 使用的模型进程 | P2 | 未纳入，benchmark 方法问题 |
-| KI-006 | GPU 显存指标统计整机所有 compute process | P2 | 未纳入，资源测量问题 |
-| KI-007 | 两种 mode 的比较不能单独证明 chunk optimizer 的收益 | P2 | 未纳入，实验设计问题 |
+| KI-004 | benchmark 续跑身份不绑定代码、环境和实际模型 | P2 | 已关闭（2026-09-05）：自动校验硬件身份 |
+| KI-005 | warmup 不会预热正式 run 使用的模型进程 | P2 | 已关闭（2026-09-05）：持久 worker 复用 prepared model |
+| KI-006 | GPU 显存指标统计整机所有 compute process | P2 | 已关闭（2026-09-05）：取消资源占用指标 |
+| KI-007 | 两种 mode 的比较不能单独证明 chunk optimizer 的收益 | P2 | 已关闭（2026-09-05）：限定为端到端策略比较 |
 | KI-008 | 公共 loader 的可用性依赖私有 workspace 和日志存在 | P2 | 待确认公共结果的可移植边界 |
 | KI-009 | 文档所称“精确字段 shape”严于 contract 实际验证 | P2 | 待决定修正文档还是收紧 contract |
 
@@ -66,49 +66,25 @@
 
 ## KI-004：benchmark 续跑不绑定运行环境
 
-**结论：[KNOWN]** 当前 `run_id()` 只包含 Provider、语言、分钟数、mode 和 repetition。报告创建时记录一次 `environment()`，但恢复时 `_validate_report()` 只要求它是对象，不与当前 commit、依赖、硬件或模型状态比较。
+**状态：已关闭（2026-09-05）。** Benchmark 报告现在把环境拆分为硬件身份和审计信息。硬件身份包含 CPU 型号、逻辑核心数、物理内存总字节数，以及按序号排序的 GPU 型号和总显存；续跑在启动 worker 前严格比较这些字段，缺失或不同均要求新报告路径，因此不支持跨设备续跑。
 
-每个成功 run 虽然记录 `execution_identity` 和 `provider_identity`，跳过逻辑仍只依据 `run_id`。因此同一路径可以在代码、依赖、配置常量、机器或模型目录变化后继续写入，并把新旧结果汇总到同一报告；报告顶层 environment 仍只代表首次创建时的快照。[INFERRED] 对短期中断后的同环境续跑通常没有影响，但跨部署或跨重构续跑会削弱比较可信度。
-
-数据流重构按用户要求不提供旧实现恢复、迁移或重算保证，并有意不重新建立复杂的环境版本合同。因此本项是接受的操作风险，而不是本轮必须修复的 bug。新 benchmark 文档和 CLI 应明确要求：代码、依赖、模型或机器变化后使用新报告路径；顶层 environment 只表示创建快照，不能证明所有 run 的环境。
-
-如果未来需要机器可验证的实验一致性，优先为报告冻结一个小而明确的 experiment fingerprint，而不是恢复通用 schema 迁移系统。
-
-关闭条件：若继续接受风险，则文档和报告声明足够明确；若不再接受，则恢复前比较所定义的 fingerprint，并拒绝混合报告。
+系统、Python、commit、依赖和模型 revision 继续作为审计快照展示，不参与自动拒绝；这些内容变化后由操作者主动使用新路径。这个关闭边界只保证同一测试设备，不声称验证本地模型字节或完整实验环境。
 
 ## KI-005：warmup 与正式 run 不共享模型进程
 
-**结论：[KNOWN]** 每次 `run_worker()` 都启动新的 `python -m benchmark.worker` 子进程。warmup 完成后该进程退出，每个正式 run 又在新进程中重新导入依赖、初始化 runtime 并加载模型。
+**状态：已关闭（2026-09-05）。** 每个仍有待执行项的 Provider 使用一个持久 worker session。每种实际模型加载配置首次出现时，以对应正式 run 的相同音频和 mode 预热；正式 run 通过 `run_transcribe()`、pipeline 和 execution policy 的可选 prepared model 通道复用同一 Python 对象。faster-whisper 的 key 包含模型、device、compute type、CPU threads 和 worker 数；Qwen3-ASR 的 key 包含模型、aligner、device、dtype 和 batch size，language 不进入 key。
 
-因此 warmup 可能预热操作系统文件缓存、驱动或设备级缓存，但不会保留 Python 对象、已加载模型、CUDA allocator 或当前 Provider 进程内状态。把它理解为“正式 run 的模型预热”是不准确的。[INFERRED] 它可能减少一部分冷存储影响，但具体效果尚未单独测量。
-
-可选处理：
-
-- 保持隔离进程设计，把 `warmup` 更准确地命名或描述为 system/cache priming；
-- 让一个持久 worker 在同一进程内完成 warmup 和正式重复；
-- 若目标就是衡量完整冷启动，删除 warmup 并明确报告 cold-process cost。
-
-关闭条件：benchmark 文档对测量语义无歧义，且实现与选择的 cold/warm 模型一致。
+Warmup 和正式 run 记录 session ID，报告校验成功 run 必须存在同 session、同配置的成功 warmup。续跑创建新 session 并重新预热；worker 退出后下一项也创建新 session。普通转写 CLI 未提供 prepared model 时仍执行原有 `prepare()` 行为。
 
 ## KI-006：GPU 显存不是 worker 归因指标
 
-**结论：[KNOWN]** `sample_gpu_mb()` 调用 `nvidia-smi --query-compute-apps=used_memory`，解析所有返回行并求和；它不按 worker PID、进程树或 GPU 设备过滤。
+**状态：已关闭（2026-09-05）。** Benchmark 已取消进程树 RSS 和 compute-process 显存采样，新结果不再包含 `peak_rss_bytes`、`peak_gpu_memory_mb` 或 `gpu_metric_unavailable_reason`。仅为该采样直接声明的 `psutil` 依赖和相关采样、轮询死代码已移除。
 
-因此 `peak_gpu_memory_mb` 表示采样时整机可见 compute process 的显存总量，而不是当前 benchmark worker 的独占或增量显存。存在其他 CUDA 进程时会污染结果；多 GPU 环境也无法从该单值看出资源归属。
-
-建议在保持该实现时更名为 system-wide sampled GPU memory，并记录测量限制。若要归因给 run，需要查询 PID 与设备并过滤 worker 进程树，或使用能够按进程和设备采样的 API；仍要处理驱动不可见子进程和共享显存等边界。
-
-关闭条件：指标名称和文档准确表达全局口径，或实现提供可测试的 worker/device 归因。
+报告中的物理内存与 GPU 总显存只属于测试设备身份，表示容量而非 run 占用；当前 benchmark 不测量或比较内存、显存占用。
 
 ## KI-007：mode 比较不能隔离 optimizer 收益
 
-**结论：[KNOWN]** `project-slicing` 测量生产 `run_transcribe()`，包含 VAD、规划、执行 policy、Provider、合并、规范化和 artifact 发布；`provider-native` 则把完整音频交给 Provider，不执行项目 VAD、规划、合并或发布。faster-whisper native 路径仍启用其内部 VAD，Qwen3-ASR 也可能执行内部切分。
-
-因此两种 mode 的 wall time、RTF 或文本差异只能衡量两套端到端执行策略，不能把差异单独归因于 chunk optimizer。现有历史报告将它称为“切片路径”比较基本成立，但任何“optimizer 带来 N 倍收益”的结论都超出实验设计支持范围。
-
-若要回答 optimizer 的独立贡献，需要增加控制变量更严格的消融实验，例如固定相同 Provider 输入、相同已生成 layouts 和相同发布边界，只替换 optimizer 决策。该实验不应混入数据流重构。
-
-关闭条件：文档始终把现有结果限定为端到端策略比较；若需要 optimizer 结论，新增独立 benchmark 设计和报告。
+**状态：已关闭（2026-09-05）。** README 和生成的 Markdown 报告现在始终将 `project-slicing` 与 `provider-native` 定义为两套端到端策略比较，并明确 wall time、RTF、相对速度和文本差异不能单独归因于 chunk optimizer。本轮不新增 optimizer 消融实验；若未来需要该结论，应另行设计控制变量实验。
 
 ## KI-008：公共 loader 依赖私有目录和日志存在
 
@@ -139,6 +115,6 @@ contract 不读取 workspace 内容，也不验证日志或 workspace digest。�
 
 ## 与数据流重构的关系
 
-本轮重构直接处理 KI-002 的无 manifest 场景，并在 benchmark 报告设计中显式接受 KI-004 的兼容代价。KI-003 已作为文档与报告说明同步问题关闭。KI-002 的已发布结果场景，以及 KI-001、KI-005、KI-006、KI-007、KI-008 和 KI-009，不应随内部落盘精简顺手修改：它们分别涉及公共恢复、模型身份、实验方法、资源归因或公共合同，需要独立决策和聚焦验证。
+数据流重构直接处理 KI-002 的无 manifest 场景；KI-003 已作为文档与报告说明同步问题关闭。后续 benchmark 方法改动关闭了 KI-004～KI-007。KI-002 的已发布结果场景，以及 KI-001、KI-008 和 KI-009 仍需独立决策。
 
-实施数据流重构时应保证这些问题不会被无意掩盖。例如，删除 benchmark schema 不等于 reference provenance 可以删除；删除 `metrics.json` 不等于现有 GPU 指标已经变成进程级指标；保持公共 schema v1 也不等于当前 exact-shape 描述已经正确。
+后续改动仍应避免把内部实现变化误认为公共合同问题已经解决。例如，删除 benchmark schema 不等于 reference provenance 可以删除；保持公共 schema v1 也不等于当前 exact-shape 描述已经正确。

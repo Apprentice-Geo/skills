@@ -15,6 +15,14 @@
 - 当前格式继续支持成功跳过、失败 attempt 追加、原子恢复点和配对 comparison；旧格式不迁移，已有成功结果不重新评分。
 - 相关命令、恢复限制、历史说明和 Pyright 检查范围已同步。
 
+## 2026-09-05 Benchmark 方法后续修订
+
+- 报告环境拆分为硬件身份与审计信息；续跑严格校验 CPU、逻辑核心数、物理内存和有序 GPU 配置，不自动比较代码、依赖与模型 revision。
+- 每个 Provider 改用持久 worker，并按模型加载配置在同一 session 内预热和复用 prepared model；续跑或 worker 重启会重新预热。
+- 删除进程树 RSS、GPU compute-process 显存采样、相关结果字段与仅为该采样声明的直接依赖。测试设备内存与显存只表示硬件容量。
+- 报告方法限定为 `project-slicing` 与 `provider-native` 的端到端策略比较，不把 wall time、RTF、相对速度或文本差异归因于 chunk optimizer。
+- 本次报告格式不迁移旧报告，公开转写 artifact 合同保持不变。
+
 ## 验证
 
 - 聚焦测试：54 项通过、1 项因本地 benchmark 音频条件跳过。

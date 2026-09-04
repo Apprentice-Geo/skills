@@ -4,7 +4,7 @@ import math
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
 from scripts.artifacts import write_workspace_result
 from scripts.asr.alignment import (
@@ -168,6 +168,7 @@ def _run_asr_pipeline(
     variant_id: str,
     prepared_audio: NormalizedAudio | None = None,
     prepared_vad: list[tuple[int, int]] | None = None,
+    prepared_model: Any | None = None,
     vad_detector: Callable[[NormalizedAudio], list[tuple[int, int]]] | None = None,
 ) -> PipelineOutcome:
     started = time.perf_counter()
@@ -330,7 +331,19 @@ def _run_asr_pipeline(
         len(pending),
     )
     provider_started = time.perf_counter()
-    failures = policy.execute(provider, audio, pending, plan.execution_policy, cache)
+    if prepared_model is None:
+        failures = policy.execute(
+            provider, audio, pending, plan.execution_policy, cache
+        )
+    else:
+        failures = policy.execute(
+            provider,
+            audio,
+            pending,
+            plan.execution_policy,
+            cache,
+            prepared_model=prepared_model,
+        )
     provider_stage_seconds = time.perf_counter() - provider_started
     logger.info(
         "ASR execution: complete provider=%s policy=%s succeeded=%d failed=%d",
@@ -377,6 +390,7 @@ def run_asr_pipeline(
     variant_id: str,
     prepared_audio: NormalizedAudio | None = None,
     prepared_vad: list[tuple[int, int]] | None = None,
+    prepared_model: Any | None = None,
     vad_detector: Callable[[NormalizedAudio], list[tuple[int, int]]] | None = None,
 ) -> PipelineOutcome:
     started = time.perf_counter()
@@ -396,6 +410,7 @@ def run_asr_pipeline(
             variant_id=variant_id,
             prepared_audio=prepared_audio,
             prepared_vad=prepared_vad,
+            prepared_model=prepared_model,
             vad_detector=vad_detector,
         )
     except Exception as exc:

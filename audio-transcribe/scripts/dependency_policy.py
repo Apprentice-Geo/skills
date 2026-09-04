@@ -6,7 +6,6 @@ CORE_IMPORTS = (
     "ffmpeg_binaries",
     "numpy",
     "opencc",
-    "psutil",
     "speechbrain",
     "torch",
     "torchaudio",

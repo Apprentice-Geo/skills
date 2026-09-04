@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
+import pytest
 
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
 from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
@@ -313,6 +314,42 @@ def test_whisper_policy_shares_one_prepared_model_across_workers(monkeypatch) ->
     assert failures == {}
     assert seen_models == [model, model]
     assert cached == ["ok", "ok"]
+
+
+def test_execution_policies_accept_caller_prepared_models() -> None:
+    audio = NormalizedAudio(np.zeros(16_000, dtype=np.float32))
+    layout = ChunkLayout(0, 0, 16_000, "audio_end", 1)
+    prepared = object()
+    seen: list[object] = []
+    provider = SimpleNamespace(
+        name="test",
+        prepare=lambda _identity: pytest.fail("prepare must not be called"),
+        transcribe_one=lambda model, *_args: seen.append(model) or "one",
+        transcribe_batch=lambda model, _items: seen.append(model) or ["batch"],
+    )
+
+    whisper_failures = WhisperCpuPolicy(
+        TranscribeOptions(num_workers=1, cpu_threads=1)
+    ).execute(
+        provider,
+        audio,
+        [layout],
+        {"num_workers": 1, "cpu_threads": 1},
+        lambda _result: None,
+        prepared_model=prepared,
+    )
+    qwen_failures = Qwen3AsrCudaPolicy().execute(
+        provider,
+        audio,
+        [layout],
+        {"batch_size": 1},
+        lambda _result: None,
+        prepared_model=prepared,
+    )
+
+    assert whisper_failures == {}
+    assert qwen_failures == {}
+    assert seen == [prepared, prepared]
 
 
 def test_whisper_policy_returns_final_exception_and_logs_second_traceback(

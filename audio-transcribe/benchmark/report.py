@@ -44,6 +44,115 @@ def _valid_digest(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def _valid_session_id(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value) is not None
+
+
+def _validate_environment(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"hardware", "audit"}:
+        raise ValueError(
+            "Benchmark report environment is invalid; use a new report path."
+        )
+    hardware = value["hardware"]
+    if not isinstance(hardware, dict) or set(hardware) != {
+        "cpu_model",
+        "logical_cpu_count",
+        "physical_memory_bytes",
+        "gpus",
+    }:
+        raise ValueError(
+            "Benchmark report hardware identity is invalid; use a new report path."
+        )
+    if (
+        not isinstance(hardware["cpu_model"], str)
+        or not hardware["cpu_model"]
+        or not isinstance(hardware["logical_cpu_count"], int)
+        or isinstance(hardware["logical_cpu_count"], bool)
+        or hardware["logical_cpu_count"] < 1
+        or not isinstance(hardware["physical_memory_bytes"], int)
+        or isinstance(hardware["physical_memory_bytes"], bool)
+        or hardware["physical_memory_bytes"] < 1
+        or not isinstance(hardware["gpus"], list)
+    ):
+        raise ValueError("Benchmark report hardware identity is invalid")
+    indices = []
+    for gpu in hardware["gpus"]:
+        if (
+            not isinstance(gpu, dict)
+            or set(gpu) != {"index", "name", "memory_total_bytes"}
+            or not isinstance(gpu["index"], int)
+            or isinstance(gpu["index"], bool)
+            or gpu["index"] < 0
+            or not isinstance(gpu["name"], str)
+            or not gpu["name"]
+            or not isinstance(gpu["memory_total_bytes"], int)
+            or isinstance(gpu["memory_total_bytes"], bool)
+            or gpu["memory_total_bytes"] < 1
+        ):
+            raise ValueError("Benchmark report GPU identity is invalid")
+        indices.append(gpu["index"])
+    if indices != sorted(set(indices)):
+        raise ValueError("Benchmark report GPUs must be unique and sorted")
+    audit = value["audit"]
+    if (
+        not isinstance(audit, dict)
+        or set(audit)
+        != {"platform", "python", "commit", "dependencies", "model_revisions"}
+        or not isinstance(audit["platform"], str)
+        or not isinstance(audit["python"], str)
+        or audit["commit"] is not None
+        and not isinstance(audit["commit"], str)
+        or audit["dependencies"] is not None
+        and not isinstance(audit["dependencies"], str)
+        or not isinstance(audit["model_revisions"], dict)
+    ):
+        raise ValueError("Benchmark report audit information is invalid")
+    return value
+
+
+def _validate_model_configuration(provider: str, value: Any) -> dict[str, Any]:
+    fields = (
+        {"model", "device", "compute_type", "cpu_threads", "num_workers"}
+        if provider == "faster-whisper"
+        else {"model", "aligner", "device", "dtype", "batch_size"}
+    )
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("Benchmark model configuration is invalid")
+    identities = [value["model"]]
+    if provider == "qwen3-asr":
+        identities.append(value["aligner"])
+    if any(
+        not isinstance(identity, dict)
+        or set(identity) != {"repo", "revision", "logical_id"}
+        or any(
+            not isinstance(identity[field], str) or not identity[field]
+            for field in identity
+        )
+        for identity in identities
+    ):
+        raise ValueError("Benchmark model identity is invalid")
+    string_fields = (
+        ("device", "compute_type")
+        if provider == "faster-whisper"
+        else ("device", "dtype")
+    )
+    integer_fields = (
+        ("cpu_threads", "num_workers")
+        if provider == "faster-whisper"
+        else ("batch_size",)
+    )
+    if any(
+        not isinstance(value[field], str) or not value[field] for field in string_fields
+    ) or any(
+        not isinstance(value[field], int)
+        or isinstance(value[field], bool)
+        or value[field] < 1
+        for field in integer_fields
+    ):
+        raise ValueError("Benchmark model loading parameters are invalid")
+    return value
+
+
 def validate_config(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) != {
         "providers",
@@ -201,8 +310,7 @@ def validate_report(
         )
     ):
         raise ValueError("Benchmark report comparison policy is invalid")
-    if not isinstance(report["environment"], dict):
-        raise ValueError("Benchmark report environment is invalid")
+    _validate_environment(report["environment"])
     if not isinstance(report["warmups"], list) or not isinstance(report["runs"], list):
         raise ValueError("Benchmark report runs are invalid")
     frozen = frozen_sample_keys(report["reference_set"])
@@ -214,8 +322,7 @@ def validate_report(
     if frozen != expected_samples or set(references) != expected_samples:
         raise ValueError("Benchmark report reference_set does not match config")
 
-    first_sample = (config["languages"][0], config["minutes"][0])
-    warmed: set[str] = set()
+    successful_warmups: list[dict[str, Any]] = []
     for item in report["warmups"]:
         if not isinstance(item, dict):
             raise ValueError("Benchmark warmup must be an object")
@@ -234,20 +341,47 @@ def validate_report(
         provider, language, minute, mode, repetition, identifier, status = identity
         if identifier != run_id(item):
             raise ValueError("Benchmark run_id does not match its identity")
+        if any(
+            field in item
+            for field in (
+                "peak_rss_bytes",
+                "peak_gpu_memory_mb",
+                "gpu_metric_unavailable_reason",
+            )
+        ):
+            raise ValueError("Benchmark warmup contains removed resource metrics")
         if (
             provider not in config["providers"]
-            or (language, minute) != first_sample
-            or mode != "project-slicing"
+            or language not in config["languages"]
+            or minute not in config["minutes"]
+            or mode not in config["modes"]
             or repetition != 0
             or status not in ("succeeded", "failed")
+            or not _valid_session_id(item.get("session_id"))
             or "reference_comparison" in item
             or "output_comparison" in item
         ):
             raise ValueError("Benchmark warmup identity is invalid")
-        if provider in warmed:
-            raise ValueError("Benchmark warmup contains entries after success")
         if status == "succeeded":
-            warmed.add(provider)
+            if not isinstance(item.get("execution_identity"), dict) or not isinstance(
+                item.get("provider_identity"), dict
+            ):
+                raise ValueError(
+                    "Successful benchmark warmup is missing audit identity"
+                )
+            configuration = _validate_model_configuration(
+                provider, item.get("model_configuration")
+            )
+            if any(
+                warmup["provider"] == provider
+                and warmup["session_id"] == item["session_id"]
+                and warmup["model_configuration"] == configuration
+                for warmup in successful_warmups
+            ):
+                raise ValueError(
+                    "Benchmark warmup duplicates a prepared session configuration"
+                )
+            successful_warmups.append(item)
 
     attempts: dict[str, list[int]] = {}
     successful: dict[tuple[str, str, int, str, int], dict[str, Any]] = {}
@@ -268,6 +402,15 @@ def validate_report(
             raise ValueError("Benchmark run identity is incomplete") from exc
         if identifier != run_id(item):
             raise ValueError("Benchmark run_id does not match its identity")
+        if any(
+            field in item
+            for field in (
+                "peak_rss_bytes",
+                "peak_gpu_memory_mb",
+                "gpu_metric_unavailable_reason",
+            )
+        ):
+            raise ValueError("Benchmark run contains removed resource metrics")
         if (
             provider not in config["providers"]
             or language not in config["languages"]
@@ -280,6 +423,7 @@ def validate_report(
             or isinstance(attempt, bool)
             or attempt < 1
             or status not in ("succeeded", "failed")
+            or not _valid_session_id(item.get("session_id"))
         ):
             raise ValueError("Benchmark run identity is outside the frozen config")
         reference_item = references[(language, minute)]
@@ -295,6 +439,18 @@ def validate_report(
                 item.get("provider_identity"), dict
             ):
                 raise ValueError("Successful benchmark run is missing audit identity")
+            configuration = _validate_model_configuration(
+                provider, item.get("model_configuration")
+            )
+            if not any(
+                warmup["provider"] == provider
+                and warmup["session_id"] == item["session_id"]
+                and warmup["model_configuration"] == configuration
+                for warmup in successful_warmups
+            ):
+                raise ValueError(
+                    "Successful benchmark run has no matching session warmup"
+                )
             comparison = _validate_comparison(
                 item.get("reference_comparison"), language, reference=True
             )
@@ -371,12 +527,33 @@ def summarize(report: dict[str, Any]) -> str:
             raise ValueError(
                 "Successful benchmark run reference comparison has the wrong identity"
             )
+    hardware = _validate_environment(report.get("environment"))["hardware"]
+    memory_gib = hardware["physical_memory_bytes"] / 1024**3
+    gpu_lines = [
+        f"- GPU {gpu['index']}: {gpu['name']} "
+        f"({gpu['memory_total_bytes'] / 1024**3:.2f} GiB total)"
+        for gpu in hardware["gpus"]
+    ] or ["- GPU: none detected"]
     lines = [
         "# Audio transcription benchmark",
         "",
         f"Reference manifest SHA256: `{reference_set['manifest_sha256']}`",
         "",
         "Only successful runs are summarized.",
+        "",
+        "## Method",
+        "",
+        "This benchmark compares the `project-slicing` and `provider-native` end-to-end strategies. Wall time, RTF, relative speed, and text differences cannot be attributed to the chunk optimizer alone.",
+        "",
+        "Each provider uses a persistent worker process. Every model configuration is warmed with the same sample and mode immediately before its first measured run in that worker session, and the prepared model is then reused.",
+        "",
+        "Memory and GPU-memory usage are not measured or compared. Device memory totals below describe hardware capacity only.",
+        "",
+        "## Test device",
+        "",
+        f"- CPU: {hardware['cpu_model']} ({hardware['logical_cpu_count']} logical cores)",
+        f"- Physical memory: {memory_gib:.2f} GiB total",
+        *gpu_lines,
         "",
     ]
     for provider in PROVIDERS:

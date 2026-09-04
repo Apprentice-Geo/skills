@@ -360,6 +360,111 @@ def _fake_worker(calls: list[dict[str, Any]], fail_first: bool = False):
     return run
 
 
+def _test_environment() -> dict[str, Any]:
+    return {
+        "hardware": {
+            "cpu_model": "test cpu",
+            "logical_cpu_count": 8,
+            "physical_memory_bytes": 16 * 1024**3,
+            "gpus": [],
+        },
+        "audit": {
+            "platform": "test",
+            "python": "test",
+            "commit": None,
+            "dependencies": None,
+            "model_revisions": {},
+        },
+    }
+
+
+def _test_model_configuration(provider: str) -> dict[str, Any]:
+    model = {"repo": "test/repo", "revision": "revision", "logical_id": "model"}
+    if provider == "faster-whisper":
+        return {
+            "model": model,
+            "device": "cpu",
+            "compute_type": "float32",
+            "cpu_threads": 1,
+            "num_workers": 1,
+        }
+    return {
+        "model": model,
+        "aligner": {
+            "repo": "test/aligner",
+            "revision": "revision",
+            "logical_id": "aligner",
+        },
+        "device": "cuda:0",
+        "dtype": "bfloat16",
+        "batch_size": 1,
+    }
+
+
+def _fake_session_factory(
+    calls: list[dict[str, Any]], fail_first: bool = False
+) -> type:
+    invoke = _fake_worker(calls, fail_first)
+    counter = 0
+
+    class FakeSession:
+        def __init__(self, provider: str) -> None:
+            nonlocal counter
+            counter += 1
+            self.provider = provider
+            self.session_id = f"{counter:032x}"
+            self.alive = True
+            self.warmed = False
+
+        def ensure_warmup(
+            self, run: dict[str, Any], sample: Path, directory: Path
+        ) -> dict[str, Any]:
+            if self.warmed:
+                return {
+                    **run,
+                    "repetition": 0,
+                    "status": "succeeded",
+                    "already_prepared": True,
+                    "session_id": self.session_id,
+                }
+            self.warmed = True
+            result = invoke({**run, "repetition": 0}, sample, directory)
+            return {
+                **result,
+                "already_prepared": False,
+                "session_id": self.session_id,
+                "model_configuration": _test_model_configuration(self.provider),
+            }
+
+        def run(
+            self, run: dict[str, Any], sample: Path, directory: Path
+        ) -> dict[str, Any]:
+            return {
+                **invoke(run, sample, directory),
+                "session_id": self.session_id,
+                "model_configuration": _test_model_configuration(self.provider),
+            }
+
+        def close(self) -> None:
+            self.alive = False
+
+    return FakeSession
+
+
+def _patch_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[dict[str, Any]],
+    *,
+    fail_first: bool = False,
+) -> None:
+    environment = _test_environment()
+    monkeypatch.setattr(benchmark, "environment", lambda: environment)
+    monkeypatch.setattr(benchmark, "hardware_identity", lambda: environment["hardware"])
+    monkeypatch.setattr(
+        benchmark, "WorkerSession", _fake_session_factory(calls, fail_first)
+    )
+
+
 def test_orchestration_freezes_config_and_requires_exact_resume(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -371,8 +476,7 @@ def test_orchestration_freezes_config_and_requires_exact_resume(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "environment", lambda: {"test": True})
-    monkeypatch.setattr(benchmark, "run_worker", _fake_worker(calls))
+    _patch_runtime(monkeypatch, calls)
     report_path = tmp_path / "report.json"
     initial_args = _args(report_path, minutes=8)
     initial_args.minutes = [8, 16]
@@ -407,8 +511,7 @@ def test_orchestration_preserves_failure_and_retries(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "environment", lambda: {})
-    monkeypatch.setattr(benchmark, "run_worker", _fake_worker(calls, fail_first=True))
+    _patch_runtime(monkeypatch, calls, fail_first=True)
     args = _args(tmp_path / "report.json", language="zh", minutes=8)
 
     first = benchmark.run_benchmark(args)
@@ -416,6 +519,122 @@ def test_orchestration_preserves_failure_and_retries(
     second = benchmark.run_benchmark(args)
     assert [item["attempt"] for item in second["runs"]] == [1, 2]
     assert second["runs"][1]["status"] == "succeeded"
+
+
+@pytest.mark.parametrize(
+    "changed_hardware",
+    [
+        {"cpu_model": "different cpu"},
+        {"logical_cpu_count": 16},
+        {"physical_memory_bytes": 32 * 1024**3},
+        {
+            "gpus": [
+                {
+                    "index": 0,
+                    "name": "different gpu",
+                    "memory_total_bytes": 8 * 1024**3,
+                }
+            ]
+        },
+    ],
+)
+def test_resume_rejects_hardware_change_before_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    changed_hardware: dict[str, Any],
+) -> None:
+    manifest_path, data, _samples_path, _value = _reference_tree(
+        tmp_path, actual_samples={("zh", 8)}
+    )
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
+    monkeypatch.setattr(benchmark, "DATA_DIR", data)
+    _patch_runtime(monkeypatch, calls)
+    args = _args(tmp_path / "report.json", language="zh", minutes=8)
+    benchmark.run_benchmark(args)
+    calls.clear()
+    changed = {**_test_environment()["hardware"], **changed_hardware}
+    monkeypatch.setattr(benchmark, "hardware_identity", lambda: changed)
+
+    with pytest.raises(ValueError, match="hardware differs"):
+        benchmark.run_benchmark(_resume_args(args.report))
+
+    assert calls == []
+
+
+def test_worker_exit_restarts_session_and_rewarms(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    manifest_path, data, _samples_path, _value = _reference_tree(
+        tmp_path, actual_samples={("zh", 8)}
+    )
+    events: list[tuple[str, int, str]] = []
+
+    class CrashingSession:
+        count = 0
+
+        def __init__(self, provider: str) -> None:
+            type(self).count += 1
+            self.provider = provider
+            self.session_id = f"{self.count:032x}"
+            self.alive = True
+
+        def _success(self, run: dict[str, Any]) -> dict[str, Any]:
+            return {
+                **run,
+                "status": "succeeded",
+                "text": "reference",
+                "execution_identity": {"policy": "test"},
+                "provider_identity": {"provider": self.provider},
+                "model_configuration": _test_model_configuration(self.provider),
+                "run_id": benchmark.run_id(run),
+                "session_id": self.session_id,
+                "wall_seconds": 1.0,
+                "rtf": 0.1,
+                "provider_stage_seconds": 0.5,
+            }
+
+        def ensure_warmup(self, run, _sample, _directory):
+            events.append(("warmup", run["repetition"], self.session_id))
+            return {
+                **self._success({**run, "repetition": 0}),
+                "already_prepared": False,
+            }
+
+        def run(self, run, _sample, _directory):
+            events.append(("run", run["repetition"], self.session_id))
+            if self.count == 1:
+                self.alive = False
+                return {
+                    **run,
+                    "status": "failed",
+                    "error": "worker exited",
+                    "run_id": benchmark.run_id(run),
+                    "session_id": self.session_id,
+                }
+            return self._success(run)
+
+        def close(self) -> None:
+            self.alive = False
+
+    monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
+    monkeypatch.setattr(benchmark, "DATA_DIR", data)
+    environment = _test_environment()
+    monkeypatch.setattr(benchmark, "environment", lambda: environment)
+    monkeypatch.setattr(benchmark, "WorkerSession", CrashingSession)
+    args = _args(tmp_path / "report.json", language="zh", minutes=8)
+    args.repetitions = 2
+
+    report = benchmark.run_benchmark(args)
+
+    assert [item["status"] for item in report["runs"]] == ["failed", "succeeded"]
+    assert len(report["warmups"]) == 2
+    assert events == [
+        ("warmup", 1, "00000000000000000000000000000001"),
+        ("run", 1, "00000000000000000000000000000001"),
+        ("warmup", 2, "00000000000000000000000000000002"),
+        ("run", 2, "00000000000000000000000000000002"),
+    ]
 
 
 def test_worker_result_does_not_consume_attempt_before_report_commit(
@@ -427,8 +646,7 @@ def test_worker_result_does_not_consume_attempt_before_report_commit(
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "environment", lambda: {})
-    monkeypatch.setattr(benchmark, "run_worker", _fake_worker(calls))
+    _patch_runtime(monkeypatch, calls)
     writes = 0
 
     def interrupt_second_write(path: Path, report: dict[str, Any]) -> None:
@@ -459,8 +677,7 @@ def test_report_rejects_config_outsiders_and_missing_pair_comparison(
     )
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "environment", lambda: {})
-    monkeypatch.setattr(benchmark, "run_worker", _fake_worker([]))
+    _patch_runtime(monkeypatch, [])
     args = _args(tmp_path / "report.json", language="en", minutes=8)
     args.mode = ["project-slicing", "provider-native"]
     benchmark.run_benchmark(args)
@@ -469,6 +686,9 @@ def test_report_rejects_config_outsiders_and_missing_pair_comparison(
     mutations = [
         lambda report: report["runs"][0].update({"repetition": 2}),
         lambda report: report["warmups"][0].update({"provider": "qwen3-asr"}),
+        lambda report: report["warmups"][0].pop("session_id"),
+        lambda report: report["environment"]["hardware"].pop("cpu_model"),
+        lambda report: report["runs"][0].update({"peak_rss_bytes": 1}),
         lambda report: report["runs"][0].pop("output_comparison"),
         lambda report: report["runs"][0]["output_comparison"].update(
             {"project_sha256": "f" * 64}
@@ -490,8 +710,7 @@ def test_resume_does_not_recompute_existing_success_comparison(
     )
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "environment", lambda: {})
-    monkeypatch.setattr(benchmark, "run_worker", _fake_worker([]))
+    _patch_runtime(monkeypatch, [])
     args = _args(tmp_path / "report.json", language="en", minutes=8)
     benchmark.run_benchmark(args)
     report = json.loads(args.report.read_text(encoding="utf-8"))
@@ -513,7 +732,9 @@ def test_orchestration_rejects_invalid_report_and_reference_before_worker(
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
     monkeypatch.setattr(benchmark, "environment", lambda: calls.append("environment"))
-    monkeypatch.setattr(benchmark, "run_worker", lambda *_args: calls.append("worker"))
+    monkeypatch.setattr(
+        benchmark, "WorkerSession", lambda *_args: calls.append("worker")
+    )
     args = _args(tmp_path / "report.json", language="zh", minutes=8)
 
     part = manifest_path.parent / value["languages"]["zh"]["parts"][0]["path"]
@@ -536,8 +757,7 @@ def test_report_rejects_identity_and_invalid_comparison_shape(
     )
     monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
     monkeypatch.setattr(benchmark, "DATA_DIR", data)
-    monkeypatch.setattr(benchmark, "environment", lambda: {})
-    monkeypatch.setattr(benchmark, "run_worker", _fake_worker([]))
+    _patch_runtime(monkeypatch, [])
     args = _args(tmp_path / "report.json", language="en", minutes=8)
     benchmark.run_benchmark(args)
     pristine = json.loads(args.report.read_text(encoding="utf-8"))

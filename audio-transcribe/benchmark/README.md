@@ -40,15 +40,19 @@ uv run --no-sync python -m benchmark --provider faster-whisper --language zh --m
 
 `--repetitions` 控制重复次数，`--report` 指定 JSON 路径。默认报告为 `benchmark/reports/<当天日期>.json`，Markdown 写到同名文件。新报告会冻结完整的 Provider、语言、时长、mode 和 repetition config；续跑时，未显式提供的矩阵参数继承报告值，显式参数规范化后必须与完整 config 一致。扩展或缩小矩阵必须使用新报告路径。
 
-当前格式 JSON 会原子保存恢复点：成功 run 按 identity 跳过，失败 attempt 保留并在下次执行时追加重试。旧格式不迁移、不重评分，也不为已有成功 run 重新计算指标；无法按当前结构读取时必须使用新报告路径。每个 Provider 在自身测试开始前使用 config 的第一个样本，以 `project-slicing` 和 `repetition=0` 预热一次；warmup 不进入统计，也不计算 Reference CER/WER。每次 worker 使用独立子进程和带随机 nonce 的 `benchmark/tmp/<run-id>-<nonce>/results/`，不会复用旧报告或先前运行留下的结果、workspace 和模型进程。
+当前格式 JSON 会原子保存恢复点：成功 run 按 identity 跳过，失败 attempt 保留并在下次执行时追加重试。旧格式不迁移、不重评分，也不为已有成功 run 重新计算指标；缺少当前硬件身份、session 或 warmup 信息的旧报告必须使用新路径。
 
-续跑不会根据代码提交、依赖、模型 revision、Provider identity、execution identity 或机器自动拒绝已有报告。恢复提示假设这些条件没有变化；任何条件变化后都应使用新报告路径，否则报告可能混合不可直接比较的结果。顶层 `environment` 仅是报告创建时的快照。
+每个仍有待执行项的 Provider 启动一个持久 worker 子进程。正式 run 所需的每种模型加载配置首次出现时，worker 使用该 run 相同的音频和 mode 完成一次不计入统计的预热，然后在同一 session 中复用 prepared model；语言不影响模型加载，因此不属于缓存 key。faster-whisper 的时长或 mode 若导出不同的线程/worker 配置，会分别预热。每个正式 run 仍使用带随机 nonce 的独立 `benchmark/tmp/<run-id>-<nonce>/results/`，不会复用先前 run 的 workspace。worker 意外退出时当前 run 失败，后续 run 在新 session 中重新预热。续跑也总是创建新 session 并重新预热待执行配置；若没有待执行项，则不启动 worker。
+
+顶层 `environment` 将 CPU 型号、逻辑核心数、物理内存总量以及按设备序号排序的 GPU 型号和总显存记录为硬件身份。续跑前会重新采集并严格比较这些字段；不同或缺失时，在 worker 启动前拒绝并要求使用新报告路径。不支持跨设备续跑。系统、Python、commit、依赖和模型 revision 是只展示的审计信息，不参与自动续跑判断；代码、依赖或模型变化后仍应主动使用新报告路径。
 
 ## 模式与报告
 
 - `project-slicing` 调用生产 `run_transcribe()`，包括 VAD、规划、Provider、合并和公开 artifact 发布。
-- `provider-native` 复用生产 Provider adapter、模型参数和 execution identity，但完整音频只作为一个 Provider 输入，不调用项目 VAD、规划、合并或发布。faster-whisper 的单次原生推理显式使用与 `project-slicing` 相同的 CPU budget 作为 `cpu_threads`，使两种模式拥有相同的 CPU 线程预算。Qwen3-ASR 0.0.6 在时间戳模式下仍可能原生按最长 180 秒切分。
+- `provider-native` 复用生产 Provider adapter、模型参数、execution identity 和模型加载配置，但完整音频只作为一个 Provider 输入，不调用项目 VAD、规划、合并或发布。Qwen3-ASR 0.0.6 在时间戳模式下仍可能原生按最长 180 秒切分。
 
-JSON 保留冻结 config、原始 run、失败、预热、环境、模型 revision、wall/Provider stage、RTF、进程树峰值 RSS 和可用时的 NVIDIA 显存。报告级 `reference_set` 固定 manifest、音频和规范化 reference 摘要；每个正式 run 记录 `audio_sha256`，每个成功 run 记录以 reference 为分母的 `reference_comparison`。报告与 reference manifest 都只支持当前结构，不包含内部 schema 版本。
+这两个 mode 比较的是两套端到端策略。wall time、RTF、相对速度和文本差异同时包含两条路径的多项差别，不能单独归因于 chunk optimizer；当前 benchmark 不提供 optimizer 消融结论。
+
+JSON 保留冻结 config、原始 run、失败、预热、session、环境、模型 revision、wall/Provider stage 和 RTF。报告级 `reference_set` 固定 manifest、音频和规范化 reference 摘要；每个正式 run 记录 `audio_sha256`，每个成功 run 记录以 reference 为分母的 `reference_comparison`。报告与 reference manifest 都只支持当前结构，不包含内部 schema 版本。当前 benchmark 不测量或比较进程内存与 GPU 显存占用；“测试设备”中的物理内存和 GPU 总显存仅表示硬件容量。
 
 现有模式间比较仍按相同 repetition 配对，只有配对成功的 `project-slicing` run 记录 `output_comparison`：中文为 CER、英文为 WER，`provider-native` 是分母。它只表示两种执行模式的输出差异，与 Reference CER/WER 含义不同。Markdown 对每个 mode 显示 Reference CER/WER 中位数和 `hypothesis/reference` 标点中位数，仅在 `project-slicing` 行显示 `Mode difference`；缺失或失败 counterpart 不参与模式差异。

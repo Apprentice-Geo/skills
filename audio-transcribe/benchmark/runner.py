@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
 import platform
 import subprocess
@@ -32,7 +33,7 @@ from benchmark.reference import (
     load_reference_samples,
 )
 from benchmark.report import run_id, validate_config, validate_report, write_report
-from benchmark.worker import fresh_worker_directory, run_worker
+from benchmark.worker import WorkerSession, fresh_worker_directory
 from scripts.io_utils import read_json
 from scripts.model_identity import MODEL_REVISIONS
 
@@ -65,24 +66,121 @@ def build_matrix(
     return runs
 
 
-def environment() -> dict[str, Any]:
-    def command(*args: str) -> str | None:
-        try:
-            return subprocess.run(
-                args, cwd=ROOT, capture_output=True, text=True, timeout=5, check=True
-            ).stdout.strip()
-        except (OSError, subprocess.SubprocessError):
-            return None
+def _command(*args: str) -> str | None:
+    try:
+        return subprocess.run(
+            args, cwd=ROOT, capture_output=True, text=True, timeout=5, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
 
+
+def _cpu_model() -> str:
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
+            ) as key:
+                value, _kind = winreg.QueryValueEx(key, "ProcessorNameString")
+                if str(value).strip():
+                    return str(value).strip()
+        except OSError:
+            pass
+    return (platform.processor() or platform.machine()).strip()
+
+
+def _physical_memory_bytes() -> int:
+    if sys.platform == "win32":
+
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ("length", ctypes.c_ulong),
+                ("memory_load", ctypes.c_ulong),
+                ("total_physical", ctypes.c_ulonglong),
+                ("available_physical", ctypes.c_ulonglong),
+                ("total_page_file", ctypes.c_ulonglong),
+                ("available_page_file", ctypes.c_ulonglong),
+                ("total_virtual", ctypes.c_ulonglong),
+                ("available_virtual", ctypes.c_ulonglong),
+                ("available_extended_virtual", ctypes.c_ulonglong),
+            ]
+
+        status = MemoryStatus()
+        status.length = ctypes.sizeof(status)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            raise OSError("GlobalMemoryStatusEx failed")
+        return int(status.total_physical)
+    page_size = os.sysconf("SC_PAGE_SIZE")
+    page_count = os.sysconf("SC_PHYS_PAGES")
+    return int(page_size * page_count)
+
+
+def _gpus() -> list[dict[str, Any]]:
+    try:
+        output = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout.strip()
+    except FileNotFoundError:
+        return []
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("Could not collect NVIDIA GPU identity") from exc
+    if not output:
+        return []
+    devices = []
+    for line in output.splitlines():
+        fields = [field.strip() for field in line.split(",", 2)]
+        if len(fields) != 3:
+            raise RuntimeError("nvidia-smi returned an invalid GPU identity")
+        index, name, memory_mib = fields
+        devices.append(
+            {
+                "index": int(index),
+                "name": name,
+                "memory_total_bytes": int(memory_mib) * 1024 * 1024,
+            }
+        )
+    return sorted(devices, key=lambda item: item["index"])
+
+
+def hardware_identity() -> dict[str, Any]:
+    identity = {
+        "cpu_model": _cpu_model(),
+        "logical_cpu_count": os.cpu_count(),
+        "physical_memory_bytes": _physical_memory_bytes(),
+        "gpus": _gpus(),
+    }
+    if (
+        not identity["cpu_model"]
+        or not isinstance(identity["logical_cpu_count"], int)
+        or identity["logical_cpu_count"] < 1
+        or identity["physical_memory_bytes"] < 1
+    ):
+        raise RuntimeError("Required benchmark hardware identity is unavailable")
+    return identity
+
+
+def environment() -> dict[str, Any]:
     return {
-        "platform": platform.platform(),
-        "python": sys.version,
-        "cpu_count": os.cpu_count(),
-        "cpu_model": command("wmic", "cpu", "get", "name", "/value"),
-        "gpu_model": command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader"),
-        "commit": command("git", "rev-parse", "HEAD"),
-        "dependencies": command(sys.executable, "-m", "pip", "freeze"),
-        "model_revisions": MODEL_REVISIONS,
+        "hardware": hardware_identity(),
+        "audit": {
+            "platform": platform.platform(),
+            "python": sys.version,
+            "commit": _command("git", "rev-parse", "HEAD"),
+            "dependencies": _command(sys.executable, "-m", "pip", "freeze"),
+            "model_revisions": MODEL_REVISIONS,
+        },
     }
 
 
@@ -169,9 +267,14 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 "Benchmark reference identity changed; use a new report path."
             )
         report = validate_report(candidate, references)
+        if report["environment"]["hardware"] != hardware_identity():
+            raise ValueError(
+                "Benchmark hardware differs from the existing report; "
+                "use a new report path."
+            )
         print(
-            "Resuming assumes code, dependencies, models, and machine are unchanged; "
-            "use a new report path if they changed.",
+            "Benchmark hardware matches. Use a new report path if code, dependencies, "
+            "or models changed.",
             file=sys.stderr,
         )
     else:
@@ -196,69 +299,89 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     succeeded = {
         item["run_id"] for item in report["runs"] if item.get("status") == "succeeded"
     }
-    warmed = {
-        item["provider"]
-        for item in report["warmups"]
-        if item.get("status") == "succeeded"
-    }
     for provider in config["providers"]:
-        provider_runs = [item for item in matrix if item["provider"] == provider]
-        if provider not in warmed:
-            warm = {
-                "provider": provider,
-                "language": config["languages"][0],
-                "minutes": config["minutes"][0],
-                "mode": "project-slicing",
-                "repetition": 0,
-            }
-            result = run_worker(
-                warm,
-                DATA_DIR / f"{warm['language']}-{warm['minutes']}min.wav",
-                fresh_worker_directory(
-                    f"warmup-{provider}-{len(report['warmups']) + 1}"
-                ),
-            )
-            report["warmups"].append(result)
-            write_report(report_path, report)
-        for run in provider_runs:
-            identifier = run_id(run)
-            if identifier in succeeded:
-                continue
-            attempt = 1 + sum(item["run_id"] == identifier for item in report["runs"])
-            reference = references[(run["language"], run["minutes"])]
-            result = run_worker(
-                run,
-                DATA_DIR / f"{run['language']}-{run['minutes']}min.wav",
-                fresh_worker_directory(f"{identifier}-attempt-{attempt}"),
-            )
-            result["attempt"] = attempt
-            result["audio_sha256"] = reference["audio_sha256"]
-            if result.get("status") == "succeeded":
-                result["reference_comparison"] = compare_reference(
-                    result["text"], reference["text"], run["language"]
+        provider_runs = [
+            item
+            for item in matrix
+            if item["provider"] == provider and run_id(item) not in succeeded
+        ]
+        if not provider_runs:
+            continue
+        session: WorkerSession | None = None
+        try:
+            for run in provider_runs:
+                if session is None or not session.alive:
+                    if session is not None:
+                        session.close()
+                    session = WorkerSession(provider)
+                identifier = run_id(run)
+                attempt = 1 + sum(
+                    item["run_id"] == identifier for item in report["runs"]
                 )
-                succeeded.add(identifier)
-            report["runs"].append(result)
-            counterpart = next(
-                (
-                    item
-                    for item in report["runs"]
-                    if item.get("status") == "succeeded"
-                    and item["provider"] == run["provider"]
-                    and item["language"] == run["language"]
-                    and item["minutes"] == run["minutes"]
-                    and item["repetition"] == run["repetition"]
-                    and item["mode"] != run["mode"]
-                ),
-                None,
-            )
-            if result.get("status") == "succeeded" and counterpart is not None:
-                project = result if result["mode"] == "project-slicing" else counterpart
-                native = result if result["mode"] == "provider-native" else counterpart
-                project["output_comparison"] = compare_text(
-                    project["text"], native["text"], run["language"]
+                reference = references[(run["language"], run["minutes"])]
+                sample = DATA_DIR / f"{run['language']}-{run['minutes']}min.wav"
+                warmup = session.ensure_warmup(
+                    run,
+                    sample,
+                    fresh_worker_directory(
+                        f"warmup-{provider}-{len(report['warmups']) + 1}"
+                    ),
                 )
-            write_report(report_path, report)
+                if not warmup.pop("already_prepared", False):
+                    report["warmups"].append(warmup)
+                    write_report(report_path, report)
+                if warmup.get("status") == "succeeded":
+                    result = session.run(
+                        run,
+                        sample,
+                        fresh_worker_directory(f"{identifier}-attempt-{attempt}"),
+                    )
+                else:
+                    result = {
+                        **run,
+                        "run_id": identifier,
+                        "session_id": session.session_id,
+                        "status": "failed",
+                        "error": f"warmup failed: {warmup.get('error', 'unknown error')}",
+                    }
+                result["attempt"] = attempt
+                result["audio_sha256"] = reference["audio_sha256"]
+                if result.get("status") == "succeeded":
+                    result["reference_comparison"] = compare_reference(
+                        result["text"], reference["text"], run["language"]
+                    )
+                    succeeded.add(identifier)
+                report["runs"].append(result)
+                counterpart = next(
+                    (
+                        item
+                        for item in report["runs"]
+                        if item.get("status") == "succeeded"
+                        and item["provider"] == run["provider"]
+                        and item["language"] == run["language"]
+                        and item["minutes"] == run["minutes"]
+                        and item["repetition"] == run["repetition"]
+                        and item["mode"] != run["mode"]
+                    ),
+                    None,
+                )
+                if result.get("status") == "succeeded" and counterpart is not None:
+                    project = (
+                        result if result["mode"] == "project-slicing" else counterpart
+                    )
+                    native = (
+                        result if result["mode"] == "provider-native" else counterpart
+                    )
+                    project["output_comparison"] = compare_text(
+                        project["text"], native["text"], run["language"]
+                    )
+                write_report(report_path, report)
+                if not session.alive:
+                    session.close()
+                    session = None
+        finally:
+            if session is not None:
+                session.close()
     write_report(report_path, report)
     return report
 

@@ -204,6 +204,7 @@ def run_transcribe(
     vad_detector: Callable[[Any], list[tuple[int, int]]] | None = None,
     language_detector: Callable[[Any], str] = _detect_language,
     engine: Engine | None = None,
+    prepared_model: Any | None = None,
 ) -> TranscribeOutcome:
     audio_path = audio_path.resolve()
     if not audio_path.is_file():
@@ -338,6 +339,7 @@ def run_transcribe(
                             variant_id=variant_id,
                             prepared_audio=normalized_audio,
                             prepared_vad=speech_intervals,
+                            prepared_model=prepared_model,
                             vad_detector=vad_detector,
                         )
                     else:
@@ -352,6 +354,7 @@ def run_transcribe(
                             variant_id=variant_id,
                             prepared_audio=normalized_audio,
                             prepared_vad=speech_intervals,
+                            prepared_model=prepared_model,
                             vad_detector=vad_detector,
                         )
                 else:

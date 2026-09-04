@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import subprocess
 import sys
@@ -20,7 +21,7 @@ from benchmark.metrics import (
 from benchmark.prepare_audio import safe_cut
 from benchmark.report import summarize
 from benchmark.runner import build_matrix
-from benchmark.worker import native_whisper_configuration, worker
+from benchmark.worker import worker
 
 
 def test_prepare_audio_module_help() -> None:
@@ -82,17 +83,122 @@ def test_worker_directories_do_not_reuse_prior_workspaces(
     assert first != second
 
 
-def test_native_whisper_uses_entire_cpu_budget_for_one_inference(
+def test_gpu_identity_is_sorted_and_uses_total_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("scripts.asr.execution.whisper_cpu.os.cpu_count", lambda: 8)
+    monkeypatch.setattr(
+        benchmark.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            stdout="1, GPU B, 24576\n0, GPU A, 8192"
+        ),
+    )
 
-    adapter, _policy, identity = native_whisper_configuration(16_000 * 60, "zh")
+    assert benchmark._gpus() == [
+        {"index": 0, "name": "GPU A", "memory_total_bytes": 8192 * 1024**2},
+        {"index": 1, "name": "GPU B", "memory_total_bytes": 24576 * 1024**2},
+    ]
 
-    assert adapter.options.cpu_threads == 6
-    assert identity["cpu_budget"] == 6
-    assert identity["cpu_threads"] == 6
-    assert identity["num_workers"] == 1
+
+def test_gpu_identity_is_empty_without_nvidia_smi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(benchmark.subprocess, "run", missing)
+
+    assert benchmark._gpus() == []
+
+
+def test_persistent_worker_reuses_model_by_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prepared_models: list[object] = []
+    used_models: list[object] = []
+
+    class Adapter:
+        def prepare(self, _identity):
+            model = object()
+            prepared_models.append(model)
+            return model
+
+    monkeypatch.setattr(
+        "scripts.asr.chunking.decode_normalized_audio",
+        lambda path: SimpleNamespace(sample_count=1 if "short" in str(path) else 2),
+    )
+    monkeypatch.setattr(
+        benchmark_worker,
+        "provider_runtime",
+        lambda _provider, _language, sample_count: (
+            Adapter(),
+            object(),
+            {"policy": "test"},
+            {"model": "test", "workers": sample_count},
+        ),
+    )
+
+    def fake_worker(*_args, prepared_model=None, **_kwargs):
+        used_models.append(prepared_model)
+        return {
+            "status": "succeeded",
+            "text": "text",
+            "execution_identity": {"policy": "test"},
+            "provider_identity": {"provider": "faster-whisper"},
+            "provider_stage_seconds": 0.1,
+        }
+
+    monkeypatch.setattr(benchmark_worker, "worker", fake_worker)
+    requests = [
+        {
+            "action": action,
+            "run": {
+                "provider": "faster-whisper",
+                "language": language,
+                "minutes": 8,
+                "mode": "project-slicing",
+                "repetition": repetition,
+            },
+            "audio": str(tmp_path / audio),
+            "results_dir": str(tmp_path / f"results-{index}"),
+        }
+        for index, (action, language, repetition, audio) in enumerate(
+            [
+                ("warmup", "zh", 0, "short.wav"),
+                ("warmup", "en", 0, "short.wav"),
+                ("run", "en", 1, "short.wav"),
+                ("warmup", "en", 0, "long.wav"),
+                ("run", "en", 1, "long.wav"),
+            ]
+        )
+    ]
+    input_stream = io.StringIO(
+        "".join(json.dumps(item) + "\n" for item in requests)
+        + json.dumps({"action": "shutdown"})
+        + "\n"
+    )
+    output_stream = io.StringIO()
+
+    assert (
+        benchmark_worker.persistent_worker(
+            "faster-whisper", input_stream, output_stream
+        )
+        == 0
+    )
+
+    responses = [
+        json.loads(line.removeprefix(benchmark_worker.PROTOCOL_PREFIX))
+        for line in output_stream.getvalue().splitlines()
+    ]
+    assert len(prepared_models) == 2
+    assert used_models == [
+        prepared_models[0],
+        prepared_models[0],
+        prepared_models[1],
+        prepared_models[1],
+    ]
+    assert responses[2]["already_prepared"] is True
+    assert all(item["session_id"] == responses[0]["session_id"] for item in responses)
 
 
 def test_project_slicing_worker_uses_in_memory_pipeline_metrics(
@@ -171,21 +277,70 @@ def test_each_provider_warms_immediately_before_its_runs(
 ) -> None:
     calls: list[tuple[str, int]] = []
 
-    def fake_run_worker(run: dict[str, object], *_args: object) -> dict[str, object]:
-        calls.append((str(run["provider"]), int(run["repetition"])))
-        return {
-            **run,
-            "status": "succeeded",
-            "text": "",
-            "execution_identity": {"policy": "test"},
-            "provider_identity": {"provider": run["provider"]},
-            "run_id": benchmark.run_id(run),
-            "wall_seconds": 1.0,
-            "rtf": 0.1,
-            "provider_stage_seconds": 0.5,
-        }
+    class FakeSession:
+        count = 0
 
-    monkeypatch.setattr(benchmark, "run_worker", fake_run_worker)
+        def __init__(self, provider: str) -> None:
+            type(self).count += 1
+            self.provider = provider
+            self.session_id = f"{self.count:032x}"
+            self.alive = True
+
+        def _result(self, run: dict[str, object]) -> dict[str, object]:
+            calls.append((str(run["provider"]), int(run["repetition"])))
+            model = {
+                "repo": "test/repo",
+                "revision": "revision",
+                "logical_id": "model",
+            }
+            configuration = (
+                {
+                    "model": model,
+                    "device": "cpu",
+                    "compute_type": "float32",
+                    "cpu_threads": 1,
+                    "num_workers": 1,
+                }
+                if self.provider == "faster-whisper"
+                else {
+                    "model": model,
+                    "aligner": {
+                        "repo": "test/aligner",
+                        "revision": "revision",
+                        "logical_id": "aligner",
+                    },
+                    "device": "cuda:0",
+                    "dtype": "bfloat16",
+                    "batch_size": 1,
+                }
+            )
+            return {
+                **run,
+                "status": "succeeded",
+                "text": "",
+                "execution_identity": {"policy": "test"},
+                "provider_identity": {"provider": run["provider"]},
+                "model_configuration": configuration,
+                "run_id": benchmark.run_id(run),
+                "session_id": self.session_id,
+                "wall_seconds": 1.0,
+                "rtf": 0.1,
+                "provider_stage_seconds": 0.5,
+            }
+
+        def ensure_warmup(self, run, _sample, _directory):
+            return {
+                **self._result({**run, "repetition": 0}),
+                "already_prepared": False,
+            }
+
+        def run(self, run, _sample, _directory):
+            return self._result(run)
+
+        def close(self) -> None:
+            self.alive = False
+
+    monkeypatch.setattr(benchmark, "WorkerSession", FakeSession)
     monkeypatch.setattr(
         benchmark,
         "load_reference_manifest",
@@ -207,7 +362,25 @@ def test_each_provider_warms_immediately_before_its_runs(
             }
         },
     )
-    monkeypatch.setattr(benchmark, "environment", lambda: {})
+    monkeypatch.setattr(
+        benchmark,
+        "environment",
+        lambda: {
+            "hardware": {
+                "cpu_model": "test",
+                "logical_cpu_count": 1,
+                "physical_memory_bytes": 1,
+                "gpus": [],
+            },
+            "audit": {
+                "platform": "test",
+                "python": "test",
+                "commit": None,
+                "dependencies": None,
+                "model_revisions": {},
+            },
+        },
+    )
     monkeypatch.setattr(benchmark, "DATA_DIR", tmp_path / "data")
     args = argparse.Namespace(
         report=tmp_path / "report.json",
@@ -296,6 +469,27 @@ def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
                     }
                 ],
             },
+            "environment": {
+                "hardware": {
+                    "cpu_model": "test cpu",
+                    "logical_cpu_count": 8,
+                    "physical_memory_bytes": 16 * 1024**3,
+                    "gpus": [
+                        {
+                            "index": 0,
+                            "name": "test gpu",
+                            "memory_total_bytes": 8 * 1024**3,
+                        }
+                    ],
+                },
+                "audit": {
+                    "platform": "test",
+                    "python": "test",
+                    "commit": None,
+                    "dependencies": None,
+                    "model_revisions": {},
+                },
+            },
             "runs": runs,
         }
     )
@@ -304,6 +498,11 @@ def test_summary_pairs_repetitions_and_uses_comparison_median() -> None:
     assert "Reference CER/WER" in markdown
     assert "Mode difference" in markdown
     assert "Punctuation (hypothesis/reference)" in markdown
+    assert "## Test device" in markdown
+    assert "test cpu (8 logical cores)" in markdown
+    assert "GPU 0: test gpu (8.00 GiB total)" in markdown
+    assert "Memory and GPU-memory usage are not measured or compared" in markdown
+    assert "cannot be attributed to the chunk optimizer alone" in markdown
     assert "not an absolute accuracy measure" not in markdown
     assert "100.000%" in markdown
     assert "| zh | 8 | provider-native" in markdown
