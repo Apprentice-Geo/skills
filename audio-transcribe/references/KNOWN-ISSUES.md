@@ -54,7 +54,7 @@
 
 **状态：已关闭（2026-09-05）。** 生产端现在从当前输入音频和 resolved request 计算 `audio_id + config_digest`，独立定位 workspace。无论 manifest 是否存在，公共结果无效且 workspace snapshot 不可用时均可进入 pipeline，从合法 plan/chunks 重建；缓存不足再执行正常推理。
 
-有效且匹配当前请求的 manifest 继续约束原正文 digest；重建不同则停止，保留原 manifest 和已有正文。manifest 缺失或损坏时，维护者接受根据当前请求重新发布，不再承诺复现历史 digest。完整 candidate 验证后才安装正文与 manifest，最终 manifest 安装失败时尝试回滚正文。
+完整有效且身份匹配的 bundle 直接复用；损坏 bundle 重建 digest 相同时保留原 manifest 字节，不同时允许在同身份下重新发布，仅更新正文 digest 并保留原路径及其他元数据。manifest 缺失或损坏时根据当前请求生成结果，不承诺复现历史 digest。完整 candidate 验证后才安装正文与 manifest，最终 manifest 安装失败时尝试回滚正文。
 
 `tests/test_public_artifacts.py` 覆盖已发布结果与 workspace 同时损坏、无需模型的 chunk 重建、digest 一致/不一致、manifest 缺失或损坏后的重新发布，以及发布失败保留原公共文件。长期协议见 [架构](ARCHITECTURE.md#公共-contract-与发布) 和 [错误处理](ERROR-HANDLING.md#cache-恢复)。
 

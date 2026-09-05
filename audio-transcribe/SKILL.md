@@ -56,6 +56,8 @@ uv run --no-sync python -m scripts.transcribe "<absolute-or-relative-audio-path>
 
 `request.config_digest` 是已解析转写配置的 canonical JSON SHA-256，包含模型、执行和文本处理策略及公共格式版本；不是单次调用编号。结果由 `audio_id + config_digest` 定位。固定 alignment policy 仍为 v1，item 必须严格有序、互不重叠，并满足 `0 <= start < end <= duration`。
 
+完整有效 bundle 直接复用。损坏结果经生产命令修复后，可能在同一音频与配置身份下重新发布不同内容并更新正文 SHA-256；该摘要标识整个正文文件的具体字节。需要固定历史结果时保存独立 bundle，consumer loader 始终只读。
+
 其他 Skill 可以保留 manifest 路径，或将 `manifest.json` 与其引用的 `transcript.json` 一起复制、移动为独立 bundle，保持字节和相对路径不变。不得改写公共 JSON、读取或迁移私有 workspace。只移动这两个公共文件即可；日志和 workspace 不属于 bundle。
 
 `load_result()` 返回 `manifest_path`、`transcript_path`、`manifest` 和 `transcript`。外层 dataclass 冻结，内层字典和列表是可修改的内存快照，修改不会写回磁盘。`load_manifest()` 仅验证元数据，供生产端恢复使用；它不能证明正文有效，不得替代 `load_result()` 声称转写成功。

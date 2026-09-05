@@ -31,7 +31,10 @@ from scripts.io_utils import (
     write_bytes_atomic,
     write_json_atomic,
 )
+from scripts.process_logging import get_logger
 from scripts.text_normalization import normalize_transcript_text
+
+logger = get_logger(__name__)
 
 
 # @contextmanager 让这个函数可以配合 with 使用
@@ -278,7 +281,7 @@ def _public_payload(
 def matching_manifest(
     manifest_path: Path, *, audio: dict[str, Any], request: dict[str, Any]
 ) -> ResultManifest | None:
-    """Keep valid published metadata authoritative even when its body is damaged."""
+    """Reject other identities and retain valid metadata for controlled repair."""
     try:
         manifest = load_manifest(manifest_path)
     except ResultValidationError:
@@ -299,8 +302,8 @@ def publish_result(
 ) -> Path:
     """Validate a staged bundle, then publish its body and manifest last.
 
-    Valid existing metadata binds recovery to the original digest and manifest
-    bytes. Missing or invalid metadata permits republication from current inputs.
+    Damaged bundles may be republished under the same audio/request identity.
+    Exact recovery preserves manifest bytes; republication updates only its digest.
     The caller holds result_lock across cache inspection, rebuild and publication.
     """
     manifest_path = result_dir / "manifest.json"
@@ -325,11 +328,15 @@ def publish_result(
     transcript_bytes = pretty_json_bytes(transcript) + b"\n"
     digest = hashlib.sha256(transcript_bytes).hexdigest()
     if previous is not None:
-        if digest != previous["artifact_sha256"]["transcript"]:
-            raise ResultValidationError(
-                "Workspace reconstruction does not match published artifact digest."
+        if digest == previous["artifact_sha256"]["transcript"]:
+            manifest_bytes = manifest_path.read_bytes()
+        else:
+            manifest_bytes = (
+                pretty_json_bytes(
+                    {**previous, "artifact_sha256": {"transcript": digest}}
+                )
+                + b"\n"
             )
-        manifest_bytes = manifest_path.read_bytes()
         transcript_relative = previous["artifacts"]["transcript"]
     else:
         transcript_relative = "transcript.json"
@@ -372,4 +379,26 @@ def publish_result(
             else:
                 write_bytes_atomic(transcript_path, original_transcript)
             raise
+    if previous is None:
+        logger.info(
+            "Publication complete: audio_id=%s config_digest=%s digest=%s",
+            audio["id"],
+            request["config_digest"],
+            digest,
+        )
+    elif digest == previous["artifact_sha256"]["transcript"]:
+        logger.info(
+            "Exact recovery complete: audio_id=%s config_digest=%s digest=%s",
+            audio["id"],
+            request["config_digest"],
+            digest,
+        )
+    else:
+        logger.warning(
+            "Republication complete: audio_id=%s config_digest=%s old_digest=%s new_digest=%s",
+            audio["id"],
+            request["config_digest"],
+            previous["artifact_sha256"]["transcript"],
+            digest,
+        )
     return manifest_path

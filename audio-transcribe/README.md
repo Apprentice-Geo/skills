@@ -9,6 +9,7 @@
 - 所有公开转写文本执行 Unicode NFKC；语言为 `zh` 时再通过 OpenCC `t2s` 转为简体。Provider 原始 chunk 仅保留在内部缓存中。
 - 公共结果由 `manifest.json` 和 `transcript.json` 组成，可一起复制或移动，无需携带日志、workspace 或原音频。`manifest.json` 是唯一公开入口，必须通过 `audio-transcribe-contract.load_result()` 验证后读取。
 - 契约包 0.2.0 使用公共 schema v2；不兼容旧三文件结果或旧 Python API。重新运行转写命令生成新结果，不手动迁移旧文件。
+- 完整有效结果直接复用；生产命令修复损坏结果时，可能在相同音频与配置身份下重新发布不同内容。需要固定历史结果时保存独立 bundle；公共 loader 始终只读。
 
 ## 隐私与安全
 

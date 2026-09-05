@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
+import logging
 import multiprocessing
 import os
 import shutil
@@ -76,6 +78,100 @@ def _publication_inputs(
         },
         {"config_digest": config_digest, **canonical_request},
     )
+
+
+def _change_workspace_text(result_dir: Path) -> None:
+    path = result_dir / "workspace" / "result.json"
+    workspace = read_json(path)
+    workspace["text"] = "private replacement"
+    workspace["items"] = [
+        {"text": "private replacement", "start": 0.0, "end": 0.5, "probability": None}
+    ]
+    write_json_atomic(path, workspace)
+
+
+@pytest.mark.parametrize("changed_result", [True, False])
+def test_repair_preserves_custom_manifest_metadata_and_logs_after_install(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    changed_result: bool,
+) -> None:
+    result_dir = workspace_tmp_path / "result"
+    audio, request = _publication_inputs(result_dir)
+    caplog.set_level(logging.INFO, logger=get_logger("scripts.artifacts").name)
+    path = publish_result(result_dir, audio=audio, request=request)
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.INFO
+    manifest = read_json(path)
+    manifest["artifacts"]["transcript"] = "nested/body.json"
+    manifest["extension"] = {"label": "preserved"}
+    # Noncanonical formatting must survive exact recovery byte for byte.
+    path.write_text(json.dumps(manifest, indent=4), encoding="utf-8")
+    original_bytes = path.read_bytes()
+    original_snapshot = json.loads(original_bytes)
+    old_digest = manifest["artifact_sha256"]["transcript"]
+    body = result_dir / "nested" / "body.json"
+    body.parent.mkdir()
+    (result_dir / "transcript.json").rename(body)
+    load_result(path)
+    body.write_bytes(b"damaged")
+    if changed_result:
+        _change_workspace_text(result_dir)
+    # Observe the actual loader snapshot to guard against in-place mutation.
+    monkeypatch.setattr("scripts.artifacts.load_manifest", lambda _: manifest)
+    caplog.clear()
+    real_replace = os.replace
+
+    def replace(source, destination):
+        assert not caplog.records
+        return real_replace(source, destination)
+
+    monkeypatch.setattr("scripts.artifacts.os.replace", replace)
+    publish_result(result_dir, audio=audio, request=request, replace_existing=True)
+    result = load_result(path)
+    new_digest = hashlib.sha256(body.read_bytes()).hexdigest()
+    assert result.transcript_path == body
+    assert manifest == original_snapshot
+    assert result.manifest == {
+        **original_snapshot,
+        "artifact_sha256": {"transcript": new_digest},
+    }
+    assert (old_digest != new_digest) == changed_result
+    if not changed_result:
+        assert path.read_bytes() == original_bytes
+    assert not (result_dir / "transcript.json").exists()
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == (logging.WARNING if changed_result else logging.INFO)
+    message = record.getMessage()
+    for value in (audio["id"], request["config_digest"], old_digest, new_digest):
+        assert value in message
+    assert "private replacement" not in message
+
+
+def test_complete_bundle_ignores_changed_workspace(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    result_dir = workspace_tmp_path / "result"
+    audio, request = _publication_inputs(result_dir)
+    path = publish_result(result_dir, audio=audio, request=request)
+    _change_workspace_text(result_dir)
+    before = {p: p.read_bytes() for p in result_dir.iterdir() if p.is_file()}
+    monkeypatch.setattr(
+        "scripts.artifacts.load_workspace_result",
+        lambda *_args, **_kwargs: pytest.fail("workspace read for valid bundle"),
+    )
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger=get_logger("scripts.artifacts").name)
+    assert (
+        publish_result(result_dir, audio=audio, request=request, replace_existing=True)
+        == path
+    )
+    assert {p: p.read_bytes() for p in before} == before
+    assert not caplog.records
 
 
 def _hold_result_lock(
@@ -431,25 +527,20 @@ def test_production_recovers_from_chunks_without_model(
         "transcribe_one",
         lambda *_: pytest.fail("inference ran for chunk recovery"),
     )
-    if manifest_state == "valid" and changed_chunk:
-        with pytest.raises(ResultValidationError, match="does not match"):
-            run_transcribe(audio, **kwargs)
-        assert manifest_path.read_bytes() == original_manifest
-        assert body.read_bytes() == b"damaged body"
+    run_transcribe(audio, **kwargs)
+    result = load_result(manifest_path)
+    if changed_chunk:
+        assert result.transcript["segments"][0]["text"] == "再见。"
+        assert manifest_path.read_bytes() != original_manifest
     else:
-        run_transcribe(audio, **kwargs)
-        result = load_result(manifest_path)
-        if changed_chunk:
-            assert result.transcript["segments"][0]["text"] == "再见。"
-            assert manifest_path.read_bytes() != original_manifest
-        else:
-            assert body.read_bytes() == original_body
-            assert manifest_path.read_bytes() == original_manifest
+        assert body.read_bytes() == original_body
+        assert manifest_path.read_bytes() == original_manifest
 
 
 @pytest.mark.parametrize("manifest_valid", [True, False])
+@pytest.mark.parametrize("changed_result", [True, False])
 def test_missing_cache_falls_back_to_inference(
-    workspace_tmp_path: Path, manifest_valid: bool
+    workspace_tmp_path: Path, manifest_valid: bool, changed_result: bool
 ) -> None:
     audio = workspace_tmp_path / "audio.bin"
     audio.write_bytes(b"audio")
@@ -467,28 +558,47 @@ def test_missing_cache_falls_back_to_inference(
     (path.parent / "transcript.json").unlink()
     if not manifest_valid:
         path.write_text("{", encoding="utf-8")
+    if changed_result:
+
+        def changed_engine(*_args):
+            calls.append(1)
+            return AlignedTranscript(
+                "再见。", (AlignmentItem("再见。", 0.0, 0.5, None),)
+            )
+
+        kwargs["engine"] = changed_engine
     run_transcribe(audio, **kwargs)
     assert calls == [1, 1]
-    assert path.read_bytes() == original
-    load_result(path)
+    result = load_result(path)
+    assert (path.read_bytes() != original) == changed_result
+    assert result.transcript["segments"][0]["text"] == (
+        "再见。" if changed_result else "你好。"
+    )
 
 
 @pytest.mark.parametrize("phase", ["validation", "manifest_install"])
 @pytest.mark.parametrize("manifest_valid", [True, False])
+@pytest.mark.parametrize("changed_result", [True, False])
 def test_publication_failure_preserves_previous_files(
     workspace_tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     phase: str,
     manifest_valid: bool,
+    changed_result: bool,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     result_dir = workspace_tmp_path / "result"
     audio, request = _publication_inputs(result_dir)
     manifest_path = publish_result(result_dir, audio=audio, request=request)
+    if changed_result:
+        _change_workspace_text(result_dir)
     body = result_dir / "transcript.json"
     body.write_text("damaged body", encoding="utf-8")
     if not manifest_valid:
         manifest_path.write_text("{", encoding="utf-8")
     before = {path: path.read_bytes() for path in (manifest_path, body)}
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger=get_logger("scripts.artifacts").name)
     if phase == "validation":
 
         def validate(path):
@@ -510,10 +620,13 @@ def test_publication_failure_preserves_previous_files(
         publish_result(result_dir, audio=audio, request=request, replace_existing=True)
     assert {path: path.read_bytes() for path in before} == before
     assert not list(result_dir.glob(".publication-*"))
+    assert not caplog.records
 
 
-def test_valid_manifest_for_other_audio_is_not_republished(
+@pytest.mark.parametrize("identity", ["audio", "request"])
+def test_valid_manifest_for_other_identity_is_not_republished(
     workspace_tmp_path: Path,
+    identity: str,
 ) -> None:
     audio_path = workspace_tmp_path / "audio.bin"
     audio_path.write_bytes(b"audio")
@@ -526,12 +639,21 @@ def test_valid_manifest_for_other_audio_is_not_republished(
     }
     path = run_transcribe(audio_path, **kwargs).manifest_path
     manifest = read_json(path)
-    manifest["audio"]["id"] = "f" * 64
+    if identity == "audio":
+        manifest["audio"]["id"] = "f" * 64
+    else:
+        request = manifest["request"]
+        request["language"] = "en"
+        request["config_digest"] = canonical_sha256(
+            {key: value for key, value in request.items() if key != "config_digest"}
+        )
     write_json_atomic(path, manifest)
     before = path.read_bytes()
+    body_before = (path.parent / "transcript.json").read_bytes()
     with pytest.raises(ResultValidationError, match="identity"):
         run_transcribe(audio_path, **kwargs)
     assert path.read_bytes() == before
+    assert (path.parent / "transcript.json").read_bytes() == body_before
 
 
 def test_quantized_segment_end_recovers_identically(
@@ -830,7 +952,7 @@ def test_existing_complete_manifest_is_never_overwritten(
     load_result(manifest_path)
 
 
-def test_recovery_refuses_workspace_that_changes_published_digest(
+def test_recovery_republishes_workspace_that_changes_published_digest(
     workspace_tmp_path: Path,
 ) -> None:
     audio = workspace_tmp_path / "audio.bin"
@@ -843,6 +965,7 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
         "engine": _engine_calls([]),
     }
     manifest_path = run_transcribe(audio, **kwargs).manifest_path
+    original = load_result(manifest_path)
     workspace_path = manifest_path.parent / "workspace" / "result.json"
     workspace = read_json(workspace_path)
     workspace["text"] = "再见。"
@@ -853,10 +976,17 @@ def test_recovery_refuses_workspace_that_changes_published_digest(
     write_json_atomic(workspace_path, workspace)
     (manifest_path.parent / "transcript.json").unlink()
 
-    with pytest.raises(ResultValidationError, match="does not match"):
-        run_transcribe(audio, **kwargs)
-
-    assert manifest_path.is_file()
+    assert run_transcribe(audio, **kwargs).manifest_path == manifest_path
+    result = load_result(manifest_path)
+    assert result.manifest["audio"] == original.manifest["audio"]
+    assert result.manifest["request"] == original.manifest["request"]
+    assert result.manifest["artifact_sha256"] != original.manifest["artifact_sha256"]
+    assert result.transcript["segments"][0]["text"] == "再见。"
+    log = (manifest_path.parent / "transcribe.log").read_text(encoding="utf-8")
+    assert "WARNING" in log
+    assert original.manifest["artifact_sha256"]["transcript"] in log
+    assert result.manifest["artifact_sha256"]["transcript"] in log
+    assert "再见" not in log and "你好" not in log
 
 
 @pytest.mark.parametrize("identity_field", ["audio_id", "config_digest"])

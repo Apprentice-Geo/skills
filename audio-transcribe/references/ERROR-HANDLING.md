@@ -122,12 +122,12 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 
 manifest 或正文缺失、损坏时，优先严格读取 workspace snapshot；snapshot 不可用时进入 pipeline，从合法 plan/chunks 重建，缓存不足再执行正常推理。合法 plan 不依赖 VAD cache；只有 plan miss 时才读取或重算 VAD。已有完整 manifest 不再阻断 chunk 恢复。
 
-- manifest 元数据有效：正文重建必须符合原 SHA-256，恢复保留原 manifest 字节。重建结果不同则停止，不更新原 digest。
+- manifest 元数据有效且身份匹配：重建 SHA-256 相同时精确恢复，保留原 manifest 字节；不同时允许重新发布，仅更新 `artifact_sha256.transcript`，保留原 artifact 相对路径和其他元数据。SHA-256 覆盖整个正文文件，包括元数据、segments、items 和 JSON 字节格式。
 - manifest 缺失或无效：允许使用当前音频、resolved request 和合法 snapshot 重新发布；不承诺复现历史结果字节。
 
 workspace snapshot 已包含规范化文本，公共转换不再次运行 OpenCC。chunk 重建仍执行完整合并和规范化。新接受 candidate 的 zero-duration cleanup 发出聚合警告；chunk cache 不保存 cleanup report，恢复不重放历史警告。pipeline 不新写或删除历史 `progress.json`、`metrics.json`。
 
-发布前在临时 staging 目录验证完整两文件 candidate。重建失败、digest 不匹配或 candidate 无效时保留已有公共文件。正式正文替换后才安装 manifest；安装失败时尝试恢复原正文。强制终止或磁盘持续故障可能阻断回滚，下次运行必须重新验证，不以部分文件判断成功。临时 staging 目录不属于公共入口。
+发布前在临时 staging 目录验证完整两文件 candidate；loader 仍严格检查候选正文与候选 manifest 的 digest 一致。重建失败或 candidate 无效时保留已有公共文件。正式正文替换后才安装 manifest；安装失败时尝试恢复原正文。强制终止或磁盘持续故障可能阻断回滚，下次运行必须重新验证，不以部分文件判断成功。临时 staging 目录不属于公共入口。
 
 result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock 上，删除锁文件前先检查运行中的转写进程。详细协议见 [架构](ARCHITECTURE.md#公共-contract-与发布)。
 
@@ -140,6 +140,7 @@ result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock �
 - 报告中不得包含 transcript 文本、其他 workflow 的 Cookie 内容、原始模型对象或不必要的敏感本地路径。
 - 可以使用精确的 logger/message-prefix filter 过滤已知的嘈杂第三方警告。不得抑制未知警告或异常。
 - Cache hit 不得改写首次成功的 `transcribe.log`。已有 manifest 的恢复尝试追加日志；日志缺失时可以重新创建，不影响公共结果合同。
+- 成功安装后才记录发布诊断：相同 digest 的精确恢复为 INFO；不同 digest 的重新发布为 WARNING，包含 `audio_id`、`config_digest` 和旧/新 digest；无有效原 manifest 的发布为 INFO。诊断不包含转写文本，失败不记录发布成功，不增加公共审计字段。
 
 ## 停止条件
 
@@ -161,7 +162,8 @@ result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock �
 - resolved request 缺少精确匹配的受支持 alignment policy，包括加载旧 manifest 时；
 - 无效 workspace/cache 无法重建为合法结果，或候选公共正文具有无效字段、probability 或 timestamp；
 - 正式 manifest 安装前，publication candidate 验证失败；
-- 公共 artifact 验证失败，且恢复无法复现已发布的 digest；
+- 有效 manifest 与当前音频或 resolved request 身份不匹配；
+- 公共 artifact 验证失败且无法重建或完成发布；
 - 没有任何完整 `manifest.json` 验证成功。
 
 禁止通过编辑 `manifest.json`、`transcript.json` 或 `workspace/` 下的文件绕过停止条件。

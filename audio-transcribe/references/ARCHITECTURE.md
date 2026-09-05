@@ -44,7 +44,7 @@ local audio
 - 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `config_digest`。
 - 完整 manifest 最后发布，并且是唯一的成功标记。
 - 公共 artifact 路径必须位于结果目录内；indexed model shard 路径必须位于模型目录内。
-- 有效 manifest 的原 digest 约束正文恢复，并保留原 manifest 字节；manifest 缺失或无效时允许根据当前请求重新发布，不承诺与历史结果逐字节相同。重建失败不覆盖已有公共文件。
+- 完整有效且身份匹配的 bundle 直接复用。损坏 bundle 可在同一音频与配置身份下重新发布；重建 digest 相同时保留原 manifest 字节，不同时仅更新其正文 digest。重建失败不覆盖已有公共文件。
 
 ## 横切关注点
 
@@ -91,6 +91,8 @@ results/<audio_id>/<provider>-<language>-<config_digest>/
 
 manifest 记录 audio identity、resolved request identity、受限于目录内的 `transcript.json` 相对路径及其 SHA-256；不记录日志或 workspace。`transcript.json` 只保留一份 `schema_version`、`audio_id`、`config_digest`、Provider、language 和 duration，同时包含句子级 `segments`（id/start/end/text）及细粒度 `items`（text/start/end/probability）。句子文本来自完整规范化文本，不能假定简单拼接 item 文本可恢复全部标点和空白。
 
+`audio_id + config_digest` 表示音频与已解析配置组合；`artifact_sha256.transcript` 标识某次发布的整个正文文件字节，包括元数据、segments、items 和 JSON 格式。损坏修复可改变后者，不改变配置摘要算法、结果定位或转写生成算法。需要固定历史结果的消费者应保存独立 bundle；生产端不维护发布历史或备份归档。
+
 两份公共 JSON 保持字节及相对路径不变即可复制或移动到任意目录，consumer 无需访问原音频、模型、日志或 workspace。仅携带 bundle 的环境不具备本地恢复资料。生产端通过输入音频重新计算 audio identity 和 resolved request，定位本地 `results/<audio_id>/<provider>-<language>-<config_digest>/workspace/`，不根据公共 manifest 搜索或读取私有路径。自动解析后的配置变化会选择不同结果目录，不跨配置猜测或复用 workspace。
 
 `workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `audio_id`、`config_digest`、`text`、`items`、`duration`、`provider` 和 `language`，并在读取、发布和恢复时与当前请求逐项验证。
@@ -118,7 +120,7 @@ pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗
 1. 验证 manifest 元数据。有效但与当前 audio/request 不匹配时停止，不覆盖其他身份结果。
 2. 若完整 bundle 验证通过，直接复用，不检查私有文件，也不改写日志。
 3. 否则严格验证固定本地路径的 `workspace/result.json`；无效或缺失时进入 pipeline，从合法 plan/chunks 重建，缓存不足时执行正常推理。此路径同样适用于已有 manifest 的结果。
-4. 有效 manifest 的正文重建必须复现原 digest，并保留原 manifest 字节；即使重新推理成功，digest 不同也停止发布。
-5. manifest 缺失或损坏时，根据当前音频信息、resolved request 和合法 workspace 重新生成正文及 manifest。这属于重新发布，无法证明与丢失的历史 digest 相同。
+4. manifest 元数据有效且重建 digest 相同时，精确恢复并保留原 manifest 字节；digest 不同时允许重新发布，以原 manifest 为基础仅更新 `artifact_sha256.transcript`，保留 artifact 相对路径及其他元数据，不原地修改原文件或 loader snapshot。
+5. manifest 缺失或损坏时，根据当前音频信息、resolved request 和合法 workspace 生成正文及 manifest，使用默认 `transcript.json` 路径，不承诺与历史结果逐字节相同。
 
-恢复仍从规范化 snapshot 确定性生成句子和 items。重建、digest 检查或 candidate 验证失败，保留原有公共文件供后续检查；不得把新的 digest 写入一个有效的历史 manifest 来掩盖正文变化。
+恢复仍从规范化 snapshot 确定性生成句子和 items。重建或 candidate 验证失败，保留原有公共文件供后续检查；只有完整候选验证通过后才安装正文与更新后的 manifest。`publish_result()` 默认拒绝覆盖已有 manifest；生产命令通过现有 `replace_existing=True` 进入受控修复，不提供新的强制覆盖接口。成功发布后的诊断见 [错误处理](ERROR-HANDLING.md#日志)。
