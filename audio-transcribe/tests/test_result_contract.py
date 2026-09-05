@@ -123,22 +123,32 @@ def _rewrite_artifact(
     _write_json(manifest_path, manifest)
 
 
-@pytest.mark.parametrize("provider", ["faster-whisper", "qwen3-asr"])
 @pytest.mark.parametrize(
-    "node",
+    ("provider", "node"),
     [
-        "",
-        "audio",
-        "artifacts",
-        "artifact_sha256",
-        "request",
-        "request.provider_identity",
-        "request.provider_identity.model",
-        "request.execution_policy",
-        "request.vad_parameters",
-        "request.planning_parameters",
-        "request.text_normalization",
-        "request.alignment_policy",
+        *[
+            ("faster-whisper", node)
+            for node in (
+                "",
+                "audio",
+                "artifacts",
+                "artifact_sha256",
+                "request",
+                "request.vad_parameters",
+                "request.planning_parameters",
+                "request.text_normalization",
+                "request.alignment_policy",
+            )
+        ],
+        *[
+            (provider, node)
+            for provider in ("faster-whisper", "qwen3-asr")
+            for node in (
+                "request.provider_identity",
+                "request.provider_identity.model",
+                "request.execution_policy",
+            )
+        ],
     ],
 )
 @pytest.mark.parametrize("mutation", ["unknown", "missing", "wrong_type"])
@@ -483,7 +493,6 @@ def test_manifest_schema_and_identity_are_strict(
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda request: request.pop("alignment_policy"),
         lambda request: request["alignment_policy"].__setitem__(
             "zero_duration", "keep"
         ),

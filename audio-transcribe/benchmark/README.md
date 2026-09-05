@@ -75,4 +75,3 @@ JSON 保留冻结 config、原始 run、失败、预热、session、环境、模
 - 修改固定 reference、样本身份、报告恢复或验证边界时，运行 `uv run pytest tests/test_benchmark_reference.py`；若同时改变 CLI、runner、worker、指标或报告摘要，再运行上一项中的对应测试。
 - 变更跨越 benchmark 与生产 pipeline 或公开合同时，在聚焦测试通过后运行完整 `uv run pytest`，并同步检查相应的长期架构或错误处理文档。
 - `benchmark/data/`、`benchmark/tmp/` 和 `benchmark/reports/` 是被忽略的本地或生成内容，不应提交。提交到 `benchmark/references/` 的固定 reference 和 manifest 属于 benchmark 数据合同，不得由运行期自动修复或改写。
-- 仓库根目录 `references/` 下的阶段性计划、调查、已知问题记录和 benchmark 报告只用于追溯特定工作或运行，不是当前 benchmark 合同；不要从中推断当前命令或行为，是否删除由维护者决定。
