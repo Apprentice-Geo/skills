@@ -1,6 +1,8 @@
 # 转写 Benchmark
 
-本 benchmark 比较生产 `project-slicing` pipeline 与把完整音频直接交给 Provider 的 `provider-native` 路径。它不修改公开 manifest 合同，也不把内部 workspace 暴露给其他 Skill。
+本文主要面向维护者、开发者和执行 benchmark 任务的 Agent，普通转写用户无需阅读。它是 benchmark 方法、数据、reference、运行、恢复、报告和维护规则的唯一详细说明；当前可观察行为由 `benchmark/` 实现和对应测试共同验证。
+
+本 benchmark 比较生产 `project-slicing` pipeline 与把完整音频直接交给 Provider 的 `provider-native` 路径。它不修改公开 manifest 合同，也不把内部 workspace 暴露给其他 Skill。生产 Skill 不下载媒体；benchmark 数据准备是隔离的开发流程，可以按下述明确命令下载固定测试素材。
 
 ## 数据来源与准备
 
@@ -9,6 +11,8 @@
 ```powershell
 uv run --no-sync python -m benchmark.prepare_audio --pin-sha256
 ```
+
+该命令会访问网络、写入本地测试音频并固定来源摘要。Agent 仅在用户明确要求首次准备或更新 benchmark 数据身份时运行它，不得把它作为普通测试或环境检查的一部分。
 
 提交固定后的 `sources.json`。之后省略 `--pin-sha256`，工具会在使用缓存前校验 SHA256。下载和发布均使用临时文件；摘要不匹配会停止。
 
@@ -24,11 +28,13 @@ Reference 以公版原著底本为正文来源，并用 Qwen3-ASR 的 `project-s
 
 ## 运行与恢复
 
-完整矩阵为 2 种语言 × 2 个 Provider × 4 档长度 × 2 种 mode × 3 次重复：
+真实 benchmark 会加载本地模型、执行预热并处理长音频，可能长时间占用 CPU、GPU、内存和磁盘。完整矩阵为 2 种语言 × 2 个 Provider × 4 档长度 × 2 种 mode × 3 次重复，即 96 个正式 run，另有各模型配置的预热：
 
 ```powershell
 uv run --no-sync python -m benchmark
 ```
+
+只有任务明确需要真实性能或准确率证据时，才运行覆盖目标行为的最小筛选矩阵；完整矩阵仅在用户明确要求时运行。未执行真实 benchmark 时，应说明验证范围，不得声称已验证真实性能、RTF 或转写准确率。
 
 筛选参数可以重复提供，具体见下表：
 
@@ -60,3 +66,11 @@ uv run --no-sync python -m benchmark
 JSON 保留冻结 config、原始 run、失败、预热、session、环境、模型 revision、wall/Provider stage 和 RTF。报告级 `reference_set` 固定 manifest、音频和规范化 reference 摘要；每个正式 run 记录 `audio_sha256`，每个成功 run 记录以 reference 为分母的 `reference_comparison`。报告与 reference manifest 都只支持当前结构，不包含内部 schema 版本。当前 benchmark 不测量或比较进程内存与 GPU 显存占用；“测试设备”中的物理内存和 GPU 总显存仅表示硬件容量。
 
 现有模式间比较仍按相同 repetition 配对，只有配对成功的 `project-slicing` run 记录 `output_comparison`：中文为 CER、英文为 WER，`provider-native` 是分母。它只表示两种执行模式的输出差异，与 Reference CER/WER 含义不同。Markdown 对每个 mode 显示 Reference CER/WER 中位数和 `hypothesis/reference` 标点中位数，仅在 `project-slicing` 行显示 `Mode difference`；缺失或失败 counterpart 不参与模式差异。
+
+## 开发与维护
+
+- 修改 runner、worker、预热、执行模式、指标或报告摘要时，运行 `uv run pytest tests/test_benchmark.py tests/test_cli_output.py`。
+- 修改固定 reference、样本身份、报告恢复或验证边界时，运行 `uv run pytest tests/test_benchmark_reference.py`；若同时改变 CLI、runner、worker、指标或报告摘要，再运行上一项中的对应测试。
+- 变更跨越 benchmark 与生产 pipeline 或公开合同时，在聚焦测试通过后运行完整 `uv run pytest`，并同步检查相应的长期架构或错误处理文档。
+- `benchmark/data/`、`benchmark/tmp/` 和 `benchmark/reports/` 是被忽略的本地或生成内容，不应提交。提交到 `benchmark/references/` 的固定 reference 和 manifest 属于 benchmark 数据合同，不得由运行期自动修复或改写。
+- 仓库根目录 `references/` 下的阶段性计划、调查、已知问题记录和 benchmark 报告只用于追溯特定工作或运行，不是当前 benchmark 合同；不要从中推断当前命令或行为，是否删除由维护者决定。

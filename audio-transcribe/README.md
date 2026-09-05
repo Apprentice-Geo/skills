@@ -15,10 +15,13 @@
 
 依赖源按官方 PyPI、清华、阿里的顺序配置，并使用 uv 的 `first-index` 策略；国内源作为可信的后续候选源。
 
-## 进一步阅读
+## 使用与合同
 
 - [SKILL.md](SKILL.md)：完整使用规则、环境要求、命令和停止条件。
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。
 - [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：安装、模型、Provider、缓存和产物错误处理。
+
+## 开发与维护
+
 - [AGENTS.md](AGENTS.md)：开发维护、测试和代码规范。
-- [benchmark/README.md](benchmark/README.md)：准备固定测试音频、分批运行性能实验和读取报告。
+- [benchmark/README.md](benchmark/README.md)：benchmark 方法、固定测试数据、开发验证和报告说明；普通转写用户无需阅读。

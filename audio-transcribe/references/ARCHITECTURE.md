@@ -104,6 +104,6 @@ pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗
 
 `audio-transcribe-contract` 0.1.2 被有意设计为独立于内部 alignment 模块。其 `load_result()` API 保持不变，但它包含一份固定 alignment policy 的独立副本，并会在接受 identity 前拒绝缺失或遭修改的 policy。Raw item 必须具有精确的 item shape、非空文本、有效的 Provider probability，以及满足 `0 <= start < end <= duration` 和 `start >= previous_end` 的 timing。manifest 与 artifact 之间的 identity、canonical request digest、artifact digest、Provider、language、duration 和路径包含关系必须一致。
 
-发布采用 manifest-last。流程先写入 `transcript.json` 和 `raw_timestamps.json`，再写入 `.result_manifest.json.incomplete`，并使用 `load_result()` 验证该 candidate。仅当验证成功时，才允许通过 `os.replace()` 原子创建 `result_manifest.json`；candidate 验证失败时删除 incomplete 文件，并且不创建正式成功标记。首次发布拒绝覆盖已有正式 manifest。
+发布采用 manifest-last。流程为先写入 `transcript.json` 和 `raw_timestamps.json`，再写入 `.result_manifest.json.incomplete`，并使用 `load_result()` 验证该 candidate。仅当验证成功时，才允许通过 `os.replace()` 原子创建 `result_manifest.json`；candidate 验证失败时删除 incomplete 文件，并且不创建正式成功标记。首次发布拒绝覆盖已有正式 manifest。
 
 恢复流程临时使用 `.result_manifest.json.recovery`，与发布 candidate 区分。它从经过严格验证的规范化 workspace 重建公共 artifact，要求其 digest 与记录的完整结果匹配，并恢复原始正式 manifest 字节。此命名隔离不改变现有的多文件恢复协议。
