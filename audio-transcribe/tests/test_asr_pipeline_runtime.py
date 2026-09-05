@@ -23,7 +23,7 @@ from scripts.utils import read_json, write_json
 FAKE_SPLIT = 16_000
 FAKE_SAMPLE_COUNT = 32_000
 CHANGED_SAMPLE_COUNT = 48_000
-TEST_VARIANT_ID = "b" * 64
+TEST_CONFIG_DIGEST = "b" * 64
 
 
 def run_asr_pipeline(audio_path, workspace, provider, policy, **kwargs):
@@ -33,7 +33,7 @@ def run_asr_pipeline(audio_path, workspace, provider, policy, **kwargs):
         provider,
         policy,
         audio_id=sha256_file(audio_path),
-        variant_id=TEST_VARIANT_ID,
+        config_digest=TEST_CONFIG_DIGEST,
         **kwargs,
     )
 
@@ -183,7 +183,7 @@ def test_pipeline_writes_unified_artifacts_and_replays_without_decode(
     result = read_json(workspace / "result.json")
     assert set(result) == {
         "audio_id",
-        "variant_id",
+        "config_digest",
         "text",
         "items",
         "duration",
@@ -244,7 +244,7 @@ def test_pipeline_rejects_caller_audio_identity_mismatch(
             FakeProvider(),
             FakePolicy(),
             audio_id="f" * 64,
-            variant_id=TEST_VARIANT_ID,
+            config_digest=TEST_CONFIG_DIGEST,
         )
 
 

@@ -6,7 +6,7 @@
 
 `audio-transcribe` 是面向本地音频文件的转写 Agent Skill，负责音频身份、语言检测、Provider 选择、ASR pipeline、转写 cache、公开 artifact 发布和结果复用。
 
-生产 Skill 不下载媒体，也不处理 Bilibili 元数据、字幕选择、总结 prompt 或 summary job。开发用 benchmark 可以通过其明确的数据准备流程下载固定测试素材，但不得把该能力引入生产转写路径。其他 Skill 只能通过公开的 `result_manifest.json` 和 `audio-transcribe-contract` 使用结果，不得 import 本项目源码或读取、修改内部 `workspace/`。
+生产 Skill 不下载媒体，也不处理 Bilibili 元数据、字幕选择、总结 prompt 或 summary job。开发用 benchmark 可以通过其明确的数据准备流程下载固定测试素材，但不得把该能力引入生产转写路径。其他 Skill 只能通过公开的 `manifest.json` 和 `audio-transcribe-contract` 使用结果，不得 import 本项目源码或读取、修改内部 `workspace/`。
 
 ## 权威来源
 

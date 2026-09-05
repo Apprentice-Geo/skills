@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import subprocess
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -11,11 +12,11 @@ from typing import Any, Callable, Literal, assert_type, get_type_hints
 
 import pytest
 from audio_transcribe_contract import (
-    RawTimestamps,
     ResultManifest,
     ResultValidationError,
     Transcript,
     TranscriptionResult,
+    load_manifest,
     load_result,
 )
 
@@ -27,7 +28,7 @@ def _assert_public_result_types(result: TranscriptionResult) -> None:
     )
     assert_type(result.transcript["segments"][0]["text"], str)
     assert_type(
-        result.raw_timestamps["items"][0]["probability"],
+        result.transcript["items"][0]["probability"],
         int | float | None,
     )
 
@@ -55,6 +56,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     request = {
         "provider": provider,
         "language": "zh",
+        "public_schema_version": 2,
         "alignment_policy": {
             "schema_version": 1,
             "timestamp_resolution_ms": 1,
@@ -66,12 +68,12 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
             "policy": "qwen3-asr-cuda" if provider == "qwen3-asr" else "whisper-cpu"
         },
     }
-    request = {"variant_id": _canonical_sha256(request), **request}
+    request = {"config_digest": _canonical_sha256(request), **request}
     duration = 1.0
     transcript = {
-        "schema_version": 1,
+        "schema_version": 2,
         "audio_id": "a" * 64,
-        "variant_id": request["variant_id"],
+        "config_digest": request["config_digest"],
         "provider": provider,
         "language": "zh",
         "duration": duration,
@@ -80,30 +82,19 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
             {"id": 1, "start": 0.5, "end": 1.0, "text": "第二句。"},
         ],
     }
-    raw = {
-        "schema_version": 1,
-        "audio_id": "a" * 64,
-        "variant_id": request["variant_id"],
-        "provider": provider,
-        "language": "zh",
-        "duration": duration,
-        "items": [
-            {
-                "text": "敏感转写内容。",
-                "start": 0.0,
-                "end": 0.5,
-                "probability": None if provider == "qwen3-asr" else 0.9,
-            }
-        ],
-    }
+    transcript["items"] = [
+        {
+            "text": "敏感转写内容。",
+            "start": 0.0,
+            "end": 0.5,
+            "probability": None if provider == "qwen3-asr" else 0.9,
+        },
+        {"text": "第二句。", "start": 0.5, "end": 1.0, "probability": None},
+    ]
     transcript_path = root / "transcript.json"
-    raw_path = root / "raw_timestamps.json"
     _write_json(transcript_path, transcript)
-    _write_json(raw_path, raw)
-    (root / "transcribe.log").write_text("ok\n", encoding="utf-8")
-    (root / "workspace").mkdir()
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "complete",
         "audio": {
             "id": "a" * 64,
@@ -115,16 +106,12 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
         "request": request,
         "artifacts": {
             "transcript": "transcript.json",
-            "raw_timestamps": "raw_timestamps.json",
-            "log": "transcribe.log",
-            "workspace": "workspace",
         },
         "artifact_sha256": {
             "transcript": hashlib.sha256(transcript_path.read_bytes()).hexdigest(),
-            "raw_timestamps": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
         },
     }
-    manifest_path = root / "result_manifest.json"
+    manifest_path = root / "manifest.json"
     _write_json(manifest_path, manifest)
     return manifest_path
 
@@ -161,28 +148,21 @@ def test_public_typed_dict_key_boundaries() -> None:
     assert Transcript.__required_keys__ == {
         "schema_version",
         "audio_id",
-        "variant_id",
+        "config_digest",
         "provider",
         "language",
         "duration",
         "segments",
-    }
-    assert RawTimestamps.__required_keys__ == {
-        "schema_version",
-        "audio_id",
-        "variant_id",
-        "provider",
-        "language",
-        "duration",
         "items",
     }
 
     request = get_type_hints(ResultManifest)["request"]
     assert request.__required_keys__ == {
-        "variant_id",
+        "config_digest",
         "provider",
         "language",
         "alignment_policy",
+        "public_schema_version",
     }
     assert request.__optional_keys__ == {
         "provider_identity",
@@ -207,10 +187,6 @@ def test_load_result_returns_complete_snapshot(
     assert (
         result.transcript_path == (manifest_path.parent / "transcript.json").resolve()
     )
-    assert (
-        result.raw_timestamps_path
-        == (manifest_path.parent / "raw_timestamps.json").resolve()
-    )
     assert result.manifest["request"]["provider"] == provider
     with pytest.raises(FrozenInstanceError):
         result.manifest_path = Path("elsewhere")  # type: ignore[misc]
@@ -218,7 +194,79 @@ def test_load_result_returns_complete_snapshot(
     assert "changed in memory" not in result.transcript_path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("target", ["manifest", "transcript", "raw_timestamps"])
+def test_two_file_bundle_is_portable_without_private_files(
+    workspace_tmp_path: Path,
+) -> None:
+    source = _write_result(workspace_tmp_path / "source")
+    destination = workspace_tmp_path / "archive"
+    destination.mkdir()
+    for name in ("manifest.json", "transcript.json"):
+        shutil.copy2(source.parent / name, destination / name)
+    expected = load_result(source)
+    # Make the source unusable, proving the copy resolves its own relative paths.
+    source.write_text("{", encoding="utf-8")
+    actual = load_result(destination / "manifest.json")
+    assert actual.manifest == expected.manifest
+    assert actual.transcript == expected.transcript
+    assert actual.transcript_path == destination / "transcript.json"
+    assert set(path.name for path in destination.iterdir()) == {
+        "manifest.json",
+        "transcript.json",
+    }
+    # Private-looking entries of the wrong type have no effect either.
+    (destination / "workspace").write_text("unused", encoding="utf-8")
+    (destination / "transcribe.log").mkdir()
+    assert load_result(destination / "manifest.json").transcript == expected.transcript
+
+
+def test_load_manifest_does_not_certify_body(workspace_tmp_path: Path) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+    expected = load_result(path).manifest
+    (path.parent / "transcript.json").unlink()
+    assert load_manifest(path) == expected
+    with pytest.raises(ResultValidationError, match="must be a file"):
+        load_result(path)
+
+
+@pytest.mark.parametrize("field", ["log", "workspace", "raw_timestamps"])
+def test_v2_manifest_rejects_legacy_artifact_references(
+    workspace_tmp_path: Path, field: str
+) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+    _rewrite_manifest(path, lambda value: value["artifacts"].__setitem__(field, field))
+    with pytest.raises(ResultValidationError, match="only the transcript"):
+        load_manifest(path)
+
+
+def test_manifest_cannot_reference_itself(workspace_tmp_path: Path) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+    _rewrite_manifest(
+        path,
+        lambda value: value["artifacts"].__setitem__("transcript", "manifest.json"),
+    )
+    with pytest.raises(ResultValidationError, match="separate"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("value", [None, 1, True])
+def test_public_schema_participates_in_config_identity(
+    workspace_tmp_path: Path, value: Any
+) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+
+    def mutate(manifest):
+        request = manifest["request"]
+        request["public_schema_version"] = value
+        request["config_digest"] = _canonical_sha256(
+            {key: item for key, item in request.items() if key != "config_digest"}
+        )
+
+    _rewrite_manifest(path, mutate)
+    with pytest.raises(ResultValidationError, match="public_schema_version"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("target", ["manifest", "transcript"])
 @pytest.mark.parametrize(
     "invalid_json",
     [
@@ -251,7 +299,7 @@ def test_json_is_strict_and_must_be_an_object(
     assert "敏感转写内容" not in str(caught.value.__cause__)
 
 
-@pytest.mark.parametrize("target", ["manifest", "transcript", "raw_timestamps"])
+@pytest.mark.parametrize("target", ["manifest", "transcript"])
 def test_json_root_must_be_an_object(workspace_tmp_path: Path, target: str) -> None:
     manifest_path = _write_result(workspace_tmp_path / target)
     if target == "manifest":
@@ -284,7 +332,7 @@ def test_manifest_must_be_a_file(workspace_tmp_path: Path) -> None:
     "mutate",
     [
         lambda value: value.__setitem__("schema_version", True),
-        lambda value: value.__setitem__("schema_version", 2),
+        lambda value: value.__setitem__("schema_version", 1),
         lambda value: value.__setitem__("status", "running"),
         lambda value: value.__setitem__("audio", []),
         lambda value: value["audio"].__setitem__("id", "A" * 64),
@@ -297,7 +345,7 @@ def test_manifest_must_be_a_file(workspace_tmp_path: Path) -> None:
         lambda value: value["request"]["alignment_policy"].__setitem__(
             "ordering", "relaxed"
         ),
-        lambda value: value["request"].__setitem__("variant_id", "b" * 64),
+        lambda value: value["request"].__setitem__("config_digest", "b" * 64),
         lambda value: value["artifact_sha256"].__setitem__("transcript", "0" * 63),
     ],
 )
@@ -333,7 +381,7 @@ def test_alignment_policy_is_required_and_exact(
         load_result(manifest_path)
 
 
-@pytest.mark.parametrize("name", ["transcript", "raw_timestamps"])
+@pytest.mark.parametrize("name", ["transcript"])
 def test_public_artifact_digest_must_match(workspace_tmp_path: Path, name: str) -> None:
     manifest_path = _write_result(workspace_tmp_path / name)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -344,23 +392,13 @@ def test_public_artifact_digest_must_match(workspace_tmp_path: Path, name: str) 
         load_result(manifest_path)
 
 
-@pytest.mark.parametrize("name", ["transcript", "raw_timestamps", "log"])
+@pytest.mark.parametrize("name", ["transcript"])
 def test_file_artifacts_must_be_files(workspace_tmp_path: Path, name: str) -> None:
     manifest_path = _write_result(workspace_tmp_path / name)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     path = manifest_path.parent / manifest["artifacts"][name]
     path.unlink()
     path.mkdir()
-
-    with pytest.raises(ResultValidationError):
-        load_result(manifest_path)
-
-
-def test_workspace_must_be_a_directory(workspace_tmp_path: Path) -> None:
-    manifest_path = _write_result(workspace_tmp_path / "result")
-    workspace = manifest_path.parent / "workspace"
-    workspace.rmdir()
-    workspace.write_text("not a directory", encoding="utf-8")
 
     with pytest.raises(ResultValidationError):
         load_result(manifest_path)
@@ -415,8 +453,8 @@ def test_artifact_symlink_cannot_escape_result(workspace_tmp_path: Path) -> None
         ("transcript", lambda value: value.__setitem__("provider", "qwen3-asr")),
         ("transcript", lambda value: value.__setitem__("language", "en")),
         ("transcript", lambda value: value.__setitem__("duration", 2.0)),
-        ("raw_timestamps", lambda value: value.__setitem__("variant_id", "b" * 64)),
-        ("raw_timestamps", lambda value: value.__setitem__("duration", True)),
+        ("transcript", lambda value: value.__setitem__("config_digest", "b" * 64)),
+        ("transcript", lambda value: value.__setitem__("duration", True)),
     ],
 )
 def test_cross_file_identity_must_match(
@@ -484,7 +522,7 @@ def test_raw_timestamp_contract(
     manifest_path = _write_result(workspace_tmp_path / "timestamps")
     _rewrite_artifact(
         manifest_path,
-        "raw_timestamps",
+        "transcript",
         lambda raw: raw.__setitem__("items", items),
     )
 
@@ -496,7 +534,7 @@ def test_qwen_probability_must_be_null(workspace_tmp_path: Path) -> None:
     manifest_path = _write_result(workspace_tmp_path / "qwen", "qwen3-asr")
     _rewrite_artifact(
         manifest_path,
-        "raw_timestamps",
+        "transcript",
         lambda raw: raw["items"][0].__setitem__("probability", 0.5),
     )
 

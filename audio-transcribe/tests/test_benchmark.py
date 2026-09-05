@@ -237,7 +237,7 @@ def test_persistent_worker_reuses_model_by_configuration(
 def test_project_slicing_worker_uses_in_memory_pipeline_metrics(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    manifest_path = tmp_path / "result_manifest.json"
+    manifest_path = tmp_path / "manifest.json"
     transcript_path = tmp_path / "transcript.json"
     transcript_path.write_text(
         json.dumps({"segments": [{"text": "transcribed"}]}), encoding="utf-8"
@@ -290,7 +290,7 @@ def test_project_slicing_worker_rejects_missing_pipeline_diagnostics(
     monkeypatch.setattr(
         "scripts.transcribe.run_transcribe",
         lambda *_args, **_kwargs: SimpleNamespace(
-            manifest_path=tmp_path / "result_manifest.json",
+            manifest_path=tmp_path / "manifest.json",
             pipeline_outcome=None,
         ),
     )

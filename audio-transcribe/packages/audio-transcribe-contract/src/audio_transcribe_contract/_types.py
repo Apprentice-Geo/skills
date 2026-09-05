@@ -7,6 +7,7 @@ type JsonValue = (
 )
 type _JsonNumber = int | float
 type _Provider = Literal["faster-whisper", "qwen3-asr"]
+PUBLIC_SCHEMA_VERSION = 2
 
 
 class _Audio(TypedDict):
@@ -25,10 +26,11 @@ class _AlignmentPolicy(TypedDict):
 
 
 class _Request(TypedDict):
-    variant_id: str
+    config_digest: str
     provider: _Provider
     language: str
     alignment_policy: _AlignmentPolicy
+    public_schema_version: Literal[2]
     provider_identity: NotRequired[JsonValue]
     execution_policy: NotRequired[JsonValue]
     vad_parameters: NotRequired[JsonValue]
@@ -39,18 +41,14 @@ class _Request(TypedDict):
 
 class _Artifacts(TypedDict):
     transcript: str
-    raw_timestamps: str
-    log: str
-    workspace: str
 
 
 class _ArtifactDigests(TypedDict):
     transcript: str
-    raw_timestamps: str
 
 
 class ResultManifest(TypedDict):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     status: Literal["complete"]
     audio: _Audio
     request: _Request
@@ -59,9 +57,9 @@ class ResultManifest(TypedDict):
 
 
 class _PublicArtifact(TypedDict):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     audio_id: str
-    variant_id: str
+    config_digest: str
     provider: _Provider
     language: str
     duration: _JsonNumber
@@ -74,26 +72,21 @@ class _TranscriptSegment(TypedDict):
     text: str
 
 
-class Transcript(_PublicArtifact):
-    segments: list[_TranscriptSegment]
-
-
-class _RawTimestamp(TypedDict):
+class _AlignmentItem(TypedDict):
     text: str
     start: _JsonNumber
     end: _JsonNumber
     probability: _JsonNumber | None
 
 
-class RawTimestamps(_PublicArtifact):
-    items: list[_RawTimestamp]
+class Transcript(_PublicArtifact):
+    segments: list[_TranscriptSegment]
+    items: list[_AlignmentItem]
 
 
 @dataclass(frozen=True)
 class TranscriptionResult:
     manifest_path: Path
     transcript_path: Path
-    raw_timestamps_path: Path
     manifest: ResultManifest
     transcript: Transcript
-    raw_timestamps: RawTimestamps

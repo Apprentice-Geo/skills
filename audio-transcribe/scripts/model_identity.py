@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 # These revisions are shared by setup and result identity. Do not replace them
-# with a floating branch: changing model bytes must produce a new variant_id.
+# with a floating branch: changing model bytes must produce a new config_digest.
 MODEL_REVISIONS = {
     "faster-whisper": {
         "repo": "Systran/faster-whisper-small",

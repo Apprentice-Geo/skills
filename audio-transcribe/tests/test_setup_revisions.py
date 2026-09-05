@@ -7,7 +7,7 @@ from scripts.setup import install_model
 from scripts.setup.download_models import download_model
 
 
-def test_setup_and_variant_identity_share_pinned_revisions() -> None:
+def test_setup_and_config_identity_share_pinned_revisions() -> None:
     assert (
         install_model.WHISPER_MODEL_REVISION
         == (MODEL_REVISIONS["faster-whisper"]["revision"])

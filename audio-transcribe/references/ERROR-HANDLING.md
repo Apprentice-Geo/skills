@@ -74,7 +74,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 - faster-whisper 按 CPU policy 运行。提供 `--num-workers` 和 `--cpu-threads` 时，其值必须为正整数。
 - faster-whisper 的 worker/thread 乘积必须处于计算得到的 CPU budget 内。如果超出 budget，减少 worker 或 thread 后重新运行。
 - Qwen3-ASR 按 CUDA policy 运行，并要求 CUDA 可用，同时存在本地 ASR 和 forced-aligner 模型 artifact。
-- Execution policy value 是 `variant_id` 的组成部分。不得编辑 manifest，伪装失败运行使用了不同的 policy。
+- Execution policy value 是 `config_digest` 的组成部分。不得编辑 manifest，伪装失败运行使用了不同的 policy。
 
 ## 模型加载与推理
 
@@ -94,57 +94,52 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 - 拒绝 `[0, 1]` 之外的非 null probability，以及任何非有限 probability。
 - 拒绝 probability 非 null 的 Qwen3-ASR timestamp item。
 - 保留由标点驱动的分段行为。如果句子输出看起来有误，检查 alignment item 和 segmentation 规则，不得手动编辑已发布的 `transcript.json`。
-- alignment 验证失败时，不得发布 `result_manifest.json`。
+- alignment 验证失败时，不得发布 `manifest.json`。
 - 如果文本规范化失败，或规范化后的文本与 item 不再对齐，停止执行，不得回退到未规范化的公共文本。
 - 不得把超出范围的 end time 裁剪到 duration，也不得把格式错误的 workspace/公共字段强制转换为字符串或浮点数。
 
 ## 公共 Artifact 验证
 
-使用结果前，以 `result_manifest.json` 调用 `audio_transcribe_contract.load_result`。它验证：
+使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`。契约包 0.2.0 验证：
 
-1. schema version 为 1，status 为 `complete`，且 `request.alignment_policy` 与受支持的 v1 policy 精确匹配；
-2. `audio.id` 和 `request.variant_id` 是 64 字符 SHA-256 值；
-3. `variant_id` 与排除 `variant_id` 后的 canonical request JSON 匹配；
-4. artifact 路径相对于 manifest 目录，且无法逃逸该目录；
-5. transcript 和 raw timestamp 文件存在，并与 manifest 中的 SHA-256 digest 匹配；
-6. transcript 和 raw timestamp 的 schema、精确字段 shape、identity、Provider、language、duration、probability 和严格 timing contract 均有效；
-7. 日志存在，且 workspace 目录存在。
+1. manifest 和正文的公共 schema version 为 2，status 为 `complete`；`request.public_schema_version` 为 2，固定 `alignment_policy` 与受支持的 v1 policy 匹配；
+2. `audio.id` 和 `request.config_digest` 是 64 字符 SHA-256 值，后者与排除自身字段后的 canonical request JSON 匹配；
+3. manifest 只声明 transcript artifact 及其 SHA-256；路径相对于 manifest 目录，不能逃逸该目录或指向 manifest 自身；
+4. `transcript.json` 存在，文件字节与记录的 SHA-256 匹配；
+5. 正文已知字段、identity、Provider、language、duration、句子分段、item probability 和严格 timing contract 均有效；item 要求精确字段集合。
 
-artifact 路径不是相对于 manifest 目录、artifact 使用绝对路径、存在 `..` 逃逸、schema 错误、alignment policy 缺失或遭修改、status 不是 complete、digest 不匹配、identity 无效、存在 zero-duration timestamp、日志缺失或 workspace 缺失，都会使结果不安全。contract package 0.1.2 独立于内部 pipeline 代码验证该 policy。
+日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只验证元数据和路径，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。
 
-公共 schema 保持 v1，但在强制要求 `alignment_policy` 之前创建的结果被有意设为不兼容。不得手动添加该字段：它参与 `variant_id`，因此必须重新转写以生成新结果。
-
-不得手动修复公共 JSON。重新运行命令，由 artifact layer 验证或恢复结果。
+旧三文件 schema v1 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v2 结果。固定 alignment policy 的版本继续为 1，与公共 schema v2 是不同层面的版本。
 
 ## Cache 恢复
 
-如果存在完整 manifest，命令首先验证它。有效 cache hit 返回现有 manifest 路径，不重新运行推理。
+恢复只由生产命令执行，consumer loader 不修复文件。输入音频仍需存在；命令计算 `audio_id` 和当前 resolved request 的 `config_digest`，定位本地结果目录及其固定 `workspace/result.json`。manifest 不记录或控制私有路径。自动 Provider、语言或其他配置变化会定位到不同结果，不能仅凭相同音频复用另一配置。
 
-私有 ASR cache 只支持当前严格格式，且仅存储 accepted 结果。plan 通过重新计算的 `plan_id` 验证内容身份，chunk 必须绑定当前 `plan_id` 并在读取时重新验证 alignment。旧 schema、未知字段、错误身份、错误 policy 或格式错误的条目会自然失效；不得迁移或手动编辑旧 cache 条目。
+私有 ASR cache 只支持当前严格格式，且仅存储 accepted 结果。plan 通过重新计算的 `plan_id` 验证内容身份，chunk 必须绑定当前 `plan_id` 并在读取时重新验证 alignment。旧字段、未知字段、错误身份或格式错误的条目自然失效；不得迁移或手动编辑旧 cache。
 
-毫秒量化移除 zero-duration item 时，日志为本次新接受的每个受影响 chunk 发出一条不含 transcript 文本的聚合 `WARNING`。cleanup report 不进入 chunk cache，因此部分或完整 chunk 恢复都不会重放历史警告。
+有效且匹配当前请求的 bundle 直接命中 cache，无需日志或 workspace。有效 manifest 若与当前音频或 resolved request 不匹配，停止执行并保留文件。
 
-没有完整 manifest 时，命令会严格验证现有 `workspace/result.json`；snapshot 损坏或身份不匹配会进入 pipeline，并尽量从合法 plan/chunks 重建。合法 plan 不依赖 VAD cache；只有 plan miss 时才读取或重算 VAD。新运行不写 `progress.json` 或 `metrics.json`，但不会删除已有遗留文件。
+manifest 或正文缺失、损坏时，优先严格读取 workspace snapshot；snapshot 不可用时进入 pipeline，从合法 plan/chunks 重建，缓存不足再执行正常推理。合法 plan 不依赖 VAD cache；只有 plan miss 时才读取或重算 VAD。已有完整 manifest 不再阻断 chunk 恢复。
 
-如果公共 artifact 缺失或损坏，仅当 `workspace/result.json` 能够重建 `transcript.json` 和 `raw_timestamps.json`，且其 SHA-256 digest 与隐藏 manifest 中记录的值完全一致时，才允许恢复。恢复成功时逐字节还原原始 manifest。
+- manifest 元数据有效：正文重建必须符合原 SHA-256，恢复保留原 manifest 字节。重建结果不同则停止，不更新原 digest。
+- manifest 缺失或无效：允许使用当前音频、resolved request 和合法 snapshot 重新发布；不承诺复现历史结果字节。
 
-workspace recovery snapshot 已包含规范化文本。恢复流程重新验证其精确 shape 和 alignment，但不再次运行 OpenCC，也不修改 Provider chunk cache。
+workspace snapshot 已包含规范化文本，公共转换不再次运行 OpenCC。chunk 重建仍执行完整合并和规范化。新接受 candidate 的 zero-duration cleanup 发出聚合警告；chunk cache 不保存 cleanup report，恢复不重放历史警告。pipeline 不新写或删除历史 `progress.json`、`metrics.json`。
 
-如果 workspace 重建失败或产生不同的 digest，保留原始完整 manifest 及其最后已知的公共 artifact，报告恢复失败，并在稍后运行中重试恢复或转写。不得从其他 variant 复制文件，也不得编辑 digest 以匹配新字节。
+发布前在临时 staging 目录验证完整两文件 candidate。重建失败、digest 不匹配或 candidate 无效时保留已有公共文件。正式正文替换后才安装 manifest；安装失败时尝试恢复原正文。强制终止或磁盘持续故障可能阻断回滚，下次运行必须重新验证，不以部分文件判断成功。临时 staging 目录不属于公共入口。
 
-variant lock 防止验证、恢复、推理和发布受到并发写入影响。如果某个进程似乎阻塞在 lock 上，删除任何 lock 相关文件前，先检查正在运行的转写进程。
-
-首次发布期间，`.result_manifest.json.incomplete` 只是 candidate。artifact layer 通过 `load_result()` 验证它，然后才以正式 manifest 原子替换。如果 candidate 验证失败，停止执行；删除 candidate，并且不创建正式成功标记。`.result_manifest.json.recovery` 保留给恢复流程，禁止把它视为成功结果。
+result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock 上，删除锁文件前先检查运行中的转写进程。详细协议见 [架构](ARCHITECTURE.md#公共-contract-与发布)。
 
 ## 日志
 
-- CLI 成功时输出耗时和 `result_manifest.json` 绝对路径。
+- CLI 成功时输出耗时和 `manifest.json` 绝对路径。
 - 不得根据部分文件、workspace 文件或结果目录名声称成功。
 - 失败时，CLI 输出 `Transcription failed: ...` 并以非零状态退出。
 - 报告失败时，应包含精确命令、简洁错误、可用的结果或日志路径，以及是否存在完整 manifest。
 - 报告中不得包含 transcript 文本、其他 workflow 的 Cookie 内容、原始模型对象或不必要的敏感本地路径。
 - 可以使用精确的 logger/message-prefix filter 过滤已知的嘈杂第三方警告。不得抑制未知警告或异常。
-- Cache hit 不得改写首次成功的 `transcribe.log`。
+- Cache hit 不得改写首次成功的 `transcribe.log`。已有 manifest 的恢复尝试追加日志；日志缺失时可以重新创建，不影响公共结果合同。
 
 ## 停止条件
 
@@ -164,9 +159,9 @@ variant lock 防止验证、恢复、推理和发布受到并发写入影响。�
 - zero-duration cleanup 后，每个 accepted chunk 都为空；
 - 文本或 timestamp item 为空；
 - resolved request 缺少精确匹配的受支持 alignment policy，包括加载旧 manifest 时；
-- workspace 或公共 artifact 字段具有无效类型、shape、probability，或超出范围/zero-duration timestamp；
+- 无效 workspace/cache 无法重建为合法结果，或候选公共正文具有无效字段、probability 或 timestamp；
 - 正式 manifest 安装前，publication candidate 验证失败；
 - 公共 artifact 验证失败，且恢复无法复现已发布的 digest；
-- 没有任何完整 `result_manifest.json` 验证成功。
+- 没有任何完整 `manifest.json` 验证成功。
 
-禁止通过编辑 `result_manifest.json`、`transcript.json`、`raw_timestamps.json` 或 `workspace/` 下的文件绕过停止条件。
+禁止通过编辑 `manifest.json`、`transcript.json` 或 `workspace/` 下的文件绕过停止条件。

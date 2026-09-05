@@ -10,13 +10,17 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 import numpy as np
-from audio_transcribe_contract import ResultValidationError, load_result
+from audio_transcribe_contract import (
+    PUBLIC_SCHEMA_VERSION,
+    ResultValidationError,
+    load_result,
+)
 
 from scripts.artifacts import (
     load_workspace_result,
+    matching_manifest,
     publish_result,
-    recover_public_artifacts,
-    variant_lock,
+    result_lock,
     write_workspace_result,
 )
 from scripts.asr.alignment import (
@@ -271,15 +275,16 @@ def run_transcribe(
         "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
         "planning_parameters": asdict(policy.planning_parameters),
         "segmentation_schema_version": 1,
+        "public_schema_version": PUBLIC_SCHEMA_VERSION,
         "text_normalization": TEXT_NORMALIZATION_POLICY,
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }
-    variant_id = canonical_sha256(canonical_request)
-    request = {"variant_id": variant_id, **canonical_request}
-    variant_dir = (
-        results_dir / audio_id / (f"{provider}-{resolved_language}-{variant_id}")
+    config_digest = canonical_sha256(canonical_request)
+    request = {"config_digest": config_digest, **canonical_request}
+    result_dir = (
+        results_dir / audio_id / (f"{provider}-{resolved_language}-{config_digest}")
     )
-    manifest_path = variant_dir / "result_manifest.json"
+    manifest_path = result_dir / "manifest.json"
     audio = {
         "id": audio_id,
         "size": size,
@@ -288,30 +293,31 @@ def run_transcribe(
         "duration": sample_count / SAMPLE_RATE,
     }
 
-    with variant_lock(variant_dir):
-        if manifest_path.exists():
+    with result_lock(result_dir):
+        if matching_manifest(manifest_path, audio=audio, request=request) is not None:
             try:
                 load_result(manifest_path)
-            except ValueError:
-                recover_public_artifacts(manifest_path)
-            return TranscribeOutcome(manifest_path.resolve(), None)
+            except ResultValidationError:
+                pass
+            else:
+                return TranscribeOutcome(manifest_path.resolve(), None)
 
-        log_path = variant_dir / "transcribe.log"
-        with LoggingSession(log_path, mode="w"):
+        log_path = result_dir / "transcribe.log"
+        with LoggingSession(log_path, mode="a" if manifest_path.exists() else "w"):
             logger.info(
-                "Transcription invocation: input=%s audio_id=%s variant_id=%s",
+                "Transcription invocation: input=%s audio_id=%s config_digest=%s",
                 audio_path,
                 audio_id,
-                variant_id,
+                config_digest,
             )
-            workspace_path = variant_dir / "workspace" / "result.json"
+            workspace_path = result_dir / "workspace" / "result.json"
             workspace_valid = False
             if workspace_path.exists():
                 try:
                     load_workspace_result(
                         workspace_path,
                         expected_audio_id=audio_id,
-                        expected_variant_id=variant_id,
+                        expected_config_digest=config_digest,
                         expected_provider=provider,
                         expected_language=resolved_language,
                         expected_duration=audio["duration"],
@@ -332,11 +338,11 @@ def run_transcribe(
                         assert isinstance(policy, WhisperCpuPolicy)
                         pipeline_outcome = run_asr_pipeline(
                             audio_path,
-                            variant_dir / "workspace",
+                            result_dir / "workspace",
                             provider_strategy,
                             policy,
                             audio_id=audio_id,
-                            variant_id=variant_id,
+                            config_digest=config_digest,
                             prepared_audio=normalized_audio,
                             prepared_vad=speech_intervals,
                             prepared_model=prepared_model,
@@ -347,11 +353,11 @@ def run_transcribe(
                         assert isinstance(policy, Qwen3AsrCudaPolicy)
                         pipeline_outcome = run_asr_pipeline(
                             audio_path,
-                            variant_dir / "workspace",
+                            result_dir / "workspace",
                             provider_strategy,
                             policy,
                             audio_id=audio_id,
-                            variant_id=variant_id,
+                            config_digest=config_digest,
                             prepared_audio=normalized_audio,
                             prepared_vad=speech_intervals,
                             prepared_model=prepared_model,
@@ -378,7 +384,7 @@ def run_transcribe(
                     write_workspace_result(
                         workspace_path,
                         audio_id=audio_id,
-                        variant_id=variant_id,
+                        config_digest=config_digest,
                         text=result.text,
                         items=list(result.items),
                         duration=audio["duration"],
@@ -386,9 +392,10 @@ def run_transcribe(
                         language=resolved_language,
                     )
             manifest = publish_result(
-                variant_dir,
+                result_dir,
                 audio=audio,
                 request=request,
+                replace_existing=True,
             ).resolve()
             return TranscribeOutcome(manifest, pipeline_outcome)
 
@@ -435,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     elapsed = time.perf_counter() - started
     print(f"[Stage] Transcribe completed in {_format_elapsed(elapsed)}")
-    print(f"result_manifest: {outcome.manifest_path}")
+    print(f"manifest: {outcome.manifest_path}")
     return 0
 
 

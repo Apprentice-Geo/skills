@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Generator
 
-from audio_transcribe_contract import ResultValidationError, load_result
+from audio_transcribe_contract import (
+    PUBLIC_SCHEMA_VERSION,
+    ResultManifest,
+    ResultValidationError,
+    load_manifest,
+    load_result,
+)
 
 from scripts.asr.alignment import (
     AlignedTranscript,
@@ -18,21 +26,20 @@ from scripts.asr.alignment import (
 )
 from scripts.asr.segmentation import build_sentence_segments
 from scripts.io_utils import (
+    pretty_json_bytes,
     read_json,
-    sha256_file,
+    write_bytes_atomic,
     write_json_atomic,
 )
 from scripts.text_normalization import normalize_transcript_text
 
-PUBLIC_SCHEMA_VERSION = 1
-
 
 # @contextmanager 让这个函数可以配合 with 使用
 @contextmanager
-def variant_lock(variant_dir: Path) -> Generator[None, None, None]:
-    """Hold a process lock while checking or publishing one result variant."""
-    variant_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = variant_dir / ".variant.lock"
+def result_lock(result_dir: Path) -> Generator[None, None, None]:
+    """Hold a process lock while checking or publishing one audio/configuration result."""
+    result_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = result_dir / ".result.lock"
     stream = lock_path.open("a+b")
     # 锁标记
     locked = False
@@ -93,7 +100,7 @@ def write_workspace_result(
     workspace_path: Path,
     *,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
     text: str,
     items: list[AlignmentItem],
     duration: float,
@@ -115,7 +122,7 @@ def write_workspace_result(
         workspace_path,
         {
             "audio_id": audio_id,
-            "variant_id": variant_id,
+            "config_digest": config_digest,
             "provider": provider,
             "language": language,
             "duration": duration,
@@ -137,7 +144,7 @@ def load_workspace_result(
     workspace_path: Path,
     *,
     expected_audio_id: Any,
-    expected_variant_id: Any,
+    expected_config_digest: Any,
     expected_provider: Any,
     expected_language: Any,
     expected_duration: Any,
@@ -148,7 +155,7 @@ def load_workspace_result(
         raise ResultValidationError("Invalid workspace result.") from None
     expected_keys = {
         "audio_id",
-        "variant_id",
+        "config_digest",
         "text",
         "items",
         "duration",
@@ -161,9 +168,9 @@ def load_workspace_result(
         or not isinstance(workspace["audio_id"], str)
         or not workspace["audio_id"]
         or workspace["audio_id"] != expected_audio_id
-        or not isinstance(workspace["variant_id"], str)
-        or not workspace["variant_id"]
-        or workspace["variant_id"] != expected_variant_id
+        or not isinstance(workspace["config_digest"], str)
+        or not workspace["config_digest"]
+        or workspace["config_digest"] != expected_config_digest
         or not isinstance(workspace["text"], str)
         or not workspace["text"].strip()
         or not isinstance(workspace["items"], list)
@@ -231,41 +238,31 @@ def load_workspace_result(
     )
 
 
-def _public_payloads(
+def _public_payload(
     workspace_path: Path,
     *,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
     provider: Any,
     language: Any,
     duration: Any,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> dict[str, Any]:
     alignment, duration, provider, language = load_workspace_result(
         workspace_path,
         expected_audio_id=audio_id,
-        expected_variant_id=variant_id,
+        expected_config_digest=config_digest,
         expected_provider=provider,
         expected_language=language,
         expected_duration=duration,
     )
-    items = list(alignment.items)
-    segments = build_sentence_segments(alignment, language=language)
-    transcript = {
+    return {
         "schema_version": PUBLIC_SCHEMA_VERSION,
         "audio_id": audio_id,
-        "variant_id": variant_id,
+        "config_digest": config_digest,
         "provider": provider,
         "language": language,
         "duration": duration,
-        "segments": segments,
-    }
-    raw = {
-        "schema_version": PUBLIC_SCHEMA_VERSION,
-        "audio_id": audio_id,
-        "variant_id": variant_id,
-        "provider": provider,
-        "language": language,
-        "duration": duration,
+        "segments": build_sentence_segments(alignment, language=language),
         "items": [
             {
                 "text": item.text,
@@ -273,111 +270,106 @@ def _public_payloads(
                 "end": item.end,
                 "probability": item.probability,
             }
-            for item in items
+            for item in alignment.items
         ],
     }
-    return transcript, raw
+
+
+def matching_manifest(
+    manifest_path: Path, *, audio: dict[str, Any], request: dict[str, Any]
+) -> ResultManifest | None:
+    """Keep valid published metadata authoritative even when its body is damaged."""
+    try:
+        manifest = load_manifest(manifest_path)
+    except ResultValidationError:
+        return None
+    if manifest["audio"] != audio or manifest["request"] != request:
+        raise ResultValidationError(
+            "Published result identity does not match current request."
+        )
+    return manifest
 
 
 def publish_result(
-    variant_dir: Path,
+    result_dir: Path,
     *,
     audio: dict[str, Any],
     request: dict[str, Any],
-    workspace_relative: str = "workspace/result.json",
+    replace_existing: bool = False,
 ) -> Path:
-    manifest_path = variant_dir / "result_manifest.json"
-    if manifest_path.exists():
+    """Validate a staged bundle, then publish its body and manifest last.
+
+    Valid existing metadata binds recovery to the original digest and manifest
+    bytes. Missing or invalid metadata permits republication from current inputs.
+    The caller holds result_lock across cache inspection, rebuild and publication.
+    """
+    manifest_path = result_dir / "manifest.json"
+    if manifest_path.exists() and not replace_existing:
         raise ResultValidationError("A complete result manifest already exists.")
-    variant_id = request["variant_id"]
-    workspace_path = _resolve_artifact_path(manifest_path, workspace_relative)
-    transcript, raw = _public_payloads(
-        workspace_path,
+    previous = matching_manifest(manifest_path, audio=audio, request=request)
+    if previous is not None:
+        try:
+            load_result(manifest_path)
+        except ResultValidationError:
+            pass
+        else:
+            return manifest_path
+    transcript = _public_payload(
+        result_dir / "workspace" / "result.json",
         audio_id=audio["id"],
-        variant_id=variant_id,
+        config_digest=request["config_digest"],
         provider=request.get("provider"),
         language=request.get("language"),
         duration=audio.get("duration"),
     )
-    transcript_path = variant_dir / "transcript.json"
-    raw_path = variant_dir / "raw_timestamps.json"
-    write_json_atomic(transcript_path, transcript)
-    write_json_atomic(raw_path, raw)
-    manifest = {
-        "schema_version": PUBLIC_SCHEMA_VERSION,
-        "status": "complete",
-        "audio": audio,
-        "request": request,
-        "artifacts": {
-            "transcript": "transcript.json",
-            "raw_timestamps": "raw_timestamps.json",
-            "log": "transcribe.log",
-            "workspace": "workspace",
-        },
-        "artifact_sha256": {
-            "transcript": sha256_file(transcript_path),
-            "raw_timestamps": sha256_file(raw_path),
-        },
-    }
-    candidate_path = variant_dir / ".result_manifest.json.incomplete"
-    try:
-        write_json_atomic(candidate_path, manifest)
-        load_result(candidate_path)
-        os.replace(candidate_path, manifest_path)
-    except Exception:
-        candidate_path.unlink(missing_ok=True)
-        raise
-    return manifest_path
-
-
-def recover_public_artifacts(manifest_path: Path) -> dict[str, Any]:
-    """Repair public files only when workspace bytes reproduce published digests."""
-    original_bytes = manifest_path.read_bytes()
-    hidden_path = manifest_path.with_name(f".{manifest_path.name}.recovery")
-    os.replace(manifest_path, hidden_path)
-    try:
-        original = read_json(hidden_path)
-        audio = original["audio"]
-        request = original["request"]
-        workspace_path = (
-            _resolve_artifact_path(manifest_path, original["artifacts"]["workspace"])
-            / "result.json"
-        )
-        transcript, raw = _public_payloads(
-            workspace_path,
-            audio_id=audio["id"],
-            variant_id=request["variant_id"],
-            provider=request.get("provider"),
-            language=request.get("language"),
-            duration=audio.get("duration"),
-        )
-        transcript_path = _resolve_artifact_path(
-            manifest_path, original["artifacts"]["transcript"]
-        )
-        raw_path = _resolve_artifact_path(
-            manifest_path, original["artifacts"]["raw_timestamps"]
-        )
-        write_json_atomic(transcript_path, transcript)
-        write_json_atomic(raw_path, raw)
-        expected = original["artifact_sha256"]
-        actual = {
-            "transcript": sha256_file(transcript_path),
-            "raw_timestamps": sha256_file(raw_path),
-        }
-        if actual != expected:
+    transcript_bytes = pretty_json_bytes(transcript) + b"\n"
+    digest = hashlib.sha256(transcript_bytes).hexdigest()
+    if previous is not None:
+        if digest != previous["artifact_sha256"]["transcript"]:
             raise ResultValidationError(
-                "Workspace reconstruction does not match published artifact digests."
+                "Workspace reconstruction does not match published artifact digest."
             )
-        # Restore the immutable manifest byte-for-byte after deterministic repair.
-        from scripts.io_utils import write_bytes_atomic
-
-        write_bytes_atomic(manifest_path, original_bytes)
-        hidden_path.unlink(missing_ok=True)
-        return dict(load_result(manifest_path).manifest)
-    except Exception:
-        # Keep the last complete manifest available if reconstruction fails.
-        from scripts.io_utils import write_bytes_atomic
-
-        write_bytes_atomic(manifest_path, original_bytes)
-        hidden_path.unlink(missing_ok=True)
-        raise
+        manifest_bytes = manifest_path.read_bytes()
+        transcript_relative = previous["artifacts"]["transcript"]
+    else:
+        transcript_relative = "transcript.json"
+        manifest_bytes = (
+            pretty_json_bytes(
+                {
+                    "schema_version": PUBLIC_SCHEMA_VERSION,
+                    "status": "complete",
+                    "audio": audio,
+                    "request": request,
+                    "artifacts": {"transcript": transcript_relative},
+                    "artifact_sha256": {"transcript": digest},
+                }
+            )
+            + b"\n"
+        )
+    transcript_path = _resolve_artifact_path(manifest_path, transcript_relative)
+    # Stage both files under their final relative names so the public loader
+    # validates exactly the bytes and paths that will be published.
+    with TemporaryDirectory(prefix=".publication-", dir=result_dir) as temporary:
+        staging = Path(temporary)
+        staged_transcript = _resolve_artifact_path(
+            staging / "manifest.json", transcript_relative
+        )
+        write_bytes_atomic(staged_transcript, transcript_bytes)
+        staged_manifest = staging / "manifest.json"
+        write_bytes_atomic(staged_manifest, manifest_bytes)
+        load_result(staged_manifest)
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        original_transcript = (
+            transcript_path.read_bytes() if transcript_path.is_file() else None
+        )
+        os.replace(staged_transcript, transcript_path)
+        try:
+            os.replace(staged_manifest, manifest_path)
+        except OSError:
+            # A failed final install must not leave a replacement body behind.
+            if original_transcript is None:
+                transcript_path.unlink()
+            else:
+                write_bytes_atomic(transcript_path, original_transcript)
+            raise
+    return manifest_path

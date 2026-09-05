@@ -10,7 +10,7 @@ local audio
   -> Provider candidates and alignment acceptance
   -> merged and normalized workspace result
   -> segmentation and manifest-last publication
-  -> validated result_manifest.json
+  -> validated manifest.json
 ```
 
 只有完整公共结果验证成功后，命令才输出 manifest 路径。结果仅能通过该 manifest 和 `audio-transcribe-contract` loader 复用。
@@ -32,19 +32,19 @@ local audio
 ## 系统边界
 
 - 输入是本地音频文件；此 Skill 不下载媒体。
-- `workspace/` 是私有恢复状态。`result_manifest.json`、`transcript.json` 和 `raw_timestamps.json` 是公共 artifact。
+- `workspace/` 是私有恢复状态。`manifest.json` 和 `transcript.json` 构成可独立移动的公共 bundle；日志和 workspace 均非公共依赖。
 - consumer 通过 `audio-transcribe-contract` 读取公共结果；不得 import 此 Skill 的源码或检查 `workspace/`。
 - 模型 setup 和 readiness 属于本地职责。model index 格式错误时，应报告模型不可用，不得让异常逃逸到 setup 或依赖检查中。
 
 ## 稳定不变量
 
 - `audio_id` 是音频字节的 SHA-256，与其路径无关。
-- `variant_id` 标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior。canonical request 同时包含文本规范化 policy 和精确固定的 `alignment_policy`。
-- `ALIGNMENT_POLICY` 使用 schema v1、1 ms timestamp resolution、`drop_item_and_owned_text` zero-duration 处理和严格排序。policy 变化会生成新的 `variant_id` 和 ASR plan identity。
-- 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `variant_id`。
+- `config_digest` 是排除该字段后的 canonical request JSON SHA-256，标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior；不包含音频身份，也不是单次调用编号。canonical request 包含模型 revision、执行策略、VAD、规划、分句、文本规范化、固定 `alignment_policy` 和 `public_schema_version: 2`。`audio_id + config_digest` 共同定位结果。
+- `ALIGNMENT_POLICY` 使用 schema v1、1 ms timestamp resolution、`drop_item_and_owned_text` zero-duration 处理和严格排序。policy 变化会生成新的 `config_digest` 和 ASR plan identity。
+- 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `config_digest`。
 - 完整 manifest 最后发布，并且是唯一的成功标记。
 - 公共 artifact 路径必须位于结果目录内；indexed model shard 路径必须位于模型目录内。
-- 仅当重建的公共 artifact 能复现 manifest 记录的 digest 时，恢复流程才逐字节还原原始完整 manifest。恢复失败时，保留原始完整 manifest，以便稍后重试。
+- 有效 manifest 的原 digest 约束正文恢复，并保留原 manifest 字节；manifest 缺失或无效时允许根据当前请求重新发布，不承诺与历史结果逐字节相同。重建失败不覆盖已有公共文件。
 
 ## 横切关注点
 
@@ -78,10 +78,9 @@ Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。
 ## 公共结果结构
 
 ```text
-results/<audio_id>/<provider>-<language>-<variant_id>/
-├─ result_manifest.json
+results/<audio_id>/<provider>-<language>-<config_digest>/
+├─ manifest.json
 ├─ transcript.json
-├─ raw_timestamps.json
 ├─ transcribe.log
 └─ workspace/
    ├─ asr_plan.json
@@ -90,20 +89,36 @@ results/<audio_id>/<provider>-<language>-<variant_id>/
    └─ result.json
 ```
 
-manifest 记录 audio identity、resolved request identity、受限于目录内的 artifact 路径，以及公共 artifact digest。成功的 consumer 从 `load_result` 获取经过验证的 manifest、transcript 和 timestamp snapshot；不返回部分结果。
+manifest 记录 audio identity、resolved request identity、受限于目录内的 `transcript.json` 相对路径及其 SHA-256；不记录日志或 workspace。`transcript.json` 只保留一份 `schema_version`、`audio_id`、`config_digest`、Provider、language 和 duration，同时包含句子级 `segments`（id/start/end/text）及细粒度 `items`（text/start/end/probability）。句子文本来自完整规范化文本，不能假定简单拼接 item 文本可恢复全部标点和空白。
 
-`workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `audio_id`、`variant_id`、`text`、`items`、`duration`、`provider` 和 `language`，并在读取、发布和恢复时与当前请求逐项验证。
+两份公共 JSON 保持字节及相对路径不变即可复制或移动到任意目录，consumer 无需访问原音频、模型、日志或 workspace。仅携带 bundle 的环境不具备本地恢复资料。生产端通过输入音频重新计算 audio identity 和 resolved request，定位本地 `results/<audio_id>/<provider>-<language>-<config_digest>/workspace/`，不根据公共 manifest 搜索或读取私有路径。自动解析后的配置变化会选择不同结果目录，不跨配置猜测或复用 workspace。
+
+`workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `audio_id`、`config_digest`、`text`、`items`、`duration`、`provider` 和 `language`，并在读取、发布和恢复时与当前请求逐项验证。
 
 plan 和各 chunk 的 Provider 结果仍为独立的 workspace cache。当所有 chunk cache 都有效时，pipeline 会重新执行合并、timestamp offset、alignment 验证、文本与item 规范化以及 alignment 复验，然后原子替换`result.json`；此过程不加载 Provider。workspace 不存储 segment。包含 `plan`、`words` 或 `segments` 的旧版合并结果不会被读取或迁移。
 
-私有 `chunk_results/` 保留 Provider 文本。`workspace/result.json` 和两个公共 JSON artifact 仅包含规范化文本。规范化失败或规范化后的 alignment 失败会停止发布；恢复流程从已规范化的 workspace snapshot 确定性重建结果。
+私有 `chunk_results/` 保留 Provider 文本。`workspace/result.json` 和公共正文 JSON 仅包含规范化文本。规范化失败或规范化后的 alignment 失败会停止发布；恢复流程从已规范化的 workspace snapshot 确定性重建结果。
 
 pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗留的这两个文件。进度由 plan、合法 chunk 文件和本次日志推导；diagnostics 通过进程内 `PipelineOutcome` 返回给 benchmark，不属于公开结果合同。
 
 ## 公共 contract 与发布
 
-`audio-transcribe-contract` 0.1.2 被有意设计为独立于内部 alignment 模块。其 `load_result()` API 保持不变，但它包含一份固定 alignment policy 的独立副本，并会在接受 identity 前拒绝缺失或遭修改的 policy。Raw item 必须具有精确的 item shape、非空文本、有效的 Provider probability，以及满足 `0 <= start < end <= duration` 和 `start >= previous_end` 的 timing。manifest 与 artifact 之间的 identity、canonical request digest、artifact digest、Provider、language、duration 和路径包含关系必须一致。
+`audio-transcribe-contract` 0.2.0 只接受公共 schema v2，独立于内部 alignment 模块。固定 alignment policy 的内部版本仍为 1；contract 拥有独立副本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。其他节点沿用已知字段验证，不在此次格式升级中统一收紧未知字段规则。
 
-发布采用 manifest-last。流程为先写入 `transcript.json` 和 `raw_timestamps.json`，再写入 `.result_manifest.json.incomplete`，并使用 `load_result()` 验证该 candidate。仅当验证成功时，才允许通过 `os.replace()` 原子创建 `result_manifest.json`；candidate 验证失败时删除 incomplete 文件，并且不创建正式成功标记。首次发布拒绝覆盖已有正式 manifest。
+`load_result(path)` 完整验证后返回 `TranscriptionResult(manifest_path, transcript_path, manifest, transcript)`，路径均为绝对路径。正文 snapshot 同时提供 `segments` 和 `items`。外层 dataclass 冻结，内层 TypedDict/list 是普通可变内存对象，修改不写回文件。不再导出 `RawTimestamps` 类型或返回独立 timestamp 路径/snapshot。
 
-恢复流程临时使用 `.result_manifest.json.recovery`，与发布 candidate 区分。它从经过严格验证的规范化 workspace 重建公共 artifact，要求其 digest 与记录的完整结果匹配，并恢复原始正式 manifest 字节。此命名隔离不改变现有的多文件恢复协议。
+`load_manifest(path)` 只验证 manifest 元数据、配置摘要、正文摘要格式及路径安全性，返回 manifest snapshot；不要求正文存在，不读取正文。它用于生产端决定恢复约束，不能代替 `load_result()` 认证完整结果。
+
+旧公共 schema v1、旧入口 `result_manifest.json` 和 `variant_id` 字段不兼容，不自动迁移或删除。生产 request 的 `public_schema_version` 参与配置摘要，保证新格式选择新结果目录；旧私有 snapshot 也因字段不匹配而失效。
+
+发布和恢复在同一个 result lock 内进行。先在结果目录下的临时 staging 目录生成完整两文件 candidate，保持最终相对路径，由 `load_result()` 验证后才替换正式正文，最后原子替换 `manifest.json`。candidate 失败不改变已有公共文件；最终 manifest 安装失败时尝试回滚正文。多文件替换不是整体原子事务：进程被强制终止时可能留下需要下次运行验证和恢复的状态，consumer 必须每次完整验证。
+
+生产端复用与恢复按以下顺序执行：
+
+1. 验证 manifest 元数据。有效但与当前 audio/request 不匹配时停止，不覆盖其他身份结果。
+2. 若完整 bundle 验证通过，直接复用，不检查私有文件，也不改写日志。
+3. 否则严格验证固定本地路径的 `workspace/result.json`；无效或缺失时进入 pipeline，从合法 plan/chunks 重建，缓存不足时执行正常推理。此路径同样适用于已有 manifest 的结果。
+4. 有效 manifest 的正文重建必须复现原 digest，并保留原 manifest 字节；即使重新推理成功，digest 不同也停止发布。
+5. manifest 缺失或损坏时，根据当前音频信息、resolved request 和合法 workspace 重新生成正文及 manifest。这属于重新发布，无法证明与丢失的历史 digest 相同。
+
+恢复仍从规范化 snapshot 确定性生成句子和 items。重建、digest 检查或 candidate 验证失败，保留原有公共文件供后续检查；不得把新的 digest 写入一个有效的历史 manifest 来掩盖正文变化。

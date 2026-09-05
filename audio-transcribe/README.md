@@ -7,7 +7,8 @@
 - 输入音频必须已经存在于本地。
 - Skill 不负责下载媒体，也不修改其他 Skill 的结果。
 - 所有公开转写文本执行 Unicode NFKC；语言为 `zh` 时再通过 OpenCC `t2s` 转为简体。Provider 原始 chunk 仅保留在内部缓存中。
-- `result_manifest.json` 是唯一公开入口，必须通过 `audio-transcribe-contract` 验证后读取。当前结果要求固定的 alignment policy；缺少或篡改该策略的旧结果不会被兼容，需要重新转写。
+- 公共结果由 `manifest.json` 和 `transcript.json` 组成，可一起复制或移动，无需携带日志、workspace 或原音频。`manifest.json` 是唯一公开入口，必须通过 `audio-transcribe-contract.load_result()` 验证后读取。
+- 契约包 0.2.0 使用公共 schema v2；不兼容旧三文件结果或旧 Python API。重新运行转写命令生成新结果，不手动迁移旧文件。
 
 ## 隐私与安全
 

@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
-from ._types import RawTimestamps, Transcript, _Provider
+from ._types import PUBLIC_SCHEMA_VERSION, Transcript, _Provider
 
 _SHA256_LENGTH = 64
 _PROVIDERS = {"faster-whisper", "qwen3-asr"}
@@ -61,8 +61,8 @@ def _read_object(path: Path, label: str) -> dict[str, Any]:
     return _read_object_bytes(data, label)
 
 
-def _is_schema_one(value: Any) -> bool:
-    return type(value) is int and value == 1
+def _is_public_schema(value: Any) -> bool:
+    return type(value) is int and value == PUBLIC_SCHEMA_VERSION
 
 
 def _finite_nonnegative(value: Any, field: str) -> float:
@@ -141,7 +141,7 @@ def _validate_manifest(
     str,
     float,
 ]:
-    if not _is_schema_one(payload.get("schema_version")):
+    if not _is_public_schema(payload.get("schema_version")):
         raise ResultValidationError("Invalid result manifest schema_version.")
     if payload.get("status") != "complete":
         raise ResultValidationError("Result manifest status must be complete.")
@@ -157,9 +157,14 @@ def _validate_manifest(
         or not isinstance(digests, dict)
     ):
         raise ResultValidationError("Invalid result manifest shape.")
+    if set(artifacts) != {"transcript"} or set(digests) != {"transcript"}:
+        raise ResultValidationError(
+            "Manifest must reference only the transcript artifact."
+        )
+    _sha256(digests.get("transcript"), "artifact_sha256.transcript")
 
     audio_id = _sha256(audio.get("id"), "audio.id")
-    variant_id = _sha256(request.get("variant_id"), "request.variant_id")
+    config_digest = _sha256(request.get("config_digest"), "request.config_digest")
     provider = request.get("provider")
     language = request.get("language")
     if not isinstance(provider, str) or provider not in _PROVIDERS:
@@ -168,11 +173,13 @@ def _validate_manifest(
         raise ResultValidationError("request.language must be a non-empty string.")
     if request.get("alignment_policy") != _ALIGNMENT_POLICY:
         raise ResultValidationError("Invalid request.alignment_policy.")
+    if not _is_public_schema(request.get("public_schema_version")):
+        raise ResultValidationError("Invalid request.public_schema_version.")
     canonical_request = {
-        key: value for key, value in request.items() if key != "variant_id"
+        key: value for key, value in request.items() if key != "config_digest"
     }
-    if _canonical_sha256(canonical_request) != variant_id:
-        raise ResultValidationError("request.variant_id does not match request.")
+    if _canonical_sha256(canonical_request) != config_digest:
+        raise ResultValidationError("request.config_digest does not match request.")
     for field in ("size", "sample_count", "sample_rate"):
         _finite_nonnegative(audio.get(field), f"audio.{field}")
     duration = _finite_nonnegative(audio.get("duration"), "audio.duration")
@@ -180,7 +187,7 @@ def _validate_manifest(
         artifacts,
         digests,
         audio_id,
-        variant_id,
+        config_digest,
         cast(_Provider, provider),
         language,
         duration,
@@ -192,14 +199,17 @@ def _validate_common_artifact(
     *,
     name: str,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
     provider: _Provider,
     language: str,
     duration: float,
 ) -> None:
-    if not _is_schema_one(payload.get("schema_version")):
+    if not _is_public_schema(payload.get("schema_version")):
         raise ResultValidationError(f"Invalid {name} schema_version.")
-    if payload.get("audio_id") != audio_id or payload.get("variant_id") != variant_id:
+    if (
+        payload.get("audio_id") != audio_id
+        or payload.get("config_digest") != config_digest
+    ):
         raise ResultValidationError(f"{name} result identity does not match manifest.")
     if payload.get("provider") != provider:
         raise ResultValidationError(f"{name} provider does not match manifest.")
@@ -210,7 +220,9 @@ def _validate_common_artifact(
         raise ResultValidationError(f"{name} duration does not match manifest.")
 
 
-def _validate_transcript(payload: dict[str, Any], duration: float) -> Transcript:
+def _validate_transcript(
+    payload: dict[str, Any], duration: float, provider: _Provider
+) -> Transcript:
     segments = payload.get("segments")
     if not isinstance(segments, list) or not segments:
         raise ResultValidationError("transcript.segments must be a non-empty array.")
@@ -229,15 +241,16 @@ def _validate_transcript(payload: dict[str, Any], duration: float) -> Transcript
                 "Transcript segment times must satisfy 0 <= start < end <= duration."
             )
         previous_end = end
+    _validate_items(payload, duration, provider)
     return cast(Transcript, payload)
 
 
-def _validate_raw_timestamps(
+def _validate_items(
     payload: dict[str, Any], duration: float, provider: _Provider
-) -> RawTimestamps:
+) -> None:
     items = payload.get("items")
     if not isinstance(items, list) or not items:
-        raise ResultValidationError("raw_timestamps.items must be a non-empty array.")
+        raise ResultValidationError("transcript.items must be a non-empty array.")
     previous_end = 0.0
     for item in items:
         if not isinstance(item, dict) or set(item) != {
@@ -267,4 +280,3 @@ def _validate_raw_timestamps(
                 "Qwen3-ASR timestamp probability must remain null."
             )
         previous_end = end
-    return cast(RawTimestamps, payload)

@@ -72,7 +72,7 @@ def test_main_reports_elapsed_time_before_manifest(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    manifest = Path("result_manifest.json")
+    manifest = Path("manifest.json")
     times = iter((10.0, 10.0 + elapsed))
     monkeypatch.setattr(transcribe.time, "perf_counter", lambda: next(times))
     monkeypatch.setattr(
@@ -85,7 +85,7 @@ def test_main_reports_elapsed_time_before_manifest(
 
     assert capsys.readouterr().out.splitlines() == [
         f"[Stage] Transcribe completed in {formatted}",
-        f"result_manifest: {manifest}",
+        f"manifest: {manifest}",
     ]
 
 

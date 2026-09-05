@@ -122,11 +122,11 @@ def _complete_cache_output(
     started: float,
     message: str,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
 ) -> PipelineOutcome:
     logger.info("ASR merge: start chunks=%d source=chunk_cache", len(plan.chunks))
     alignment = merge_chunk_transcripts(plan, results)
-    _write_result(paths["result"], plan, alignment, audio_id, variant_id)
+    _write_result(paths["result"], plan, alignment, audio_id, config_digest)
     logger.info(
         "ASR merge: complete chunks=%d source=chunk_cache",
         len(plan.chunks),
@@ -144,12 +144,12 @@ def _write_result(
     plan: AsrPipelinePlan,
     alignment: AlignedTranscript,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
 ) -> None:
     write_workspace_result(
         path,
         audio_id=audio_id,
-        variant_id=variant_id,
+        config_digest=config_digest,
         text=alignment.text,
         items=list(alignment.items),
         duration=plan.source.duration,
@@ -165,7 +165,7 @@ def _run_asr_pipeline(
     policy: ExecutionPolicy[ProviderT],
     *,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
     prepared_audio: NormalizedAudio | None = None,
     prepared_vad: list[tuple[int, int]] | None = None,
     prepared_model: Any | None = None,
@@ -209,7 +209,7 @@ def _run_asr_pipeline(
                     "device check, and model load"
                 ),
                 audio_id=audio_id,
-                variant_id=variant_id,
+                config_digest=config_digest,
             )
 
     logger.info("ASR audio decode: start")
@@ -367,7 +367,7 @@ def _run_asr_pipeline(
         "ASR merge: complete chunks=%d source=execution",
         len(plan.chunks),
     )
-    _write_result(paths["result"], plan, alignment, audio_id, variant_id)
+    _write_result(paths["result"], plan, alignment, audio_id, config_digest)
     return PipelineOutcome(
         final_info=provider.final_info(plan, bool(alignment.items)),
         source=provider.source,
@@ -387,7 +387,7 @@ def run_asr_pipeline(
     policy: ExecutionPolicy[ProviderT],
     *,
     audio_id: str,
-    variant_id: str,
+    config_digest: str,
     prepared_audio: NormalizedAudio | None = None,
     prepared_vad: list[tuple[int, int]] | None = None,
     prepared_model: Any | None = None,
@@ -407,7 +407,7 @@ def run_asr_pipeline(
             provider,
             policy,
             audio_id=audio_id,
-            variant_id=variant_id,
+            config_digest=config_digest,
             prepared_audio=prepared_audio,
             prepared_vad=prepared_vad,
             prepared_model=prepared_model,

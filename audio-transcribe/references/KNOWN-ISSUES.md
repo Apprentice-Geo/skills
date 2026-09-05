@@ -24,13 +24,13 @@
 | ID | 问题 | 优先级 | 当前处理 |
 | --- | --- | --- | --- |
 | KI-001 | 运行时声明的模型 revision 未与本地安装状态核对 | P1 | 延后，需独立正确性改动 |
-| KI-002 | 损坏的 workspace result 无法从正常 CLI 进入 chunk 重建 | P1 | 部分纳入；已发布结果场景待决策 |
+| KI-002 | 损坏的 workspace result 无法从正常 CLI 进入 chunk 重建 | P1 | 已关闭（2026-09-05）：统一恢复与重新发布 |
 | KI-003 | Reference 人工校验状态和 provenance 文档相互冲突 | P1 | 已关闭（2026-09-04） |
 | KI-004 | benchmark 续跑身份不绑定代码、环境和实际模型 | P2 | 已关闭（2026-09-05）：自动校验硬件身份 |
 | KI-005 | warmup 不会预热正式 run 使用的模型进程 | P2 | 已关闭（2026-09-05）：持久 worker 复用 prepared model |
 | KI-006 | GPU 显存指标统计整机所有 compute process | P2 | 已关闭（2026-09-05）：取消资源占用指标 |
 | KI-007 | 两种 mode 的比较不能单独证明 chunk optimizer 的收益 | P2 | 已关闭（2026-09-05）：限定为端到端策略比较 |
-| KI-008 | 公共 loader 的可用性依赖私有 workspace 和日志存在 | P2 | 待确认公共结果的可移植边界 |
+| KI-008 | 公共 loader 的可用性依赖私有 workspace 和日志存在 | P2 | 已关闭（2026-09-05）：v2 两文件公共 bundle |
 | KI-009 | 文档所称“精确字段 shape”严于 contract 实际验证 | P2 | 待决定修正文档还是收紧 contract |
 
 ## KI-001：模型 revision 未在运行时验证
@@ -39,12 +39,12 @@
 
 证据：
 
-- `scripts/model_identity.py` 中的 `MODEL_REVISIONS` 是 setup 和 `variant_id` 使用的声明值。
+- `scripts/model_identity.py` 中的 `MODEL_REVISIONS` 是 setup 和 `config_digest` 使用的声明值。
 - `scripts/setup/download_models.py` 在安装和复用下载目录时校验 `.model_identity.json`。
 - 生产 readiness 和 Provider `prepare()` 只通过 `model_has_weights()` 检查权重文件是否存在及分片是否完整，不读取 `.model_identity.json`。
 - `WhisperProvider.request_identity()` 和 `Qwen3AsrProvider.request_identity()` 直接把 `MODEL_REVISIONS` 写入请求身份。
 
-如果模型目录被手动替换、复制自旧安装，或 identity marker 缺失/错误但权重形状仍合法，运行时仍可能加载这些文件，同时让 `variant_id`、manifest 和 benchmark 报告声称使用了当前固定 revision。[INFERRED] 这可能造成错误 cache 复用和无法审计的结果混合。
+如果模型目录被手动替换、复制自旧安装，或 identity marker 缺失/错误但权重形状仍合法，运行时仍可能加载这些文件，同时让 `config_digest`、manifest 和 benchmark 报告声称使用了当前固定 revision。[INFERRED] 这可能造成错误 cache 复用和无法审计的结果混合。
 
 建议将它作为独立正确性修复：在 Provider 进入请求身份和模型加载前验证 marker 的 repo/revision。需要明确的是，marker 校验只能证明目录由预期安装流程标记，不能证明安装后每个模型字节未被修改；若要求字节级证明，需要另行权衡大模型摘要成本。
 
@@ -52,13 +52,11 @@
 
 ## KI-002：损坏 workspace result 阻断 chunk 恢复
 
-**结论：[PARTIALLY RESOLVED 2026-09-04]** 没有完整 manifest 时，`run_transcribe()` 现在会先严格验证 `workspace/result.json`；文件损坏或身份不匹配时进入 pipeline，并可利用合法 plan 和 chunks 重建后再发布。
+**状态：已关闭（2026-09-05）。** 生产端现在从当前输入音频和 resolved request 计算 `audio_id + config_digest`，独立定位 workspace。无论 manifest 是否存在，公共结果无效且 workspace snapshot 不可用时均可进入 pipeline，从合法 plan/chunks 重建；缓存不足再执行正常推理。
 
-类似地，已有 manifest 的公共 artifact 恢复只尝试使用 workspace snapshot；workspace 也损坏时不会转入 chunk cache 重建。后一个场景还涉及已发布 manifest 的不可变性和 digest 恢复规则，不能仅靠删除文件解决。
+有效且匹配当前请求的 manifest 继续约束原正文 digest；重建不同则停止，保留原 manifest 和已有正文。manifest 缺失或损坏时，维护者接受根据当前请求重新发布，不再承诺复现历史 digest。完整 candidate 验证后才安装正文与 manifest，最终 manifest 安装失败时尝试回滚正文。
 
-剩余问题仅是“已有完整 manifest，但公共 artifact 与 workspace 同时损坏”的恢复边界。当前仍只尝试 workspace snapshot 恢复，不会转入 chunk pipeline；这涉及已发布 manifest 的不可变性和 digest 规则，需另行决策。
-
-关闭条件：对于剩余场景完成以下二选一决策：若保持当前失败边界，在架构和错误处理文档中把它声明为有意停止条件，并用测试固定原 manifest 与现有公共 artifact 不被改写；若扩展恢复边界，则覆盖 pipeline 重建后 digest 一致和不一致两种结果。
+`tests/test_public_artifacts.py` 覆盖已发布结果与 workspace 同时损坏、无需模型的 chunk 重建、digest 一致/不一致、manifest 缺失或损坏后的重新发布，以及发布失败保留原公共文件。长期协议见 [架构](ARCHITECTURE.md#公共-contract-与发布) 和 [错误处理](ERROR-HANDLING.md#cache-恢复)。
 
 ## KI-003：Reference 校验状态与 provenance 不一致
 
@@ -88,33 +86,24 @@ Warmup 和正式 run 记录 session ID，报告校验成功 run 必须存在同 
 
 ## KI-008：公共 loader 依赖私有目录和日志存在
 
-**结论：[KNOWN]** 架构文档把 `workspace/` 定义为私有恢复状态，并禁止 consumer 读取它；但 manifest 把 workspace 和日志列为 artifacts，`audio_transcribe_contract.load_result()` 会要求日志是文件、workspace 是目录，缺少任一项都会拒绝结果。
+**状态：已关闭（2026-09-05）。** 维护者选择可独立公共 bundle，并授权破坏性升级。`audio-transcribe-contract` 0.2.0 使用公共 schema v2，入口为 `manifest.json`，唯一正文为合并句子 `segments` 与 alignment `items` 的 `transcript.json`。manifest 不再声明日志或 workspace，loader 只验证两文件，不检查私有内容的存在或类型。
 
-contract 不读取 workspace 内容，也不验证日志或 workspace digest。这意味着 consumer API 没有直接暴露私有数据，但一个可加载的结果目录仍必须携带这些非公共文件。将 manifest、`transcript.json` 和 `raw_timestamps.json` 单独复制到其他位置并不能形成可用结果。
+配置身份统一命名为 `config_digest`，公共格式版本也参与摘要。consumer 返回结构简化为两份 snapshot 及其路径；生产端恢复通过当前音频和配置定位私有 workspace，不依赖公共 manifest 的私有路径。旧三文件合同/API 不迁移、不兼容，也不自动删除旧结果。
 
-这是公共结果可移植边界上的设计张力，不必然是 bug：如果公开入口只承诺原地引用完整 result directory，当前行为可以保留；如果希望公共三文件成为可独立归档和传输的合同，workspace 和日志就不应是 loader 的可用性前提。
-
-数据流重构明确保持公共 v1 行为不变，因此本项需要另行决策，不能借内部 schema 清理顺带改变。
-
-关闭条件：架构明确选择“原地完整目录”或“可独立公共 bundle”，并使 manifest、contract loader、恢复策略和测试与该选择一致。
+测试覆盖两文件独立复制、源结果不可用、无私有状态的生产 cache hit，以及 KI-002 所述恢复边界。公开合同及移动规则见 [架构](ARCHITECTURE.md#公共结果结构)。
 
 ## KI-009：“精确字段 shape”描述与实现不符
 
-**结论：[KNOWN]** `references/ERROR-HANDLING.md` 称 transcript 和 raw timestamp 具有“精确字段 shape”，但 contract 的严格程度并不一致：
+**结论：[KNOWN，部分修正 2026-09-05]** 原错误处理文档把所有公共结构笼统称为“精确字段 shape”，但 validator 只在部分节点拒绝未知字段。v2 升级已修正文档措辞，保留现有验证边界：
 
-- raw timestamp 的每个 item 使用键集合相等检查，确实拒绝未知字段；
-- transcript segment 只检查必需字段和值，不拒绝额外字段；
-- transcript 和 raw timestamp 顶层只读取必需字段，不拒绝额外字段；
-- manifest 及其 `audio`、`request`、`artifacts` 等对象也没有统一执行精确键集合检查。
+- alignment item 使用精确键集合；
+- v2 manifest 的 `artifacts` 和 `artifact_sha256` 只允许 `transcript`；
+- transcript segment、正文顶层、manifest 顶层及 audio/request 等其他节点主要验证已知必需字段，未统一拒绝未知字段。
 
-因此当前实际合同更接近“严格验证已知必需字段，并在部分节点拒绝未知字段”，而不是全结构 exact shape。它可能是允许 v1 添加字段的有意兼容策略，也可能只是验证遗漏；现有文档和测试没有把选择说清楚。
-
-建议先决定公共 v1 是否允许 additive fields。若允许，应修正文档并明确只有哪些嵌套对象是 exact；若不允许，应收紧 validator 并增加顶层、segment 和嵌套对象的未知字段回归测试。收紧行为会让目前可加载的结果失效，属于公共合同变更，不能归入内部 schema 简化。
-
-关闭条件：文档、类型、validator 和未知字段测试对同一兼容策略达成一致。
+本轮未统一决定所有节点的 additive-field 策略或补齐对应未知字段测试，因此不将本项标为完全关闭。后续应明确哪些节点允许增加字段，并使文档、类型、validator 和测试一致；不要因公共 schema 已升级就视为此问题自然解决。
 
 ## 与数据流重构的关系
 
-数据流重构直接处理 KI-002 的无 manifest 场景；KI-003 已作为文档与报告说明同步问题关闭。后续 benchmark 方法改动关闭了 KI-004～KI-007。KI-002 的已发布结果场景，以及 KI-001、KI-008 和 KI-009 仍需独立决策。
+数据流重构直接处理 KI-002 的无 manifest 场景；KI-003 已作为文档与报告说明同步问题关闭。后续 benchmark 方法改动关闭了 KI-004～KI-007。公共 v2 bundle 和统一恢复已关闭 KI-002 与 KI-008；KI-001 和 KI-009 的剩余事项仍需独立决策。
 
-后续改动仍应避免把内部实现变化误认为公共合同问题已经解决。例如，删除 benchmark schema 不等于 reference provenance 可以删除；保持公共 schema v1 也不等于当前 exact-shape 描述已经正确。
+后续改动仍应避免把内部实现变化误认为公共合同问题已经解决。例如，删除 benchmark schema 不等于 reference provenance 可以删除；升级公共 schema 也不等于未知字段策略已经统一。
