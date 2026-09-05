@@ -39,7 +39,7 @@ local audio
 ## 稳定不变量
 
 - `audio_id` 是音频字节的 SHA-256，与其路径无关。
-- `config_digest` 是排除该字段后的 canonical request JSON SHA-256，标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior；不包含音频身份，也不是单次调用编号。canonical request 包含模型 revision、执行策略、VAD、规划、分句、文本规范化、固定 `alignment_policy` 和 `public_schema_version: 2`。`audio_id + config_digest` 共同定位结果。
+- `config_digest` 是排除该字段后的 canonical request JSON SHA-256，标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior；不包含音频身份，也不是单次调用编号。canonical request 包含模型 revision、执行策略、VAD、规划、分句、文本规范化、固定 `alignment_policy` 和 `public_schema_version: 3`。`audio_id + config_digest` 共同定位结果。
 - `ALIGNMENT_POLICY` 使用 schema v1、1 ms timestamp resolution、`drop_item_and_owned_text` zero-duration 处理和严格排序。policy 变化会生成新的 `config_digest` 和 ASR plan identity。
 - 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `config_digest`。
 - 完整 manifest 最后发布，并且是唯一的成功标记。
@@ -52,6 +52,14 @@ local audio
 - contract 验证检查 schema、identity、路径包含关系、digest、timing 和文件类型，不修复文件。
 - 日志包含运行诊断，但不包含 transcript 文本、Cookie 或模型对象；面向 job 的错误保持简洁。
 - Provider 选择在推理前完成解析，失败后不得静默更改。
+
+## 模型身份
+
+模型身份记录经本地安装标记核对的 repo、固定 revision 和 logical_id；Qwen 同时绑定 forced-aligner。setup、依赖检查和运行时共用安装校验，详细边界见[模型安装](ERROR-HANDLING.md#模型安装)。形成 canonical request 和查询 cache 前必须校验；Provider 加载前复核。Whisper 自定义路径也必须是具有匹配固定身份的本地目录。自动语言检测仅在实际使用时验证 language-id。
+
+Provider prepare 返回绑定加载配置摘要的 prepared model。生产入口和 benchmark 复用前比较加载时身份与当前请求；摘要包含模型（含 aligner）、设备、dtype/compute type 和实际加载用的线程、worker 或 batch 配置及 Qwen 的 max_new_tokens，语言不影响模型加载。这个摘要只绑定已核对的安装身份与加载参数，不是模型权重摘要。运行期间不得替换安装目录；不提供并发安装与推理的一致性事务。
+
+公共 v3 与旧结果隔离；公共版本同时参与 plan identity，旧 plan/chunk 即使复制到新 workspace 也不能被当作当前缓存复用。升级不能追认历史结果使用的模型身份，旧公共结果不迁移、不自动删除。
 
 ## Alignment 与验证流程
 
@@ -71,7 +79,7 @@ Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。
 
 ## 私有 cache
 
-私有 cache 只支持当前代码能够严格解析的格式，不承担 schema 兼容或迁移责任。`asr_plan.json` 通过 canonical plan payload 的 SHA-256 `plan_id` 绑定 source、Provider request、execution policy、VAD、规划参数和 chunk layouts；读取时重新计算身份并验证精确字段、类型和 layout 不变量。旧 schema、未知字段、错误 policy 或损坏数据自然成为 cache miss。
+私有 cache 只支持当前代码能够严格解析的格式，不承担 schema 兼容或迁移责任。`asr_plan.json` 通过 canonical plan payload 的 SHA-256 `plan_id` 绑定 source、Provider request（含公共 schema 版本）、execution policy、VAD、规划参数和 chunk layouts；读取时重新计算身份并验证精确字段、类型和 layout 不变量。旧 schema、未知字段、错误 policy 或损坏数据自然成为 cache miss。
 
 `vad_result.json` 只是 plan miss 时的可选输入。合法 plan 是 chunk 恢复的唯一权威，命中时不读取 VAD，也不从 VAD 重新推导 layout。chunk payload 仅保存 `plan_id`、`chunk_index`、accepted text 和 items；边界由 plan 恢复。Provider metadata、elapsed timing 和 `CleanupReport` 不落盘，因此 cleanup warning 只为本次新接受的 candidate 输出，不为 cached chunk 重放。
 
@@ -105,13 +113,13 @@ pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗
 
 ## 公共 contract 与发布
 
-`audio-transcribe-contract` 0.2.0 只接受公共 schema v2，独立于内部 alignment 模块。固定 alignment policy 的内部版本仍为 1；contract 拥有独立副本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。其他节点沿用已知字段验证，不在此次格式升级中统一收紧未知字段规则。
+`audio-transcribe-contract` 0.2.0 只接受公共 schema v3，独立于内部 alignment 模块。固定 alignment policy 的内部版本仍为 1；contract 拥有独立副本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。所有公共对象递归使用精确字段集合；完整 resolved 配置全部必需。Provider identity、model 和 execution policy 按 Provider 分别定义结构，校验类型、必要的值约束及 Provider/language 一致性。TypedDict 是字段结构的唯一实现来源，validator 从其解析字段；consumer 不 import 生产代码，不检查本地模型，也不限制 revision 必须等于当前生产 pin。新增任何层级字段或改变合同语义需要评估并升级公共 schema；包版本独立发布，非格式修复无需机械升级 schema。
 
 `load_result(path)` 完整验证后返回 `TranscriptionResult(manifest_path, transcript_path, manifest, transcript)`，路径均为绝对路径。正文 snapshot 同时提供 `segments` 和 `items`。外层 dataclass 冻结，内层 TypedDict/list 是普通可变内存对象，修改不写回文件。不再导出 `RawTimestamps` 类型或返回独立 timestamp 路径/snapshot。
 
 `load_manifest(path)` 只验证 manifest 元数据、配置摘要、正文摘要格式及路径安全性，返回 manifest snapshot；不要求正文存在，不读取正文。它用于生产端决定恢复约束，不能代替 `load_result()` 认证完整结果。
 
-旧公共 schema v1、旧入口 `result_manifest.json` 和 `variant_id` 字段不兼容，不自动迁移或删除。生产 request 的 `public_schema_version` 参与配置摘要，保证新格式选择新结果目录；旧私有 snapshot 也因字段不匹配而失效。
+旧公共 schema v1/v2、旧入口 `result_manifest.json` 和 `variant_id` 字段不兼容，不自动迁移或删除。生产 request 的 `public_schema_version` 参与配置摘要，保证新格式选择新结果目录；旧私有 snapshot 也因 config_digest 不匹配而失效。
 
 发布和恢复在同一个 result lock 内进行。先在结果目录下的临时 staging 目录生成完整两文件 candidate，保持最终相对路径，由 `load_result()` 验证后才替换正式正文，最后原子替换 `manifest.json`。candidate 失败不改变已有公共文件；最终 manifest 安装失败时尝试回滚正文。多文件替换不是整体原子事务：进程被强制终止时可能留下需要下次运行验证和恢复的状态，consumer 必须每次完整验证。
 

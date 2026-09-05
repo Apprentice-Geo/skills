@@ -40,7 +40,13 @@ uv sync --python 3.12 --no-dev --extra qwen3-asr
 uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
 
-如果固定 revision 的模型 artifact 缺失、不完整或 revision 错误，重新安装所请求的模型。不得臆造 revision 值，也不得把仅部分下载的模型目录视为 ready。
+安装校验要求 `.model_identity.json` 是无重复键且仅包含字符串 repo/revision 的 JSON 对象，并与固定配置完全匹配；必需文件与权重必须存在且非空，indexed safetensors 的索引和全部分片必须合法且位于模型目录内。setup 复用、依赖检查、自动 Provider 候选检查和运行时使用相同规则。模型加载仍负责识别文件内容是否可用。
+
+marker 缺失、损坏、不匹配或模型文件不完整时，重新安装所请求的模型。禁止推测 revision 或手工补写 marker。显式 Provider 失败时立即停止；自动选择排除不合格候选，解析完成后不再切换。模型加载前复核；完整 cache 不能绕过请求身份前的模型检查。Whisper 自定义路径同样必须匹配固定身份；Qwen 的 ASR 与 aligner 独立校验。
+
+这只证明目录具有匹配安装记录及基本文件结构，不证明安装后每个模型字节未变。项目不计算全量/抽样权重摘要，不以 mtime 或文件大小指纹冒充内容身份。运行期间不得替换模型目录。consumer loader 只验证 bundle，不访问模型。
+
+prepared model 必须携带加载时绑定的身份和配置摘要；缺失或不匹配时停止，不能用当前磁盘 marker 为未知内存模型补认身份。
 
 省略 `--language` 时必须使用语言识别模型。如果该模型缺失，通过 setup 安装模型，或传入明确的 `--language` 重新运行。
 
@@ -102,15 +108,15 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 
 使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`。契约包 0.2.0 验证：
 
-1. manifest 和正文的公共 schema version 为 2，status 为 `complete`；`request.public_schema_version` 为 2，固定 `alignment_policy` 与受支持的 v1 policy 匹配；
+1. manifest 和正文的公共 schema version 为 3，status 为 `complete`；`request.public_schema_version` 为 3，固定 `alignment_policy` 与受支持的 v1 policy 匹配；
 2. `audio.id` 和 `request.config_digest` 是 64 字符 SHA-256 值，后者与排除自身字段后的 canonical request JSON 匹配；
 3. manifest 只声明 transcript artifact 及其 SHA-256；路径相对于 manifest 目录，不能逃逸该目录或指向 manifest 自身；
 4. `transcript.json` 存在，文件字节与记录的 SHA-256 匹配；
-5. 正文已知字段、identity、Provider、language、duration、句子分段、item probability 和严格 timing contract 均有效；item 要求精确字段集合。
+5. 两份 JSON 的所有对象（包括 request 内全部配置）均要求精确字段集合和正确类型；拒绝未知字段、缺失字段和跨 Provider 配置。identity、Provider、language、duration、句子分段、item probability 和严格 timing contract 均有效。
 
 日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只验证元数据和路径，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。
 
-旧三文件 schema v1 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v2 结果。固定 alignment policy 的版本继续为 1，与公共 schema v2 是不同层面的版本。
+旧公共 schema v1/v2 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v3 结果。固定 alignment policy 的版本继续为 1，与公共 schema v3 是不同层面的版本。
 
 ## Cache 恢复
 

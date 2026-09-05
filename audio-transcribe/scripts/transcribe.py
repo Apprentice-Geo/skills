@@ -29,7 +29,9 @@ from scripts.asr.alignment import (
     accept_provider_transcript,
 )
 from scripts.asr.pipeline_types import PipelineOutcome
+from scripts.asr.prepared_model import validate_prepared_model
 from scripts.io_utils import canonical_sha256, sha256_file
+from scripts.model_identity import validate_model
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
 from scripts.text_normalization import TEXT_NORMALIZATION_POLICY
 
@@ -57,12 +59,6 @@ class TranscribeOutcome:
     pipeline_outcome: PipelineOutcome | None
 
 
-def _model_has_weights(directory: Path, pattern: str) -> bool:
-    from scripts.model_artifacts import model_has_weights
-
-    return model_has_weights(directory, (pattern,))
-
-
 def _decode_audio(path: Path) -> Any:
     try:
         from faster_whisper.audio import decode_audio
@@ -75,11 +71,7 @@ def _decode_audio(path: Path) -> Any:
 
 def _detect_language(samples: Any) -> str:
     model_dir = MODELS_DIR / "lang-id-voxlingua107-ecapa"
-    required = ("embedding_model.ckpt", "classifier.ckpt", "hyperparams.yaml")
-    if not all((model_dir / name).is_file() for name in required):
-        raise RuntimeError(
-            "Language identification model is missing. Pass --language or run setup."
-        )
+    validate_model("language-id", model_dir)
     try:
         import torch
         from speechbrain.inference.classifiers import EncoderClassifier
@@ -156,11 +148,13 @@ def _qwen3_asr_ready() -> bool:
         or importlib.util.find_spec("torch") is None
     ):
         return False
-    if not _model_has_weights(MODELS_DIR / "qwen3-asr-0.6b", "model*.safetensors"):
-        return False
-    if not _model_has_weights(
-        MODELS_DIR / "qwen3-forcedaligner-0.6b", "model*.safetensors"
-    ):
+    try:
+        validate_model(
+            "qwen3-asr",
+            MODELS_DIR / "qwen3-asr-0.6b",
+            MODELS_DIR / "qwen3-forcedaligner-0.6b",
+        )
+    except RuntimeError:
         return False
     import torch
 
@@ -168,11 +162,13 @@ def _qwen3_asr_ready() -> bool:
 
 
 def _whisper_ready() -> bool:
-    return importlib.util.find_spec(
-        "faster_whisper"
-    ) is not None and _model_has_weights(
-        MODELS_DIR / "faster-whisper-small", "model.bin"
-    )
+    if importlib.util.find_spec("faster_whisper") is None:
+        return False
+    try:
+        validate_model("faster-whisper", MODELS_DIR / "faster-whisper-small")
+    except RuntimeError:
+        return False
+    return True
 
 
 def _select_provider(requested: str | None, language: str) -> str:
@@ -279,6 +275,10 @@ def run_transcribe(
         "text_normalization": TEXT_NORMALIZATION_POLICY,
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }
+    if prepared_model is not None:
+        validate_prepared_model(
+            prepared_model, canonical_request["provider_identity"], execution
+        )
     config_digest = canonical_sha256(canonical_request)
     request = {"config_digest": config_digest, **canonical_request}
     result_dir = (

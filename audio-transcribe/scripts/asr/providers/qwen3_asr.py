@@ -9,6 +9,7 @@ import numpy as np
 from scripts.asr.alignment import TranscriptWord
 from scripts.asr.chunking import SAMPLE_RATE, ChunkLayout
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
+from scripts.asr.prepared_model import PreparedModel, unwrap_model
 from scripts.config import (
     DEFAULT_HF_ENDPOINT,
     QWEN3_ASR_ALIGNER_MODEL_DIR,
@@ -17,8 +18,7 @@ from scripts.config import (
     QWEN3_ASR_MAX_NEW_TOKENS,
     QWEN3_ASR_MODEL_DIR,
 )
-from scripts.model_artifacts import QWEN3_ASR_WEIGHT_PATTERNS, model_has_weights
-from scripts.model_identity import provider_model_identity
+from scripts.model_identity import validate_model
 from scripts.process_logging import get_logger
 from scripts.utils import path_to_posix
 
@@ -72,7 +72,9 @@ class Qwen3AsrProvider:
             "provider": self.name,
             "language": self.language,
             "model_language": self.model_language,
-            "model": provider_model_identity(self.name),
+            "model": validate_model(
+                self.name, QWEN3_ASR_MODEL_DIR, QWEN3_ASR_ALIGNER_MODEL_DIR
+            ),
             "device": QWEN3_ASR_DEVICE_MAP,
             "compute_type": QWEN3_ASR_DTYPE,
             "max_new_tokens": QWEN3_ASR_MAX_NEW_TOKENS,
@@ -80,6 +82,7 @@ class Qwen3AsrProvider:
         }
 
     def prepare(self, execution_identity: dict[str, Any]) -> Any:
+        verified_request = self.request_identity()
         try:
             import torch
             from qwen_asr import Qwen3ASRModel
@@ -93,15 +96,6 @@ class Qwen3AsrProvider:
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "Qwen3-ASR requires an available CUDA GPU. Use the default whisper provider on CPU."
-            )
-        if not model_has_weights(
-            QWEN3_ASR_MODEL_DIR, QWEN3_ASR_WEIGHT_PATTERNS
-        ) or not model_has_weights(
-            QWEN3_ASR_ALIGNER_MODEL_DIR, QWEN3_ASR_WEIGHT_PATTERNS
-        ):
-            raise RuntimeError(
-                "Qwen3-ASR local models are missing. Run "
-                r"uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr."
             )
         os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
         model_path = path_to_posix(QWEN3_ASR_MODEL_DIR)
@@ -120,7 +114,7 @@ class Qwen3AsrProvider:
         generation_config = GenerationConfig.from_pretrained(
             model_path, temperature=None
         )
-        return Qwen3ASRModel.from_pretrained(
+        model = Qwen3ASRModel.from_pretrained(
             model_path,
             forced_aligner=path_to_posix(QWEN3_ASR_ALIGNER_MODEL_DIR),
             forced_aligner_kwargs={"dtype": dtype, "device_map": QWEN3_ASR_DEVICE_MAP},
@@ -130,6 +124,13 @@ class Qwen3AsrProvider:
             max_new_tokens=QWEN3_ASR_MAX_NEW_TOKENS,
             generation_config=generation_config,
         )
+
+        logger.info(
+            "ASR model loaded: provider=%s verified_installation=%s",
+            self.name,
+            verified_request["model"],
+        )
+        return PreparedModel.bind(model, verified_request, execution_identity)
 
     def parse_result(
         self, result: Any, layout: ChunkLayout, elapsed_seconds: float
@@ -183,7 +184,7 @@ class Qwen3AsrProvider:
         self, prepared: Any, samples: np.ndarray, layout: ChunkLayout
     ) -> ChunkTranscript:
         started = time.perf_counter()
-        results = prepared.transcribe(
+        results = unwrap_model(prepared).transcribe(
             [(samples, 16_000)],
             language=self.model_language,
             return_time_stamps=True,
@@ -198,7 +199,7 @@ class Qwen3AsrProvider:
         self, prepared: Any, items: list[tuple[np.ndarray, ChunkLayout]]
     ) -> list[ChunkTranscript]:
         started = time.perf_counter()
-        results = prepared.transcribe(
+        results = unwrap_model(prepared).transcribe(
             [(samples, 16_000) for samples, _ in items],
             language=self.model_language,
             return_time_stamps=True,

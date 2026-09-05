@@ -19,7 +19,7 @@ def model_has_weights(model_dir: Path, patterns: Sequence[str]) -> bool:
         path
         for pattern in patterns
         for path in model_dir.glob(pattern)
-        if path.is_file()
+        if _nonempty_file(path)
     ]
     if not matched:
         return False
@@ -27,7 +27,7 @@ def model_has_weights(model_dir: Path, patterns: Sequence[str]) -> bool:
         return True
     single_file = model_dir / "model.safetensors"
     index_path = model_dir / "model.safetensors.index.json"
-    if single_file.is_file() and not index_path.exists():
+    if _nonempty_file(single_file) and not index_path.exists():
         return True
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -45,10 +45,17 @@ def model_has_weights(model_dir: Path, patterns: Sequence[str]) -> bool:
             shard_paths.append(shard_path)
     except (OSError, UnicodeError, ValueError, KeyError, TypeError, RuntimeError):
         return False
-    return all(path.is_file() for path in shard_paths)
+    return all(_nonempty_file(path) for path in shard_paths)
 
 
 def model_has_required_files(model_dir: Path, filenames: Sequence[str]) -> bool:
     return model_dir.is_dir() and all(
-        (model_dir / filename).is_file() for filename in filenames
+        _nonempty_file(model_dir / filename) for filename in filenames
     )
+
+
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False

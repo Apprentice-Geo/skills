@@ -23,6 +23,8 @@ from benchmark.report import summarize
 from benchmark.runner import build_matrix
 from benchmark.worker import worker
 
+pytestmark = pytest.mark.usefixtures("installed_models")
+
 
 def test_prepare_audio_module_help() -> None:
     result = subprocess.run(
@@ -345,6 +347,7 @@ def test_each_provider_warms_immediately_before_its_runs(
                     "device": "cuda:0",
                     "dtype": "bfloat16",
                     "batch_size": 1,
+                    "max_new_tokens": 1024,
                 }
             )
             return {

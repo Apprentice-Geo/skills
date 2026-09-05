@@ -12,6 +12,7 @@ from typing import Any, TextIO
 
 from benchmark import PROVIDERS, ROOT, TMP_DIR
 from benchmark.report import run_id
+from scripts.asr.prepared_model import model_configuration, validate_prepared_model
 from scripts.io_utils import read_json
 
 PROTOCOL_PREFIX = "@@benchmark-worker@@"
@@ -54,30 +55,13 @@ def provider_runtime(
                 "group_size": 1,
             }
         request = adapter.request_identity()
-        configuration = {
-            "model": request["model"],
-            "device": request["device"],
-            "compute_type": request["compute_type"],
-            "cpu_threads": identity["cpu_threads"],
-            "num_workers": identity["num_workers"],
-        }
+
     else:
         adapter = Qwen3AsrProvider(language)
         policy = Qwen3AsrCudaPolicy()
         identity = policy.execution_identity(sample_count)
         request = adapter.request_identity()
-        model = request["model"]
-        configuration = {
-            "model": {key: model[key] for key in ("repo", "revision", "logical_id")},
-            "aligner": {
-                "repo": model["aligner_repo"],
-                "revision": model["aligner_revision"],
-                "logical_id": model["aligner_logical_id"],
-            },
-            "device": request["device"],
-            "dtype": request["compute_type"],
-            "batch_size": identity["batch_size"],
-        }
+    configuration = model_configuration(request, identity)
     return adapter, policy, identity, configuration
 
 
@@ -141,6 +125,7 @@ def worker(
         model = (
             prepared_model if prepared_model is not None else adapter.prepare(identity)
         )
+        validate_prepared_model(model, provider_identity, identity)
         transcript = adapter.transcribe_one(model, samples.samples, layout)
         text = transcript.text
         details = {

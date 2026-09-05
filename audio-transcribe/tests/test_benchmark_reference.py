@@ -398,6 +398,7 @@ def _test_model_configuration(provider: str) -> dict[str, Any]:
         "device": "cuda:0",
         "dtype": "bfloat16",
         "batch_size": 1,
+        "max_new_tokens": 1024,
     }
 
 

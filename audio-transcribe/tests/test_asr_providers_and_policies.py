@@ -17,6 +17,8 @@ from scripts.config import QWEN3_ASR_DEVICE_MAP, QWEN3_ASR_DTYPE
 from scripts.process_logging import LoggingSession, get_logger
 from scripts.runtime_options import TranscribeOptions
 
+pytestmark = pytest.mark.usefixtures("installed_models")
+
 
 @contextmanager
 def isolated_logging_session(log_path):
@@ -138,7 +140,7 @@ def test_qwen_provider_parses_probability_as_none() -> None:
 
 
 def test_whisper_prepare_logs_only_safe_model_configuration(
-    workspace_tmp_path: Path, monkeypatch
+    workspace_tmp_path: Path, monkeypatch, installed_models
 ) -> None:
     faster_whisper = ModuleType("faster_whisper")
     faster_whisper.WhisperModel = lambda *_args, **_kwargs: object()
@@ -146,7 +148,7 @@ def test_whisper_prepare_logs_only_safe_model_configuration(
     provider = WhisperProvider(
         TranscribeOptions(
             language="en",
-            model_path="custom-whisper",
+            model_path=str(installed_models / "faster-whisper-small"),
             device="cpu",
             compute_type="int8",
         )
@@ -164,13 +166,13 @@ def test_whisper_prepare_logs_only_safe_model_configuration(
 
     log_text = log_path.read_text(encoding="utf-8")
     assert (
-        "provider=faster-whisper model=custom-whisper device=cpu compute_type=int8 "
+        f"provider=faster-whisper model={installed_models / 'faster-whisper-small'} device=cpu compute_type=int8 "
         "policy=whisper-cpu num_workers=2 cpu_threads=3"
     ) in log_text
 
 
 def test_qwen_prepare_logs_only_safe_model_configuration(
-    workspace_tmp_path: Path, monkeypatch
+    workspace_tmp_path: Path, monkeypatch, installed_models
 ) -> None:
     torch = ModuleType("torch")
     torch.cuda = SimpleNamespace(is_available=lambda: True)
@@ -186,9 +188,6 @@ def test_qwen_prepare_logs_only_safe_model_configuration(
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "qwen_asr", qwen_asr)
     monkeypatch.setitem(sys.modules, "transformers", transformers)
-    monkeypatch.setattr(
-        "scripts.asr.providers.qwen3_asr.model_has_weights", lambda *_args: True
-    )
     provider = Qwen3AsrProvider("zh")
     log_path = workspace_tmp_path / "qwen-prepare.log"
 

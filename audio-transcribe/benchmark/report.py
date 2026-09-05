@@ -114,7 +114,7 @@ def _validate_model_configuration(provider: str, value: Any) -> dict[str, Any]:
     fields = (
         {"model", "device", "compute_type", "cpu_threads", "num_workers"}
         if provider == "faster-whisper"
-        else {"model", "aligner", "device", "dtype", "batch_size"}
+        else {"model", "aligner", "device", "dtype", "batch_size", "max_new_tokens"}
     )
     if not isinstance(value, dict) or set(value) != fields:
         raise ValueError("Benchmark model configuration is invalid")
@@ -139,7 +139,7 @@ def _validate_model_configuration(provider: str, value: Any) -> dict[str, Any]:
     integer_fields = (
         ("cpu_threads", "num_workers")
         if provider == "faster-whisper"
-        else ("batch_size",)
+        else ("batch_size", "max_new_tokens")
     )
     if any(
         not isinstance(value[field], str) or not value[field] for field in string_fields

@@ -5,8 +5,9 @@ import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from scripts.io_utils import read_json, write_json_atomic
+from scripts.io_utils import write_json_atomic
 from scripts.model_artifacts import model_has_required_files, model_has_weights
+from scripts.model_identity import IDENTITY_MARKER, installed_revision_matches
 from scripts.process_logging import ProcessLogger, SetupError
 
 DOWNLOAD_SCRIPT = (
@@ -14,23 +15,6 @@ DOWNLOAD_SCRIPT = (
     "from huggingface_hub import snapshot_download; "
     "snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3])"
 )
-IDENTITY_MARKER = ".model_identity.json"
-
-
-def _installed_revision_matches(
-    model_dir: Path,
-    repo_id: str,
-    revision: str,
-) -> bool:
-    try:
-        payload = read_json(model_dir / IDENTITY_MARKER)
-    except (OSError, UnicodeError, ValueError):
-        return False
-    return (
-        isinstance(payload, dict)
-        and payload.get("repo") == repo_id
-        and payload.get("revision") == revision
-    )
 
 
 def download_model(
@@ -45,7 +29,7 @@ def download_model(
     require_all: bool = False,
 ) -> bool:
     ready = model_has_required_files if require_all else model_has_weights
-    if ready(model_dir, weight_patterns) and _installed_revision_matches(
+    if ready(model_dir, weight_patterns) and installed_revision_matches(
         model_dir, repo_id, revision
     ):
         return False

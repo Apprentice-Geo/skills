@@ -22,9 +22,8 @@ from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
     WHISPER_WEIGHT_PATTERNS,
-    model_has_weights,
 )
-from scripts.model_identity import MODEL_REVISIONS
+from scripts.model_identity import MODEL_REVISIONS, validate_installation
 
 SCHEMA_VERSION = 1
 SKILL_NAME = "audio-transcribe"
@@ -80,23 +79,13 @@ def model_check(
     identity: dict[str, str],
     required: tuple[str, ...] = (),
 ) -> dict[str, str]:
-    missing = [name for name in required if not (directory / name).is_file()]
-    weights = model_has_weights(directory, patterns) if patterns else directory.is_dir()
     try:
-        marker = json.loads(
-            (directory / ".model_identity.json").read_text(encoding="utf-8")
+        validate_installation(
+            directory, identity["repo"], identity["revision"], patterns, required
         )
-    except (OSError, UnicodeError, ValueError):
-        marker = None
-    correct_marker = marker == identity
-    status = (
-        "pass"
-        if directory.is_dir() and weights and not missing and correct_marker
-        else "fail"
-    )
-    actual = f"{directory}; weights={'yes' if weights else 'no'}; marker={'match' if correct_marker else 'missing/mismatch'}"
-    if missing:
-        actual += f"; missing={','.join(missing)}"
+        status, actual = "pass", f"{directory}; marker=match; files=ready"
+    except RuntimeError as exc:
+        status, actual = "fail", str(exc)
     return item(
         check_id,
         status,

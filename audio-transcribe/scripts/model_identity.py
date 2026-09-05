@@ -1,6 +1,89 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
+
+from scripts.model_artifacts import (
+    LANGUAGE_ID_REQUIRED_FILES,
+    QWEN3_ASR_WEIGHT_PATTERNS,
+    WHISPER_WEIGHT_PATTERNS,
+    model_has_required_files,
+    model_has_weights,
+)
+
+IDENTITY_MARKER = ".model_identity.json"
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate model identity field.")
+        result[key] = value
+    return result
+
+
+def installed_revision_matches(directory: Path, repo: str, revision: str) -> bool:
+    try:
+        marker = json.loads(
+            (directory / IDENTITY_MARKER).read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_object,
+        )
+        return marker == {"repo": repo, "revision": revision}
+    except (OSError, UnicodeError, ValueError):
+        return False
+
+
+def validate_installation(
+    directory: Path,
+    repo: str,
+    revision: str,
+    patterns: tuple[str, ...] = (),
+    required: tuple[str, ...] = (),
+) -> dict[str, str]:
+    expected = f"{repo}@{revision}"
+    if not installed_revision_matches(directory, repo, revision):
+        raise RuntimeError(
+            f"Model identity marker missing, invalid or mismatched: {directory}; expected {expected}. Reinstall the model."
+        )
+    if not model_has_required_files(directory, required) or (
+        patterns and not model_has_weights(directory, patterns)
+    ):
+        raise RuntimeError(
+            f"Model files missing, empty or incomplete: {directory}; expected {expected}. Reinstall the model."
+        )
+    return {"repo": repo, "revision": revision}
+
+
+def validate_model(
+    provider: str, directory: Path, aligner_directory: Path | None = None
+) -> dict[str, Any]:
+    identity = provider_model_identity(provider)
+    patterns = (
+        WHISPER_WEIGHT_PATTERNS
+        if provider == "faster-whisper"
+        else QWEN3_ASR_WEIGHT_PATTERNS
+    )
+    required = LANGUAGE_ID_REQUIRED_FILES if provider == "language-id" else ()
+    validate_installation(
+        directory,
+        identity["repo"],
+        identity["revision"],
+        () if required else patterns,
+        required,
+    )
+    if provider == "qwen3-asr":
+        if aligner_directory is None:
+            raise ValueError("Qwen3-ASR requires an aligner directory.")
+        validate_installation(
+            aligner_directory,
+            identity["aligner_repo"],
+            identity["aligner_revision"],
+            QWEN3_ASR_WEIGHT_PATTERNS,
+        )
+    return identity
+
 
 # These revisions are shared by setup and result identity. Do not replace them
 # with a floating branch: changing model bytes must produce a new config_digest.

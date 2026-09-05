@@ -52,7 +52,7 @@ uv run --no-sync python -m scripts.transcribe "<absolute-or-relative-audio-path>
 
 ## 结果契约
 
-`manifest.json` 是唯一的公共入口。契约包 `audio-transcribe-contract` 0.2.0 只接受公共 schema v2。manifest 记录音频信息、完整 resolved request，以及 `transcript.json` 的相对路径和 SHA-256；不记录日志或 workspace。正文同时包含句子级 `segments` 和细粒度 `items`。
+`manifest.json` 是唯一的公共入口。契约包 `audio-transcribe-contract` 0.2.0 只接受公共 schema v3。manifest 记录音频信息、完整 resolved request，以及 `transcript.json` 的相对路径和 SHA-256；不记录日志或 workspace。所有公共对象递归拒绝未知字段，resolved 配置字段全部必需；新增字段必须升级公共 schema。正文同时包含句子级 `segments` 和细粒度 `items`。
 
 `request.config_digest` 是已解析转写配置的 canonical JSON SHA-256，包含模型、执行和文本处理策略及公共格式版本；不是单次调用编号。结果由 `audio_id + config_digest` 定位。固定 alignment policy 仍为 v1，item 必须严格有序、互不重叠，并满足 `0 <= start < end <= duration`。
 
@@ -62,9 +62,11 @@ uv run --no-sync python -m scripts.transcribe "<absolute-or-relative-audio-path>
 
 `load_result()` 返回 `manifest_path`、`transcript_path`、`manifest` 和 `transcript`。外层 dataclass 冻结，内层字典和列表是可修改的内存快照，修改不会写回磁盘。`load_manifest()` 仅验证元数据，供生产端恢复使用；它不能证明正文有效，不得替代 `load_result()` 声称转写成功。
 
-旧 `result_manifest.json`、独立 `raw_timestamps.json`、`variant_id` 字段及旧 Python API 不做兼容或自动迁移。重新运行转写命令生成新格式结果，不删除历史结果。
+旧公共 schema v1/v2、`result_manifest.json`、独立 `raw_timestamps.json`、`variant_id` 字段及旧 Python API 不做兼容或自动迁移。重新运行转写命令生成新格式结果，不删除历史结果。
 
 公共 transcript 和 timestamp 文本使用 Unicode NFKC 规范化。resolved language 为 `zh` 时还使用 OpenCC `t2s`；包括 `yue` 在内的其他语言不执行简体中文转换。Provider chunk cache 保持不变。
+
+生产命令在请求身份及 cache 查询前核对本地模型安装；缺失或错误的安装标记不能通过完整旧结果绕过。独立 consumer 读取 bundle 不需要本地模型。详见[模型安装](references/ERROR-HANDLING.md#模型安装)。
 
 ## 失败边界
 

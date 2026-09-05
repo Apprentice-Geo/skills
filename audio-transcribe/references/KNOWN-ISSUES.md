@@ -23,7 +23,7 @@
 
 | ID | 问题 | 优先级 | 当前处理 |
 | --- | --- | --- | --- |
-| KI-001 | 运行时声明的模型 revision 未与本地安装状态核对 | P1 | 延后，需独立正确性改动 |
+| KI-001 | 运行时声明的模型 revision 未与本地安装状态核对 | P1 | 已关闭（2026-09-06）：统一安装身份校验 |
 | KI-002 | 损坏的 workspace result 无法从正常 CLI 进入 chunk 重建 | P1 | 已关闭（2026-09-05）：统一恢复与重新发布 |
 | KI-003 | Reference 人工校验状态和 provenance 文档相互冲突 | P1 | 已关闭（2026-09-04） |
 | KI-004 | benchmark 续跑身份不绑定代码、环境和实际模型 | P2 | 已关闭（2026-09-05）：自动校验硬件身份 |
@@ -31,24 +31,15 @@
 | KI-006 | GPU 显存指标统计整机所有 compute process | P2 | 已关闭（2026-09-05）：取消资源占用指标 |
 | KI-007 | 两种 mode 的比较不能单独证明 chunk optimizer 的收益 | P2 | 已关闭（2026-09-05）：限定为端到端策略比较 |
 | KI-008 | 公共 loader 的可用性依赖私有 workspace 和日志存在 | P2 | 已关闭（2026-09-05）：v2 两文件公共 bundle |
-| KI-009 | 文档所称“精确字段 shape”严于 contract 实际验证 | P2 | 待决定修正文档还是收紧 contract |
+| KI-009 | 文档所称“精确字段 shape”严于 contract 实际验证 | P2 | 已关闭（2026-09-06）：公共 v3 递归严格字段 |
 
 ## KI-001：模型 revision 未在运行时验证
 
-**结论：[KNOWN]** Provider identity 记录的是代码中配置的 revision，不一定是本次推理实际加载的模型 revision。
+**状态：已关闭（2026-09-06）。** setup、依赖检查与生产运行时共用 marker repo/revision 和基本文件检查；请求身份及 cache 查询前校验，加载前复核。Whisper 自定义路径、Qwen ASR/aligner 和实际使用的 language-id 均覆盖；自动选择排除无效候选，显式选择失败即停止。
 
-证据：
+prepared model 绑定加载时身份和配置，生产及 benchmark 复用前核对。公共 request 沿用 model 身份字段，成功加载日志记录已校验的安装身份；benchmark 顶层 revision 仍明确为代码声明快照。校验不计算权重摘要，不承诺安装后字节未变，详细责任边界见[模型安装](ERROR-HANDLING.md#模型安装)。
 
-- `scripts/model_identity.py` 中的 `MODEL_REVISIONS` 是 setup 和 `config_digest` 使用的声明值。
-- `scripts/setup/download_models.py` 在安装和复用下载目录时校验 `.model_identity.json`。
-- 生产 readiness 和 Provider `prepare()` 只通过 `model_has_weights()` 检查权重文件是否存在及分片是否完整，不读取 `.model_identity.json`。
-- `WhisperProvider.request_identity()` 和 `Qwen3AsrProvider.request_identity()` 直接把 `MODEL_REVISIONS` 写入请求身份。
-
-如果模型目录被手动替换、复制自旧安装，或 identity marker 缺失/错误但权重形状仍合法，运行时仍可能加载这些文件，同时让 `config_digest`、manifest 和 benchmark 报告声称使用了当前固定 revision。[INFERRED] 这可能造成错误 cache 复用和无法审计的结果混合。
-
-建议将它作为独立正确性修复：在 Provider 进入请求身份和模型加载前验证 marker 的 repo/revision。需要明确的是，marker 校验只能证明目录由预期安装流程标记，不能证明安装后每个模型字节未被修改；若要求字节级证明，需要另行权衡大模型摘要成本。
-
-关闭条件：自动选择和显式选择 Provider 都会在形成可复用结果前拒绝 marker 缺失或 revision 不匹配，并有相应测试。
+公共 v3 同时隔离历史结果与私有 plan/chunk，不追认旧结果的模型身份。`tests/test_model_identity.py`、setup、依赖检查、Provider、pipeline 和公共 artifact 测试覆盖安装拒绝、完整 cache 前拒绝、prepared model 复用和版本隔离。
 
 ## KI-002：损坏 workspace result 阻断 chunk 恢复
 
@@ -94,16 +85,12 @@ Warmup 和正式 run 记录 session ID，报告校验成功 run 必须存在同 
 
 ## KI-009：“精确字段 shape”描述与实现不符
 
-**结论：[KNOWN，部分修正 2026-09-05]** 原错误处理文档把所有公共结构笼统称为“精确字段 shape”，但 validator 只在部分节点拒绝未知字段。v2 升级已修正文档措辞，保留现有验证边界：
+**状态：已关闭（2026-09-06）。** 保留独立公共 schema 并升级至 v3；contract 包版本仍为尚未发布的 0.2.0，本次不发布包。所有公共对象递归拒绝未知字段，resolved 配置全部必需；类型定义与 validator 共用精确字段来源，Provider 分支验证结构、类型与必要的一致性。
 
-- alignment item 使用精确键集合；
-- v2 manifest 的 `artifacts` 和 `artifact_sha256` 只允许 `transcript`；
-- transcript segment、正文顶层、manifest 顶层及 audio/request 等其他节点主要验证已知必需字段，未统一拒绝未知字段。
-
-本轮未统一决定所有节点的 additive-field 策略或补齐对应未知字段测试，因此不将本项标为完全关闭。后续应明确哪些节点允许增加字段，并使文档、类型、validator 和测试一致；不要因公共 schema 已升级就视为此问题自然解决。
+新增任意层级字段通过公共 schema 升级；旧 v1/v2 不迁移、不自动删除。alignment policy 仍为 v1。`tests/test_result_contract.py` 覆盖所有对象层级的未知/缺失/错误类型、跨 Provider 配置和旧版本拒绝，并重算相关摘要以隔离验证原因。长期规则见[公共 contract](ARCHITECTURE.md#公共-contract-与发布)。
 
 ## 与数据流重构的关系
 
-数据流重构直接处理 KI-002 的无 manifest 场景；KI-003 已作为文档与报告说明同步问题关闭。后续 benchmark 方法改动关闭了 KI-004～KI-007。公共 v2 bundle 和统一恢复已关闭 KI-002 与 KI-008；KI-001 和 KI-009 的剩余事项仍需独立决策。
+数据流重构直接处理 KI-002 的无 manifest 场景；KI-003 已作为文档与报告说明同步问题关闭。后续 benchmark 方法改动关闭了 KI-004～KI-007。公共 v2 bundle 和统一恢复已关闭 KI-002 与 KI-008；KI-001 和 KI-009 已通过独立安装校验与公共 v3 改动关闭。
 
 后续改动仍应避免把内部实现变化误认为公共合同问题已经解决。例如，删除 benchmark schema 不等于 reference provenance 可以删除；升级公共 schema 也不等于未知字段策略已经统一。

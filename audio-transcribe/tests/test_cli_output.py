@@ -10,6 +10,8 @@ from benchmark import runner as benchmark
 from scripts import transcribe
 from scripts.process_logging import filtered_log_messages
 
+pytestmark = pytest.mark.usefixtures("installed_models")
+
 
 @pytest.mark.parametrize(
     ("logger_name", "message"),

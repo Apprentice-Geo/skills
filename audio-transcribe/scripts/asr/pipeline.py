@@ -6,6 +6,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
+from audio_transcribe_contract import PUBLIC_SCHEMA_VERSION
+
 from scripts.artifacts import write_workspace_result
 from scripts.asr.alignment import (
     ALIGNMENT_POLICY,
@@ -176,6 +178,7 @@ def _run_asr_pipeline(
     paths = workspace_paths(workspace_dir)
     request = {
         **provider.request_identity(),
+        "public_schema_version": PUBLIC_SCHEMA_VERSION,
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }
     plan = load_matching_plan(

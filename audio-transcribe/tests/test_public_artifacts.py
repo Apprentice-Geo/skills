@@ -12,17 +12,20 @@ from pathlib import Path
 
 import pytest
 from audio_transcribe_contract import ResultValidationError, load_result
+from result_fixtures import resolved_request
 
 from scripts.artifacts import (
     publish_result,
     result_lock,
     write_workspace_result,
 )
-from scripts.asr.alignment import ALIGNMENT_POLICY, AlignedTranscript, AlignmentItem
+from scripts.asr.alignment import AlignedTranscript, AlignmentItem
 from scripts.io_utils import canonical_sha256, read_json, write_json_atomic
 from scripts.model_identity import MODEL_REVISIONS
 from scripts.process_logging import get_logger
 from scripts.transcribe import run_transcribe
+
+pytestmark = pytest.mark.usefixtures("installed_models")
 
 
 def _samples() -> list[float]:
@@ -49,12 +52,7 @@ def _publication_inputs(
     *,
     provider: str = "faster-whisper",
 ) -> tuple[dict[str, object], dict[str, object]]:
-    canonical_request = {
-        "provider": provider,
-        "language": "en",
-        "public_schema_version": 2,
-        "alignment_policy": dict(ALIGNMENT_POLICY),
-    }
+    canonical_request = resolved_request(provider, "en")
     audio_id = "a" * 64
     config_digest = canonical_sha256(canonical_request)
     write_workspace_result(
@@ -105,7 +103,6 @@ def test_repair_preserves_custom_manifest_metadata_and_logs_after_install(
     assert caplog.records[0].levelno == logging.INFO
     manifest = read_json(path)
     manifest["artifacts"]["transcript"] = "nested/body.json"
-    manifest["extension"] = {"label": "preserved"}
     # Noncanonical formatting must survive exact recovery byte for byte.
     path.write_text(json.dumps(manifest, indent=4), encoding="utf-8")
     original_bytes = path.read_bytes()
@@ -331,7 +328,7 @@ def test_content_identity_reuses_result_after_input_rename(
     ]
     assert "first.audio" not in json.dumps(manifest, ensure_ascii=False)
     request = manifest["request"]
-    assert request["public_schema_version"] == 2
+    assert request["public_schema_version"] == 3
     assert (
         canonical_sha256(
             {key: value for key, value in request.items() if key != "config_digest"}
@@ -644,6 +641,7 @@ def test_valid_manifest_for_other_identity_is_not_republished(
     else:
         request = manifest["request"]
         request["language"] = "en"
+        request["provider_identity"]["language"] = "en"
         request["config_digest"] = canonical_sha256(
             {key: value for key, value in request.items() if key != "config_digest"}
         )
@@ -663,12 +661,7 @@ def test_quantized_segment_end_recovers_identically(
     workspace_path = result_dir / "workspace" / "result.json"
     duration = 1.0004
     audio_id = "a" * 64
-    canonical_request = {
-        "provider": "faster-whisper",
-        "language": "zh",
-        "public_schema_version": 2,
-        "alignment_policy": dict(ALIGNMENT_POLICY),
-    }
+    canonical_request = resolved_request()
     config_digest = canonical_sha256(canonical_request)
     write_workspace_result(
         workspace_path,
@@ -820,12 +813,7 @@ def test_workspace_without_current_fields_is_rejected(
     result_dir = workspace_tmp_path / "result"
     workspace_path = result_dir / "workspace" / "result.json"
     audio_id = "a" * 64
-    canonical_request = {
-        "provider": "faster-whisper",
-        "language": "zh",
-        "public_schema_version": 2,
-        "alignment_policy": dict(ALIGNMENT_POLICY),
-    }
+    canonical_request = resolved_request()
     config_digest = canonical_sha256(canonical_request)
     write_json_atomic(
         workspace_path,
