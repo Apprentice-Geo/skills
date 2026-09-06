@@ -116,7 +116,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 
 日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只验证元数据和路径，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。
 
-旧公共 schema v1/v2 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v3 结果。固定 alignment policy 的版本继续为 1，与公共 schema v3 是不同层面的版本。
+旧公共 schema v1 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v2 结果。固定 alignment policy 的版本继续为 1，与公共 schema v2 是不同层面的版本。
 
 ## Cache 恢复
 

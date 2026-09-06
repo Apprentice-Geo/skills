@@ -28,7 +28,7 @@ metadata:
 
 | 场景 | 正确行为 | 禁止行为 |
 | --- | --- | --- |
-| 转写完成 | 仅把已完成的 `result_manifest.json` 绝对路径这一公开入口传给 `attach_transcription`；由固定版本的公共 contract 包验证。 | 直接读取上游 artifact、检查 workspace 或日志，或修改任何上游 artifact。 |
+| 转写完成 | 仅把已完成的 `manifest.json` 绝对路径传给 `attach_transcription`；成功后使用本地 normalized transcript。 | 直接读取、修改或长期绑定上游内容。 |
 | 存在源文本 | 仅把它作为证据；只编辑 `normalized_transcript.json` 中每个分段的 `text`。 | 更改分段数量、ID、时间戳、源 metadata 或任何其他字段。 |
 | 命令失败 | 保留上一个成功状态，报告 stderr 错误，并在解决原因后从该状态恢复。 | 跳过阶段、根据残留文件推断状态，或交付尚未发布的字幕。 |
 
@@ -55,7 +55,7 @@ subtitle_job: <absolute-path>
 
 读取任务，并根据 status 继续：
 
-- 对于 `needs_transcription`，读取 `audio.path`，调用已安装的 `audio-transcribe` Skill，并等待其已完成的 `result_manifest.json` 绝对路径。
+- 对于 `needs_transcription`，读取 `audio.path`，调用已安装的 `audio-transcribe` Skill，并等待其已完成的 `manifest.json` 绝对路径。
 - 对于 `editable`，从声明的 normalized transcript 恢复。按需编辑分段 `text`，然后运行 finalize。
 
 ### 2. 关联转写结果
@@ -64,7 +64,7 @@ subtitle_job: <absolute-path>
 uv run --no-dev python -m scripts.attach_transcription "<absolute-job-path>" --transcription-manifest "<absolute-manifest-path>"
 ```
 
-新关联或已经关联的任务都会输出：
+新导入或已经处于 editable 状态的任务都会输出：
 
 ```text
 normalized_transcript: <absolute-path>
@@ -84,4 +84,4 @@ uv run --no-dev python -m scripts.finalize_subtitle "<absolute-job-path>"
 subtitle: <absolute-path>
 ```
 
-任务保持 `editable`。重复运行 finalize 时，如果有效 SRT 未发生变化则安全复用；如果 transcript 已编辑或 SRT 已损坏则重新生成。
+任务保持 `editable`。导入后的任务不再读取上游转写结果；需要采用新的转写结果时重新创建任务。重复运行 finalize 时，如果有效 SRT 未发生变化则安全复用；如果 transcript 已编辑或 SRT 已损坏则重新生成。

@@ -73,13 +73,7 @@ def finalize_subtitle(job_path: Path) -> Path:
     baseline = read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True)
     normalized_path = Path(artifacts["normalized_transcript"])
     normalized = read_json_object(normalized_path, decimal_numbers=True)
-    changed_ids = compare_normalized_correction(
-        baseline,
-        normalized,
-        audio_id=job["audio"]["id"],
-        variant_id=job["transcription"]["variant_id"],
-        manifest_path=Path(job["transcription"]["manifest_path"]),
-    )
+    changed_ids = compare_normalized_correction(baseline, normalized)
     normalized_digest = sha256_file(normalized_path)
     subtitle_path = (job_path.parent / SUBTITLE_FILENAME).resolve()
     recorded_subtitle = artifacts["subtitle"]

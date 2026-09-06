@@ -58,7 +58,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     request = {"config_digest": _canonical_sha256(request), **request}
     duration = 1.0
     transcript = {
-        "schema_version": 3,
+        "schema_version": 2,
         "audio_id": "a" * 64,
         "config_digest": request["config_digest"],
         "provider": provider,
@@ -81,7 +81,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     transcript_path = root / "transcript.json"
     _write_json(transcript_path, transcript)
     manifest = {
-        "schema_version": 3,
+        "schema_version": 2,
         "status": "complete",
         "audio": {
             "id": "a" * 64,
@@ -237,22 +237,22 @@ def test_resolved_request_rejects_mixed_provider_and_boolean_versions(
 
 
 @pytest.mark.parametrize("target", ["manifest", "transcript", "request"])
-def test_v2_is_rejected_even_with_valid_digests(
+def test_v1_is_rejected_even_with_valid_digests(
     workspace_tmp_path: Path, target: str
 ) -> None:
     path = _write_result(workspace_tmp_path / "result")
     if target == "transcript":
         _rewrite_artifact(
-            path, "transcript", lambda value: value.update(schema_version=2)
+            path, "transcript", lambda value: value.update(schema_version=1)
         )
     else:
 
         def mutate(manifest):
             if target == "manifest":
-                manifest["schema_version"] = 2
+                manifest["schema_version"] = 1
             else:
                 request = manifest["request"]
-                request["public_schema_version"] = 2
+                request["public_schema_version"] = 1
                 request["config_digest"] = _canonical_sha256(
                     {
                         key: value
@@ -358,7 +358,7 @@ def test_load_manifest_does_not_certify_body(workspace_tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("field", ["log", "workspace", "raw_timestamps"])
-def test_v3_manifest_rejects_legacy_artifact_references(
+def test_v2_manifest_rejects_legacy_artifact_references(
     workspace_tmp_path: Path, field: str
 ) -> None:
     path = _write_result(workspace_tmp_path / "result")

@@ -49,7 +49,7 @@ def resolved_request(
     return {
         "provider": provider,
         "language": language,
-        "public_schema_version": 3,
+        "public_schema_version": 2,
         "provider_identity": identity,
         "execution_policy": execution,
         "alignment_policy": {

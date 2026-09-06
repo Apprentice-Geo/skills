@@ -83,10 +83,10 @@ Preparation 禁止静默替换已有的 `prompt_ready` 或 `complete` job。如�
 ```powershell
 uv run --no-sync python -m scripts.continue_summary `
   "<absolute-summary-job-path>" `
-  --transcription-manifest "<absolute-result-manifest-path>"
+  --transcription-manifest "<absolute-manifest-path>"
 ```
 
-transcription manifest 必须使用绝对路径。固定版本的 `audio-transcribe-contract` 验证其 complete status、schema、受限 artifact 路径、digest、identity、transcript segment 和 raw timestamp。随后，continue 比较 job `resources.audio` 的 SHA-256 与 `manifest.audio.id`。contract 或 audio-identity 失败时，不得发布 `transcript.md`、prompt 或更新后的 job。
+transcription manifest 必须使用绝对路径。adapter 通过固定版本的公共 contract 读取转写输入，随后 continue 比较 job `resources.audio` 的 SHA-256 与输入音频身份。读取或 audio-identity 失败时，不得发布 `transcript.md`、prompt 或更新后的 job。
 
 continue 失败时：
 
@@ -94,7 +94,7 @@ continue 失败时：
 - 不得编辑、删除或尝试修复外部 transcription 目录；
 - 报告加载或路径安全原因，由用户或 `audio-transcribe` workflow 提供可用结果。
 
-对于已经绑定 transcription 的 job，使用同一 manifest 再次调用 continue 时，会在刷新 prompt 前重新验证外部 manifest、job audio identity 和预期渲染的 Markdown。不同的 manifest 会被拒绝，不得静默替换。只有明确调用 continue 时，才更新已有 ready 或 complete job。
+对于已经导入 transcription 的 job，再次调用 continue 会直接复用本地快照，不读取传入的 manifest。需要采用新的转写结果时重新创建 job。
 
 ## Summary Completion
 

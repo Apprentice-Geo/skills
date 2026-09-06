@@ -328,7 +328,7 @@ def test_content_identity_reuses_result_after_input_rename(
     ]
     assert "first.audio" not in json.dumps(manifest, ensure_ascii=False)
     request = manifest["request"]
-    assert request["public_schema_version"] == 3
+    assert request["public_schema_version"] == 2
     assert (
         canonical_sha256(
             {key: value for key, value in request.items() if key != "config_digest"}

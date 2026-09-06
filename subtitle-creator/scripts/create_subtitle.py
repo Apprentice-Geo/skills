@@ -42,7 +42,6 @@ def create_subtitle_job(audio_argument: str) -> Path:
         "job_id": audio_id,
         "status": "needs_transcription",
         "audio": {"path": str(audio_path), "id": audio_id},
-        "transcription": None,
         "artifacts": None,
         "changed_segment_ids": [],
     }

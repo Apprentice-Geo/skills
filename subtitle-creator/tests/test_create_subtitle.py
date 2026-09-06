@@ -48,11 +48,10 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     assert result.stdout == f"subtitle_job: {job_path}\n"
     assert result.stderr == ""
     assert json.loads(job_path.read_text(encoding="utf-8")) == {
-        "schema_version": 1,
+        "schema_version": 2,
         "job_id": audio_id,
         "status": "needs_transcription",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
-        "transcription": None,
         "artifacts": None,
         "changed_segment_ids": [],
     }

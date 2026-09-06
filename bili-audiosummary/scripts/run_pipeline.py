@@ -22,6 +22,7 @@ from scripts.process_logging import (
 from scripts.runtime_options import FetchOptions, PipelineOptions
 from scripts.summary_job import (
     JOB_FILENAME,
+    SCHEMA_VERSION,
     job_lock,
     load_job,
     publish_job,
@@ -199,7 +200,7 @@ def _job_base(
         Path(path).resolve() for path in fetch_result.get("audio_files") or []
     ]
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "status": "preparing",
         "video": {
             "bvid": str(fetch_result["video_id"]),
@@ -219,7 +220,6 @@ def _job_base(
             "subtitle_skipped": bool(options.skip_subtitles),
         },
         "transcript": None,
-        "transcription_manifest": None,
         "prompt": None,
         "error": None,
     }
@@ -252,7 +252,7 @@ def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
     except ValueError as exc:
         raise ValueError("Video result path escapes the results directory.") from exc
     return result_dir / JOB_FILENAME, {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "status": "preparing",
         "video": {
             "bvid": video_id,
@@ -268,7 +268,6 @@ def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
             "subtitle_skipped": bool(options.skip_subtitles),
         },
         "transcript": None,
-        "transcription_manifest": None,
         "prompt": None,
         "error": None,
     }
@@ -287,7 +286,6 @@ def _failed_job(payload: dict[str, Any], stage: str, exc: Exception) -> dict[str
         **payload,
         "status": "failed",
         "transcript": None,
-        "transcription_manifest": None,
         "prompt": None,
         "error": {
             "stage": stage,
