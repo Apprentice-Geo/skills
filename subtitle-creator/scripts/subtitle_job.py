@@ -15,7 +15,7 @@ NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
 SUBTITLE_FILENAME = "subtitle.srt"
 SKILL_DIR = Path(__file__).resolve().parents[1]
-RESULTS_DIR = Path(os.environ.get("SUBTITLE_CREATOR_RESULTS_DIR", SKILL_DIR / "results"))
+RESULTS_DIR = SKILL_DIR / "results"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 JOB_KEYS = {
     "schema_version",

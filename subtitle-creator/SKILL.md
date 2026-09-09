@@ -20,7 +20,7 @@ metadata:
 1. 创建或恢复任务前，运行只读的 `scripts/check_dependencies.bat`。它会写入带时间戳的 JSON 报告和日志，但禁止安装、下载或修复依赖。
 2. 如果首次检查以非零状态退出，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。如果仍以非零状态退出，停止执行并报告失败的检查；不得重复运行 setup。
 3. 需要转写时，先单独安装并检查 `audio-transcribe` Skill，再调用它；此处的检查不会定位或配置该 Skill。
-4. 使用 `uv run --no-dev python -m ...` 运行三个 workflow 命令。
+4. 使用 `uv run --no-dev python -m ...` 运行 workflow 命令。
 
 此 Skill 不安装 ASR 模型，也不下载音频。
 
@@ -30,6 +30,7 @@ metadata:
 | --- | --- | --- |
 | 转写完成 | 仅把已完成的 `manifest.json` 绝对路径传给 `attach_transcription`；成功后使用本地 normalized transcript。 | 直接读取、修改或长期绑定上游内容。 |
 | 存在源文本 | 仅把它作为证据；只编辑 `normalized_transcript.json` 中每个分段的 `text`。 | 更改分段数量、ID、时间戳、源 metadata 或任何其他字段。 |
+| 采用不同转写 | 显式删除单个 job，再从创建步骤重新执行并导入目标 manifest。 | 手动删除 artifact、清空整个 `results/`，或声称删除 job 会强制上游重新推理。 |
 | 命令失败 | 保留上一个成功状态，报告 stderr 错误，并在解决原因后从该状态恢复。 | 跳过阶段、根据残留文件推断状态，或交付尚未发布的字幕。 |
 
 无法确定如何校正时，保持转写文本不变。
@@ -84,4 +85,18 @@ uv run --no-dev python -m scripts.finalize_subtitle "<absolute-job-path>"
 subtitle: <absolute-path>
 ```
 
-任务保持 `editable`。导入后的任务不再读取上游转写结果；需要采用新的转写结果时重新创建任务。重复运行 finalize 时，如果有效 SRT 未发生变化则安全复用；如果 transcript 已编辑或 SRT 已损坏则重新生成。
+任务保持 `editable`。导入后的任务不再读取上游转写结果。重复运行 finalize 时，如果有效 SRT 未发生变化则安全复用；如果 transcript 已编辑或 SRT 已损坏则重新生成。
+
+### 4. 删除并重建任务
+
+仅当需要采用不同或重新发布的 transcription manifest，或者 job、baseline 等非派生产物无法恢复时，才删除单个任务。删除会同时移除本地文本校正、normalized transcript 和已发布字幕；需要保留时先要求用户自行备份。
+
+确认没有 `create_subtitle`、`attach_transcription`、`finalize_subtitle` 或其他删除命令正在操作同一任务，然后运行：
+
+```powershell
+uv run --no-dev python -m scripts.remove_subtitle_job "<absolute-job-path>"
+```
+
+命令只接受默认 `results/<audio-sha256>/subtitle_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从创建步骤重新执行，并把目标 manifest 传给 `attach_transcription`。`audio-transcribe` 可能复用相同请求的有效结果；删除此任务不保证上游重新执行模型推理。
+
+正常的 transcript 文本修改或 SRT 损坏不使用删除命令，直接运行 finalize 恢复。

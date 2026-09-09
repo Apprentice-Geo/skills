@@ -94,7 +94,13 @@ continue 失败时：
 - 不得编辑、删除或尝试修复外部 transcription 目录；
 - 报告加载或路径安全原因，由用户或 `audio-transcribe` workflow 提供可用结果。
 
-对于已经导入 transcription 的 job，再次调用 continue 会直接复用本地快照，不读取传入的 manifest。需要采用新的转写结果时重新创建 job。
+对于已经导入 transcription 的 job，再次调用 continue 会直接复用本地快照，不读取传入的 manifest。需要采用不同或重新发布的 transcription manifest 时，先确认没有命令正在操作同一 job，再运行：
+
+```powershell
+uv run --no-sync python -m scripts.remove_summary_job "<absolute-summary-job-path>"
+```
+
+此命令删除整个 job 目录，包括下载资源、transcript、prompt 和 summary；需要保留时先要求用户自行备份。随后重新运行 preparation 和 continue。删除 summary job 不会删除或强制重新生成 `audio-transcribe` 结果。不得手动删除部分 artifact 或清空整个 `results/`。
 
 ## Summary Completion
 

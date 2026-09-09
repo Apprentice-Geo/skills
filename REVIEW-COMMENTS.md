@@ -6,12 +6,12 @@
 
 ## 1. “重新创建任务”缺少可执行路径
 
-- [ ] 待处理
+- [x] 已处理
 - 涉及：[字幕工作流](subtitle-creator/SKILL.md)、[总结架构](bili-audiosummary/references/ARCHITECTURE.md)、[总结错误处理](bili-audiosummary/references/ERROR-HANDLING.md)。
 - 问题：文档要求采用新转写结果时重新创建任务，但重复调用现有创建入口不会自然产生独立任务。
 - 依据：[create_subtitle.py](subtitle-creator/scripts/create_subtitle.py) 按音频内容哈希复用 job，同一音频换路径也会复用；[run_pipeline.py](bili-audiosummary/scripts/run_pipeline.py) 使用固定视频结果目录，已有 `prompt_ready` 或 `complete` 时拒绝覆盖。
 - 影响：Agent 可能重复执行无效命令，或自行推导出删除结果目录、修改 job 等未规定操作。
-- 建议：明确重复创建不会替换已导入结果。字幕已有 `SUBTITLE_CREATOR_RESULTS_DIR`，可说明如何使用独立结果根目录，以及所有后续命令必须保持该配置。bili 当前没有对应的公开新建入口，应如实说明限制；若需要新增入口，应作为独立实现改动处理。不要只保留一句“重新创建”。
+- 处理：两个 Skill 均增加受限的单 job 删除命令，删除后可从各自创建或准备步骤重新执行。`subtitle-creator` 固定使用 Skill 内的默认结果目录，不再支持 `SUBTITLE_CREATOR_RESULTS_DIR`。删除命令不引入并发锁；文档要求调用前确认没有其他命令正在操作同一 job，并区分 consumer job 重建与 `audio-transcribe` 上游推理复用。
 
 ## 2. 字幕恢复入口与实际恢复能力不一致
 

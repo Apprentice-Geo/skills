@@ -1,25 +1,31 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import subprocess
-import sys
 from collections.abc import Iterator
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import pytest
+
+from scripts import create_subtitle, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
 
 
 def run_create(audio_path: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "scripts.create_subtitle", str(audio_path)],
-        cwd=SKILL_DIR,
-        capture_output=True,
-        check=False,
-        text=True,
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        returncode = create_subtitle.main([str(audio_path)])
+    return subprocess.CompletedProcess(
+        args=[str(audio_path)],
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
     )
 
 
@@ -29,11 +35,9 @@ def audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Pat
     content = b"test audio content"
     path.write_bytes(content)
     audio_id = hashlib.sha256(content).hexdigest()
-    monkeypatch.setenv("SUBTITLE_CREATOR_RESULTS_DIR", str(tmp_path / "results"))
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(
-        __import__("scripts.subtitle_job", fromlist=["RESULTS_DIR"]), "RESULTS_DIR", results_dir
-    )
+    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(create_subtitle, "RESULTS_DIR", results_dir)
     monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     yield path, audio_id
 
@@ -112,8 +116,6 @@ def test_create_rejects_non_file_audio(tmp_path: Path, kind: str) -> None:
 def test_create_keeps_job_unpublished_when_atomic_replace_fails(
     audio: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from scripts import subtitle_job
-
     audio_path, audio_id = audio
 
     def fail_replace(_source: Path, _target: Path) -> None:
@@ -121,9 +123,7 @@ def test_create_keeps_job_unpublished_when_atomic_replace_fails(
 
     monkeypatch.setattr(subtitle_job.os, "replace", fail_replace)
 
-    from scripts.create_subtitle import main
-
-    assert main([str(audio_path)]) == 1
+    assert create_subtitle.main([str(audio_path)]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err

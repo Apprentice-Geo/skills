@@ -65,3 +65,17 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 仅当 source 和 summary 验证成功时，才把 job 改为 `complete`。
 7. 可以把有效的 `complete` job 作为已完成结果返回。不得覆盖它。对于 `failed`、无效或可恢复的 job，遵循 [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)；job 仍为 `needs_transcription` 时禁止生成 summary。
+
+## 删除并重建 job
+
+仅当需要采用不同或重新发布的 transcription manifest，或者明确需要从头准备同一 Bilibili 视频时，才删除单个 job。删除会同时移除下载资源、本地 transcript、prompt 和 summary；需要保留时先要求用户自行备份。
+
+确认没有 preparation、continue、completion 或其他删除命令正在操作同一 job，然后运行：
+
+```powershell
+uv run --no-sync python -m scripts.remove_summary_job "<absolute-summary-job-path>"
+```
+
+命令只接受默认 `results/<BVID[_pN]>/summary_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从准备步骤重新执行。删除 summary job 不删除 `audio-transcribe` 的结果，也不保证上游重新执行模型推理。
+
+summary 文件或其他可恢复派生产物需要修复时，不删除 job，继续使用对应恢复或完成命令。

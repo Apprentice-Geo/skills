@@ -25,6 +25,7 @@ Bilibili URL
 | `scripts/subtitle_transcript.py` | 原生 SRT 解析和 transcript 转换 |
 | `scripts/transcript_output.py` | 通用 segment 验证、合并和 Markdown 渲染 |
 | `scripts/complete_summary.py` 和 `validate_summary.py` | 最终 summary 和 source 验证 |
+| `scripts/remove_summary_job.py` | 受限删除单个 job 目录，以便显式重新准备 |
 | `scripts/summary_job.py` | schema、状态不变量、受限路径、锁和原子 job 写入 |
 | `assets/` | summary 指令和模板 |
 
@@ -44,7 +45,9 @@ preparation 选择以下分支之一：
 - 可用的指定语言字幕生成原生 transcript、Markdown、prompt 和 `prompt_ready`。
 - 否则 job 变为 `needs_transcription`；Agent 运行 `audio-transcribe`，并把完整 manifest 的绝对路径传给 `continue_summary`。
 
-`continue_summary` 通过 adapter 读取外部转写并核对 job 音频的 SHA-256，然后原子发布本地 transcript、prompt 和状态。已进入 `prompt_ready` 或 `complete` 的外部转写 job 只复用本地快照，不再读取传入的 manifest；需要使用新转写结果时重新创建 job。
+`continue_summary` 通过 adapter 读取外部转写并核对 job 音频的 SHA-256，然后原子发布本地 transcript、prompt 和状态。已进入 `prompt_ready` 或 `complete` 的外部转写 job 只复用本地快照，不再读取传入的 manifest；需要使用新转写结果时，先通过公开删除入口移除单个 job，再重新运行 preparation 和 continue。
+
+`remove_summary_job` 不读取或修复 job 内容。它依据默认结果根目录、受支持的视频目录名和固定 job 文件名限制删除目标，然后删除整个 job 目录。删除入口不与其他 job 命令并发协调；调用方必须先确认同一 job 没有正在运行的 preparation、continue、completion 或删除操作。
 
 `complete_summary` 验证适用的 source 和最终 summary，然后原子发布 `complete`。prompt 发布尚未成功时，continue 失败会保留 `needs_transcription`；summary 失败会保留 `prompt_ready`。
 

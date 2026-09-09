@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import subprocess
-import sys
 from collections.abc import Iterator
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from scripts import finalize_subtitle, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -20,12 +23,15 @@ def json_bytes(value: dict[str, Any]) -> bytes:
 
 
 def run_finalize(job_path: Path | str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "scripts.finalize_subtitle", str(job_path)],
-        cwd=SKILL_DIR,
-        capture_output=True,
-        check=False,
-        text=True,
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        returncode = finalize_subtitle.main([str(job_path)])
+    return subprocess.CompletedProcess(
+        args=[str(job_path)],
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
     )
 
 
@@ -38,11 +44,8 @@ def correction_job(
     audio_content = b"finalize audio"
     audio_path.write_bytes(audio_content)
     audio_id = hashlib.sha256(audio_content).hexdigest()
-    monkeypatch.setenv("SUBTITLE_CREATOR_RESULTS_DIR", str(tmp_path / "results"))
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(
-        __import__("scripts.subtitle_job", fromlist=["RESULTS_DIR"]), "RESULTS_DIR", results_dir
-    )
+    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", results_dir)
     monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)
@@ -307,8 +310,6 @@ def test_finalize_publishes_job_last(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts import finalize_subtitle
-
     job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
     original_write = finalize_subtitle.atomic_write_json
 
