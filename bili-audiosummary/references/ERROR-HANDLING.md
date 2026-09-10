@@ -38,7 +38,7 @@
 ## HTTP 412 与 Cookie
 
 - 如果 Bilibili 返回 `HTTP 412`，停止当前运行。不得查询其他来源或生成 summary。
-- 要求用户提供 Netscape 格式的 Cookie 文件。经过测试的 Chrome 和 Edge 导出流程见 [README.md](../README.md) 的 Cookie 章节。
+- 要求用户提供 Netscape 格式的 Cookie 文件。Chrome 和 Edge 的导出方式见 [README.md](../README.md#cookies-导出)。
 - pipeline 自动检测 Skill 根目录中的 `cookies.txt`、`www.bilibili.com_cookies.txt` 和 `bilibili_cookies.txt`。
 - 使用其他文件名或位置时：
 
@@ -50,7 +50,7 @@ uv run --no-sync python -m scripts.run_pipeline `
 ```
 
 - 如果 Cookie 被拒绝，确认其来自已登录的 Bilibili session、使用 Netscape 格式且尚未过期。
-- 禁止把 Cookie 值复制到 `summary_job.json`、summary 或错误报告中。
+- Cookie 文件只传给 yt-dlp，用于请求 Bilibili 视频元数据、字幕和音频。禁止把 Cookie 值复制到 `summary_job.json`、summary、日志或错误报告中。
 
 ## 字幕选择
 
@@ -131,7 +131,7 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 出现以下情况时，停止执行，不得生成或完成 summary：
 
-- 请求需要画面分析；
+- 事前已知请求所需的关键信息主要依赖画面，或读取 transcript 后确认其整体不足以支持请求；
 - 输入不是受支持的 Bilibili URL；
 - Bilibili 返回 `HTTP 412`，且没有有效 Cookie；
 - 既没有可用的原生字幕，也没有可用音频；
