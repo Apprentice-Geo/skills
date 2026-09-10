@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import create_subtitle, subtitle_job
+from scripts import create_subtitle, finalize_subtitle, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -81,6 +81,58 @@ def test_create_reuses_job_and_rebinds_same_content_to_new_path(
     assert json.loads(job_path.read_text(encoding="utf-8"))["audio"]["path"] == str(
         moved_path.resolve()
     )
+
+
+@pytest.mark.parametrize("stale_artifact", ["normalized_transcript", "subtitle"])
+def test_create_recovers_existing_editable_job_from_audio(
+    audio: tuple[Path, str], stale_artifact: str
+) -> None:
+    audio_path, audio_id = audio
+    job_dir = RESULTS_DIR / audio_id
+    job_dir.mkdir(parents=True)
+    baseline = {
+        "schema_version": 2,
+        "source": "audio_transcribe",
+        "provider": "faster-whisper",
+        "language": "zh",
+        "duration": 1,
+        "segments": [{"id": 0, "start": 0, "end": 1, "text": "原始文本"}],
+    }
+    baseline_path = (job_dir / "normalized_transcript.before_correction.json").resolve()
+    normalized_path = (job_dir / "normalized_transcript.json").resolve()
+    subtitle_path = (job_dir / "subtitle.srt").resolve()
+    baseline_path.write_text(json.dumps(baseline, ensure_ascii=False), encoding="utf-8")
+    normalized_path.write_text(json.dumps(baseline, ensure_ascii=False), encoding="utf-8")
+    subtitle_path.write_bytes(subtitle_job.expected_srt_bytes(baseline))
+    job_path = (job_dir / "subtitle_job.json").resolve()
+    job = {
+        "schema_version": 2,
+        "job_id": audio_id,
+        "status": "editable",
+        "audio": {"path": str(audio_path.resolve()), "id": audio_id},
+        "artifacts": {
+            "normalized_transcript": str(normalized_path),
+            "before_correction": str(baseline_path),
+            "before_correction_sha256": subtitle_job.sha256_file(baseline_path),
+            "subtitle": str(subtitle_path),
+        },
+        "changed_segment_ids": [],
+    }
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    if stale_artifact == "normalized_transcript":
+        corrected = {**baseline, "segments": [{**baseline["segments"][0], "text": "修正文本"}]}
+        normalized_path.write_text(json.dumps(corrected, ensure_ascii=False), encoding="utf-8")
+    else:
+        subtitle_path.write_bytes(b"damaged")
+
+    result = run_create(audio_path)
+
+    assert result.returncode == 0
+    assert result.stdout == f"subtitle_job: {job_path}\n"
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+    assert finalize_subtitle.finalize_subtitle(job_path) == subtitle_path
+    normalized = subtitle_job.read_json_object(normalized_path, decimal_numbers=True)
+    assert subtitle_path.read_bytes() == subtitle_job.expected_srt_bytes(normalized)
 
 
 def test_create_rejects_invalid_existing_job_without_overwriting(

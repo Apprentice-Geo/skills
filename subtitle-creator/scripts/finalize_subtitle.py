@@ -14,7 +14,6 @@ from .subtitle_job import (
     compare_normalized_correction,
     expected_srt_bytes,
     read_json_object,
-    sha256_file,
     validate_job,
 )
 
@@ -74,24 +73,21 @@ def finalize_subtitle(job_path: Path) -> Path:
     normalized_path = Path(artifacts["normalized_transcript"])
     normalized = read_json_object(normalized_path, decimal_numbers=True)
     changed_ids = compare_normalized_correction(baseline, normalized)
-    normalized_digest = sha256_file(normalized_path)
     subtitle_path = (job_path.parent / SUBTITLE_FILENAME).resolve()
     recorded_subtitle = artifacts["subtitle"]
+    expected_subtitle = expected_srt_bytes(normalized)
     if (
-        artifacts["normalized_transcript_sha256"] == normalized_digest
-        and recorded_subtitle == str(subtitle_path)
+        recorded_subtitle == str(subtitle_path)
         and subtitle_path.is_file()
-        and artifacts["subtitle_sha256"] == sha256_file(subtitle_path)
+        and subtitle_path.read_bytes() == expected_subtitle
         and job["changed_segment_ids"] == changed_ids
     ):
         return subtitle_path
 
-    _atomic_write(subtitle_path, expected_srt_bytes(normalized))
+    _atomic_write(subtitle_path, expected_subtitle)
 
     job["changed_segment_ids"] = changed_ids
-    artifacts["normalized_transcript_sha256"] = normalized_digest
     artifacts["subtitle"] = str(subtitle_path)
-    artifacts["subtitle_sha256"] = sha256_file(subtitle_path)
     validate_job(job_path, job)
     atomic_write_json(job_path, job)
     return subtitle_path

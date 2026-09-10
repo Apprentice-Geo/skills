@@ -15,12 +15,13 @@
 
 ## 2. 字幕恢复入口与实际恢复能力不一致
 
-- [ ] 待处理
+- [x] 已处理
 - 涉及：[字幕工作流](subtitle-creator/SKILL.md)。
 - 问题：工作流统一从 create 开始，但已发布字幕经文本编辑或 SRT 损坏后，create 的严格校验可能失败。
 - 依据：[create_subtitle.py](subtitle-creator/scripts/create_subtitle.py) 使用严格的 `validate_job`；[finalize_subtitle.py](subtitle-creator/scripts/finalize_subtitle.py) 使用 `allow_stale_derived=True`，允许派生产物过期并重新生成。
 - 影响：用户请求恢复时，Agent 可能在本可通过 finalize 恢复的任务上停止。
 - 建议：按输入分流。只有音频时 create；已有 job 时读取状态；`editable` 的合法文本修改或 SRT 损坏直接 finalize。明确这一恢复分支不适用于 baseline 损坏、时间戳被修改等非法输入。
+- 处理：保留统一音频入口，不要求用户提供 job 路径。`create_subtitle` 按音频内容定位 job，对已有任务保留结构、baseline、normalized transcript 和时间轴校验，但允许派生 SRT 与 `changed_segment_ids` 过期；Agent 读取返回 job 的 `status`，对 `needs_transcription` 继续转写与关联，对 `editable` 直接 finalize。移除 editable normalized transcript 和派生 SRT 的 SHA-256 字段，只保留不可编辑 baseline 的摘要；finalize 直接比较当前 normalized transcript 应生成的 SRT，并重算 `changed_segment_ids`。恢复分支仍拒绝 baseline 损坏、normalized transcript 缺失以及 metadata、分段标识或时间戳修改。
 
 ## 3. 总结校验能力描述超过实际实现
 

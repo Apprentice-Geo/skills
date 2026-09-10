@@ -57,7 +57,9 @@ metadata:
 
 退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入错误，并保留上一个成功状态。
 
-### 1. 创建或复用任务
+### 1. 从音频创建或恢复任务
+
+无论是新任务还是恢复已有任务，都从音频入口开始；不要要求用户提供 job 路径。命令按音频内容定位已有 job，并允许合法文本编辑或 SRT 损坏造成的派生产物不一致，以便后续根据 `status` 恢复。baseline 损坏、normalized transcript 缺失、时间戳被修改等非法输入仍会使命令失败。
 
 ```powershell
 uv run --no-dev python -m scripts.create_subtitle "<audio-path>"
@@ -69,10 +71,10 @@ uv run --no-dev python -m scripts.create_subtitle "<audio-path>"
 subtitle_job: <absolute-path>
 ```
 
-读取任务，并根据 status 继续：
+读取命令返回的任务，并根据 `status` 继续：
 
 - 对于 `needs_transcription`，读取 `audio.path`，调用已安装的 `audio-transcribe` Skill，并等待其已完成的 `manifest.json` 绝对路径。
-- 对于 `editable`，从声明的 normalized transcript 恢复。按需编辑分段 `text`，然后运行 finalize。
+- 对于 `editable`，不得再次关联 transcription。读取声明的 normalized transcript，按需编辑分段 `text`，然后直接运行 finalize；该步骤会复用有效 SRT，或从合法文本修改、SRT 损坏及 SRT 缺失中恢复。
 
 ### 2. 关联转写结果
 
@@ -80,7 +82,7 @@ subtitle_job: <absolute-path>
 uv run --no-dev python -m scripts.attach_transcription "<absolute-job-path>" --transcription-manifest "<absolute-manifest-path>"
 ```
 
-新导入或已经处于 editable 状态的任务都会输出：
+成功导入后输出：
 
 ```text
 normalized_transcript: <absolute-path>

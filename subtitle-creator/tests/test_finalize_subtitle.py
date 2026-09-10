@@ -81,11 +81,9 @@ def correction_job(
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
         "artifacts": {
             "normalized_transcript": str(normalized_path.resolve()),
-            "normalized_transcript_sha256": None,
             "before_correction": str(baseline_path.resolve()),
             "before_correction_sha256": hashlib.sha256(baseline_path.read_bytes()).hexdigest(),
             "subtitle": None,
-            "subtitle_sha256": None,
         },
         "changed_segment_ids": [],
     }
@@ -124,18 +122,10 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
     assert job["status"] == "editable"
     assert job["changed_segment_ids"] == [0, 1]
     assert (
-        job["artifacts"]["normalized_transcript_sha256"]
-        == hashlib.sha256(normalized_path.read_bytes()).hexdigest()
-    )
-    assert (
         job["artifacts"]["before_correction_sha256"]
         == hashlib.sha256(baseline_path.read_bytes()).hexdigest()
     )
     assert job["artifacts"]["subtitle"] == str(subtitle_path.resolve())
-    assert (
-        job["artifacts"]["subtitle_sha256"]
-        == hashlib.sha256(subtitle_path.read_bytes()).hexdigest()
-    )
 
 
 def test_finalize_reuses_unchanged_valid_srt_without_audio_or_rewriting(
@@ -162,8 +152,7 @@ def test_finalize_rebuilds_after_editing_finalized_transcript(
 ) -> None:
     job_path, normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
     assert run_finalize(job_path.resolve()).returncode == 0
-    first_job = json.loads(job_path.read_text(encoding="utf-8"))
-    first_digest = first_job["artifacts"]["normalized_transcript_sha256"]
+    first_subtitle = (job_path.parent / "subtitle.srt").read_bytes()
 
     normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
     normalized["segments"][0]["text"] = "final correction"
@@ -176,7 +165,7 @@ def test_finalize_rebuilds_after_editing_finalized_transcript(
     job = json.loads(job_path.read_text(encoding="utf-8"))
     assert job["status"] == "editable"
     assert job["changed_segment_ids"] == [0]
-    assert job["artifacts"]["normalized_transcript_sha256"] != first_digest
+    assert (job_path.parent / "subtitle.srt").read_bytes() != first_subtitle
 
 
 @pytest.mark.parametrize(
@@ -300,10 +289,6 @@ def test_finalize_rebuilds_damaged_srt(
     assert subtitle_path.read_bytes() != b"tampered"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     assert job["status"] == "editable"
-    assert (
-        job["artifacts"]["subtitle_sha256"]
-        == hashlib.sha256(subtitle_path.read_bytes()).hexdigest()
-    )
 
 
 def test_finalize_publishes_job_last(

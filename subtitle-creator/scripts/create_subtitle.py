@@ -31,7 +31,10 @@ def create_subtitle_job(audio_argument: str) -> Path:
     job_path = (RESULTS_DIR / audio_id / JOB_FILENAME).resolve()
     if job_path.exists():
         job = read_json_object(job_path)
-        validate_job(job_path, job)
+        # Existing editable jobs may contain a legitimately edited transcript or a
+        # damaged derived subtitle. Finalize validates the source artifacts and
+        # rebuilds those derived values after the caller dispatches on job status.
+        validate_job(job_path, job, allow_stale_derived=True)
         if job["audio"]["path"] != str(audio_path):
             job["audio"]["path"] = str(audio_path)
             atomic_write_json(job_path, job)

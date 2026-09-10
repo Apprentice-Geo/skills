@@ -263,11 +263,9 @@ def validate_job(job_path: Path, job: dict[str, Any], *, allow_stale_derived: bo
         raise SubtitleJobError(f"{status} artifacts must be an object")
     if set(artifacts) != {
         "normalized_transcript",
-        "normalized_transcript_sha256",
         "before_correction",
         "before_correction_sha256",
         "subtitle",
-        "subtitle_sha256",
     }:
         raise SubtitleJobError(f"{status} artifacts have invalid fields")
     job_dir = job_path.parent
@@ -288,28 +286,14 @@ def validate_job(job_path: Path, job: dict[str, Any], *, allow_stale_derived: bo
     normalized = read_json_object(normalized_path, decimal_numbers=True)
     compare_normalized_correction(baseline, normalized)
     normalized_srt_segments(normalized)
-    normalized_digest = sha256_file(normalized_path)
-    declared_normalized_digest = artifacts.get("normalized_transcript_sha256")
-    derived_values = (
-        declared_normalized_digest,
-        artifacts.get("subtitle"),
-        artifacts.get("subtitle_sha256"),
-    )
-    if all(value is None for value in derived_values):
+    recorded_subtitle = artifacts.get("subtitle")
+    if recorded_subtitle is None:
         if changed_ids:
             raise SubtitleJobError("unfinalized editable job must not have changed segments")
         return
-    if any(value is None for value in derived_values):
-        raise SubtitleJobError("editable derived artifact fields must all be set or null")
-    require_sha256(declared_normalized_digest, "artifacts.normalized_transcript_sha256")
-    if declared_normalized_digest != normalized_digest and not allow_stale_derived:
-        raise SubtitleJobError("normalized transcript artifact digest mismatch")
-    subtitle_path = require_job_artifact_path(artifacts["subtitle"], "artifacts.subtitle", job_dir)
-    subtitle_digest = require_sha256(artifacts["subtitle_sha256"], "artifacts.subtitle_sha256")
-    if (
-        not subtitle_path.is_file() or sha256_file(subtitle_path) != subtitle_digest
-    ) and not allow_stale_derived:
-        raise SubtitleJobError("subtitle artifact digest mismatch")
+    subtitle_path = require_job_artifact_path(recorded_subtitle, "artifacts.subtitle", job_dir)
+    if not subtitle_path.is_file() and not allow_stale_derived:
+        raise SubtitleJobError("subtitle artifact is missing")
     if (
         subtitle_path.is_file()
         and subtitle_path.read_bytes() != expected_srt_bytes(normalized)

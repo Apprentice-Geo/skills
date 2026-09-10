@@ -86,11 +86,9 @@ def attach_transcription(job_path: Path, manifest_path: Path) -> Path:
     job["status"] = "editable"
     job["artifacts"] = {
         "normalized_transcript": str(normalized_path),
-        "normalized_transcript_sha256": None,
         "before_correction": str(baseline_path),
         "before_correction_sha256": sha256_file(baseline_path),
         "subtitle": None,
-        "subtitle_sha256": None,
     }
     validate_job(job_path, job)
     atomic_write_json(job_path, job)
