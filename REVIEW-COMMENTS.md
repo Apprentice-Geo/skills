@@ -24,21 +24,23 @@
 
 ## 3. 总结校验能力描述超过实际实现
 
-- [ ] 待处理
+- [x] 已处理
 - 涉及：[Summary Completion 错误处理](bili-audiosummary/references/ERROR-HANDLING.md)、[总结工作流](bili-audiosummary/SKILL.md)、[总结指令](bili-audiosummary/assets/summary_instructions.md)。
 - 问题：文档称“必需结构或语言验证失败”会阻止完成，但校验器没有必需章节检查，语言比例只产生 warning；空文件也没有被显式拒绝。
 - 依据：[validate_summary.py](bili-audiosummary/scripts/validate_summary.py) 和 [complete_summary.py](bili-audiosummary/scripts/complete_summary.py)。
 - 影响：Agent 可能把退出码成功或 `complete` 状态误认为总结质量已经得到完整检查。
 - 建议：准确区分脚本校验与 Agent 内容检查。在总结指令中要求完成前确认必需章节已填写、重要内容有 transcript 支持、时间戳对应相关内容；完成后读取 warning 并判断是否需要修订。章节要求继续由模板单源维护，不复制章节清单。若需要代码强制检查，应另列实现改动，不在文档中宣称已经具备。
+- 处理：不增加章节存在性检查。文档改为准确列出 completion 的硬性校验，并明确必需 section、transcript 依据和时间戳相关性由 Agent 在完成前检查。总结语言比例不足的 warning 仅输出到当前终端，不写入 pipeline 日志或 `summary_job.json`，且不会阻止 job 进入 `complete`；Agent 读取后自行判断是否修订。
 
 ## 4. 总结输出语言参数未进入使用文档
 
-- [ ] 待处理
+- [x] 已处理
 - 涉及：[总结准备命令](bili-audiosummary/SKILL.md)。
 - 问题：文档只介绍 `--language`，未介绍已实现的 `--summary-language`。
 - 依据：[run_pipeline.py](bili-audiosummary/scripts/run_pipeline.py) 支持独立选择总结语言；省略时根据 transcript 语言选择模板，不支持的模板语言回退英文。
 - 影响：Agent 可能把字幕选择语言当作总结语言，或遗漏用户明确指定的输出语言。
 - 建议：区分字幕选择语言、总结输出语言与 ASR 语言。用户指定总结语言时传入 `--summary-language`，补一个“英文字幕、中文总结”的命令示例，并交代省略参数的行为。
+- 处理：准备步骤增加可选的 `--summary-language <zh|en>`，区分 Bilibili 字幕选择、总结输出与 ASR language，并补充英文字幕生成中文总结的示例。省略该参数时按最终采用的 transcript language 选择模板，没有对应模板时回退到英文模板。
 
 ## 5. 字幕校正缺少内容判断准则
 

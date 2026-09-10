@@ -35,10 +35,23 @@ metadata:
 2. 从此 Skill 目录运行准备命令：
 
 ```powershell
-uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language <zh|en>
+uv run --no-sync python -m scripts.run_pipeline `
+  "<bilibili-url>" `
+  --language <zh|en>
 ```
 
-仅当用户明确要求跳过 Bilibili 原生字幕时，才使用 `--skip-subtitles`。language 选项用于选择 Bilibili 字幕组；它不是 ASR language 或模型选项。
+`--language` 只选择 Bilibili 字幕组，`--summary-language` 选择最终总结语言；两者都不是 ASR language 或模型选项。用户指定总结语言时必须传入 `--summary-language`。省略时根据最终采用的 transcript language 选择总结模板；没有对应模板时回退到英文模板。
+
+例如，选择英文字幕并生成中文总结：
+
+```powershell
+uv run --no-sync python -m scripts.run_pipeline `
+  "<bilibili-url>" `
+  --language en `
+  --summary-language zh
+```
+
+仅当用户明确要求跳过 Bilibili 原生字幕时，才使用 `--skip-subtitles`。
 
 3. 读取输出的 `Summary Job` 绝对路径。验证 `summary_job.json` 具有 `schema_version: 2`，然后检查 `status`。
 4. 如果 status 为 `needs_transcription`：
@@ -65,7 +78,7 @@ uv run --no-sync python -m scripts.continue_summary `
 uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>"
 ```
 
-仅当 source 和 summary 验证成功时，才把 job 改为 `complete`。
+运行前，按总结指令检查必需 section、transcript 依据和时间戳相关性。完成命令校验适用的 source、summary 文件及未替换的模板内容；这些硬性校验通过后把 job 改为 `complete`。命令可能在终端输出总结语言 warning，但 warning 不阻止完成；读取 warning，并判断是否需要修订总结。脚本不替代前述内容检查。
 7. 可以把有效的 `complete` job 作为已完成结果返回。不得覆盖它。对于 `failed`、无效或可恢复的 job，遵循 [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)；job 仍为 `needs_transcription` 时禁止生成 summary。
 
 ## 删除并重建 job

@@ -114,15 +114,17 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 - summary 文件缺失或不是有效 UTF-8；
 - 仍有 template placeholder 或 prompt 注释；
-- 必需结构或语言验证失败。
+- 适用的 transcript source 无效。
 
-适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。有效 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
+summary 语言比例不足只产生 warning，命令仍以成功状态退出并把 job 改为 `complete`。warning 仅输出到当前终端，不写入 pipeline 日志或 `summary_job.json`。读取 warning，并根据总结指令判断是否需要修订。
+
+脚本不检查必需 section 是否存在，也不判断内容是否有 transcript 支持或时间戳是否对应相关内容；这些项目由 Agent 在运行 completion 前检查。适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。通过上述脚本校验的 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
 
 ## 日志
 
 - Setup 日志写入 `.cache/logs/`。
 - fetch 和 pipeline 日志从该目录开始，确定结果目录后移动到 `results/<BVID>/`。
-- continue 和 complete 命令输出简洁的验证或状态结果。preparation 失败使用 pipeline 日志，后续阶段失败使用命令输出。
+- continue 和 complete 命令在终端输出简洁的验证、warning 或状态结果，不另写日志。preparation 失败使用 pipeline 日志，后续阶段失败使用命令输出。
 - 日志不得记录 transcript 文本、Cookie 内容或外部模型对象。
 - `summary_job.error` 仅存储 `stage`、异常类型和 message；完整 traceback 写入日志。
 - 报告失败时，应包含精确命令、简洁错误、job 路径和完整日志路径。不得包含 secret。
