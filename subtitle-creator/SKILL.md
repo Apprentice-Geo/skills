@@ -24,6 +24,8 @@ metadata:
 
 此 Skill 不安装 ASR 模型，也不下载音频。
 
+setup 在 `uv python install 3.12` 成功后启动 Python 日志会话，随后执行依赖同步和 contract import 验证。Python 阶段的终端输出只是完整日志的筛选结果；`uv python install 3.12` 的原始输出及启动前检查不属于该日志。
+
 ## 核心规则
 
 | 场景 | 正确行为 | 禁止行为 |
@@ -55,7 +57,7 @@ metadata:
 
 从 `subtitle-creator` 目录运行以下三个 `subtitle-creator` 脚本命令。调用 `audio-transcribe` 时，遵循该 Skill 自身对工作目录和执行方式的要求。
 
-退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入错误，并保留上一个成功状态。
+退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入单行错误及精确日志路径，并保留上一个成功状态。详细 traceback 只写入日志。日志位置和终端输出契约见 [错误处理](references/ERROR-HANDLING.md)。
 
 ### 1. 从音频创建或恢复任务
 

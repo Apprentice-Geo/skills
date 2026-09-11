@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import NoReturn
 
 from .subtitle_job import JOB_FILENAME, RESULTS_DIR, SubtitleJobError
+from .process_logging import (
+    LoggingSession,
+    create_workflow_log_path,
+    get_logger,
+    result,
+)
 
 JOB_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
 
@@ -52,13 +58,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Remove one subtitle job and all of its local artifacts.")
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
     try:
-        job_path, removed = remove_subtitle_job(Path(parser.parse_args(argv).subtitle_job_path))
-    except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+        arguments = parser.parse_args(argv)
+    except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    label = "removed_subtitle_job" if removed else "subtitle_job_absent"
-    print(f"{label}: {job_path}")
-    return 0
+    session = LoggingSession(create_workflow_log_path("remove-subtitle-job")).start()
+    try:
+        try:
+            job_path, removed = remove_subtitle_job(Path(arguments.subtitle_job_path))
+            label = "removed_subtitle_job" if removed else "subtitle_job_absent"
+            result(get_logger(__name__), "%s: %s", label, job_path)
+            return 0
+        except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+            session.report_failure(error)
+            return 1
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":

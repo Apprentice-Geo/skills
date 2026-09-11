@@ -16,6 +16,12 @@ from .subtitle_job import (
     read_json_object,
     validate_job,
 )
+from .process_logging import (
+    LoggingSession,
+    create_workflow_log_path,
+    get_logger,
+    result,
+)
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -97,12 +103,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Generate and publish an SRT subtitle.")
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
     try:
-        subtitle_path = finalize_subtitle(Path(parser.parse_args(argv).subtitle_job_path))
-    except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+        arguments = parser.parse_args(argv)
+    except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    print(f"subtitle: {subtitle_path}")
-    return 0
+    session = LoggingSession(create_workflow_log_path("finalize-subtitle")).start()
+    try:
+        try:
+            subtitle_path = finalize_subtitle(Path(arguments.subtitle_job_path))
+            session.move_to(subtitle_path.parent)
+            result(get_logger(__name__), "subtitle: %s", subtitle_path)
+            return 0
+        except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+            session.report_failure(error)
+            return 1
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":

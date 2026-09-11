@@ -58,3 +58,22 @@ def test_remove_rejects_non_job_directory_name(results_dir: Path) -> None:
 
     with pytest.raises(SubtitleJobError):
         remove_subtitle_job.remove_subtitle_job(job_path)
+
+
+def test_remove_cli_keeps_cache_log_after_deleting_job(
+    results_dir: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    job_dir = results_dir / ("c" * 64)
+    job_dir.mkdir(parents=True)
+    job_path = (job_dir / "subtitle_job.json").resolve()
+    job_path.write_text("removable", encoding="utf-8")
+
+    assert remove_subtitle_job.main([str(job_path)]) == 0
+
+    terminal = capsys.readouterr()
+    assert terminal.out == f"removed_subtitle_job: {job_path}\n"
+    assert terminal.err == ""
+    assert not job_dir.exists()
+    logs = list((tmp_path / ".cache" / "logs").glob("remove-subtitle-job-*.log"))
+    assert len(logs) == 1
+    assert terminal.out.strip() in logs[0].read_text(encoding="utf-8")

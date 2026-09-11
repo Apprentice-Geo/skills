@@ -51,6 +51,9 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     assert result.returncode == 0
     assert result.stdout == f"subtitle_job: {job_path}\n"
     assert result.stderr == ""
+    logs = list(job_path.parent.glob("create-subtitle-*.log"))
+    assert len(logs) == 1
+    assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8")) == {
         "schema_version": 2,
         "job_id": audio_id,
@@ -162,7 +165,11 @@ def test_create_rejects_non_file_audio(tmp_path: Path, kind: str) -> None:
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert result.stderr
+    assert result.stderr.startswith("Error: ")
+    assert "Full log:" in result.stderr
+    logs = list((tmp_path / ".cache" / "logs").glob("create-subtitle-*.log"))
+    assert len(logs) == 1
+    assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")
 
 
 def test_create_keeps_job_unpublished_when_atomic_replace_fails(

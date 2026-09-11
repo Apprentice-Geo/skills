@@ -206,3 +206,31 @@ def test_attach_publishes_job_last_and_retry_overwrites_unpublished_residue(
 
     assert attach_transcription.attach_transcription(job_path, manifest_path) == normalized_path
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+
+
+def test_attach_cli_keeps_exact_result_and_moves_log(
+    subtitle_task: tuple[Path, Path, Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    job_path, manifest_path, _audio_path, audio_id = subtitle_task
+    monkeypatch.setattr(
+        attach_transcription,
+        "load_transcription",
+        lambda _path: sample_transcription(audio_id),
+    )
+
+    assert (
+        attach_transcription.main(
+            [str(job_path.resolve()), "--transcription-manifest", str(manifest_path.resolve())]
+        )
+        == 0
+    )
+
+    terminal = capsys.readouterr()
+    normalized_path = (job_path.parent / "normalized_transcript.json").resolve()
+    assert terminal.out == f"normalized_transcript: {normalized_path}\n"
+    assert terminal.err == ""
+    logs = list(job_path.parent.glob("attach-transcription-*.log"))
+    assert len(logs) == 1
+    assert terminal.out.strip() in logs[0].read_text(encoding="utf-8")

@@ -18,10 +18,7 @@ pushd "%~dp0..\.." || exit /b 1
 call uv python install 3.12
 if %ERRORLEVEL% NEQ 0 goto setup_failed
 
-call uv sync --python 3.12 --no-dev
-if %ERRORLEVEL% NEQ 0 goto setup_failed
-
-call uv run --python 3.12 --no-sync python -c "import audio_transcribe_contract; print('Setup completed.')"
+call uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap %*
 set "SETUP_RC=%ERRORLEVEL%"
 popd
 exit /b %SETUP_RC%

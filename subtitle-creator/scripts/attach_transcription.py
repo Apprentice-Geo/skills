@@ -5,6 +5,12 @@ import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
+from .process_logging import (
+    LoggingSession,
+    create_workflow_log_path,
+    get_logger,
+    result,
+)
 from .subtitle_job import (
     BEFORE_CORRECTION_FILENAME,
     NORMALIZED_FILENAME,
@@ -105,14 +111,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         arguments = parser.parse_args(argv)
-        output_path = attach_transcription(
-            Path(arguments.subtitle_job_path), Path(arguments.transcription_manifest)
-        )
-    except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+    except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    print(f"normalized_transcript: {output_path}")
-    return 0
+    session = LoggingSession(create_workflow_log_path("attach-transcription")).start()
+    try:
+        try:
+            output_path = attach_transcription(
+                Path(arguments.subtitle_job_path), Path(arguments.transcription_manifest)
+            )
+            session.move_to(output_path.parent)
+            result(get_logger(__name__), "normalized_transcript: %s", output_path)
+            return 0
+        except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+            session.report_failure(error)
+            return 1
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":

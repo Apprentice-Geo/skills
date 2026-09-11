@@ -11,14 +11,18 @@ SETUP_BAT = ROOT / "scripts" / "setup" / "setup_windows.bat"
 
 
 def _run_launcher(
-    tmp_path: Path, *, provide_uv: bool
+    tmp_path: Path, *, provide_uv: bool, fail_python_install: bool = False
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     command_dir = tmp_path / "bin"
     command_dir.mkdir()
     log_path = tmp_path / "launch.log"
     if provide_uv:
+        failure_line = (
+            'if "%1 %2 %3"=="python install 3.12" exit /b 7\n' if fail_python_install else ""
+        )
         (command_dir / "uv.cmd").write_text(
-            '@echo off\n>>"%SETUP_LAUNCH_LOG%" echo uv %*\n', encoding="ascii"
+            '@echo off\n>>"%SETUP_LAUNCH_LOG%" echo uv %*\n' + failure_line,
+            encoding="ascii",
         )
     env = os.environ.copy()
     windows_dir = Path(env.get("SystemRoot", env.get("WINDIR", r"C:\Windows")))
@@ -43,8 +47,7 @@ def test_setup_launcher_syncs_runtime_environment(tmp_path: Path) -> None:
     assert result.returncode == 0
     invocations = log_path.read_text(encoding="utf-8")
     assert "uv python install 3.12" in invocations
-    assert "uv sync --python 3.12 --no-dev" in invocations
-    assert "uv run --python 3.12 --no-sync python -c" in invocations
+    assert "uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap" in invocations
 
 
 def test_setup_launcher_reports_missing_uv(tmp_path: Path) -> None:
@@ -52,3 +55,13 @@ def test_setup_launcher_reports_missing_uv(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "setup requires uv" in result.stdout
+
+
+def test_python_install_failure_does_not_claim_setup_log(tmp_path: Path) -> None:
+    result, log_path = _run_launcher(tmp_path, provide_uv=True, fail_python_install=True)
+
+    assert result.returncode == 7
+    assert "uv python install 3.12" in log_path.read_text(encoding="utf-8")
+    assert "scripts.setup.bootstrap" not in log_path.read_text(encoding="utf-8")
+    assert "Full log:" not in result.stdout
+    assert "Full log:" not in result.stderr

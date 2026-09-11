@@ -11,6 +11,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    detail,
+    error,
+    get_logger,
+    result,
+    warning,
+)
+
 SCHEMA_VERSION = 1
 SKILL_NAME = "subtitle-creator"
 
@@ -197,49 +207,34 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only dependency check for subtitle-creator.")
     parser.add_argument("--root", type=Path, default=None)
     args = parser.parse_args(argv)
-    report = run_check(args.root)
     root = (args.root or Path(__file__).resolve().parents[1]).resolve()
     logs_dir = root / ".cache" / "logs"
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
-    json_path = logs_dir / f"dependency-check-{stamp}.json"
-    log_path = logs_dir / f"dependency-check-{stamp}.log"
-    report["logs"] = {"report": str(json_path), "log": str(log_path)}
+    log_path = create_timestamped_log_path(logs_dir, "dependency-check")
+    json_path = log_path.with_suffix(".json")
+    logger = get_logger(__name__)
+    with LoggingSession(log_path):
+        report = run_check(root)
+        report["logs"] = {"report": str(json_path), "log": str(log_path)}
+        temporary = json_path.with_suffix(".tmp")
+        temporary.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, json_path)
 
-    temporary = json_path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, json_path)
-
-    check_lines = [
-        f"[{check['status'].upper()}] {check['id']}: {check['message']}"
-        for check in report["checks"]
-    ]
-    terminal_lines = [
-        f"Dependency check: {report['skill']}",
-        f"Overall: {report['overall_status']}",
-    ]
-    passed = sum(check["status"] == "pass" for check in report["checks"])
-    if passed:
-        terminal_lines.append(f"[PASS] Dependencies OK ({passed} checks passed)")
-    terminal_lines.extend(line for line in check_lines if not line.startswith("[PASS] "))
-    terminal_lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
-
-    log_temporary = log_path.with_suffix(".tmp")
-    log_temporary.write_text(
-        "\n".join(
-            [
-                f"Dependency check: {report['skill']}",
-                f"Overall: {report['overall_status']}",
-                *check_lines,
-                f"JSON report: {json_path}",
-                f"Log: {log_path}",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    os.replace(log_temporary, log_path)
-    print("\n".join(terminal_lines))
+        result(logger, "Dependency check: %s", report["skill"])
+        result(logger, "Overall: %s", report["overall_status"])
+        passed = sum(check["status"] == "pass" for check in report["checks"])
+        for check in report["checks"]:
+            line = f"[{check['status'].upper()}] {check['id']}: {check['message']}"
+            if check["status"] == "pass":
+                detail(logger, line)
+            elif check["status"] == "warn":
+                warning(logger, line)
+            else:
+                error(logger, line)
+        if passed:
+            result(logger, "[PASS] Dependencies OK (%d checks passed)", passed)
+        result(logger, "JSON report: %s", json_path)
+        result(logger, "Log: %s", log_path)
 
     critical_ids = {"platform", "pyproject.toml", "uv.lock", "uv"}
     if any(item["id"] in critical_ids and item["status"] == "fail" for item in report["checks"]):

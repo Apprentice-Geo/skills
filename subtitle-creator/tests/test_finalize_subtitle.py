@@ -107,6 +107,9 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
     assert result.stderr == ""
+    logs = list(job_path.parent.glob("finalize-subtitle-*.log"))
+    assert len(logs) == 1
+    assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert (
         subtitle_path.read_bytes()
         == (
@@ -271,6 +274,11 @@ def test_finalize_rejects_baseline_digest_mismatch(
 
     assert result.returncode == 1
     assert result.stdout == ""
+    assert result.stderr.startswith("Error: ")
+    assert "Full log:" in result.stderr
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("finalize-subtitle-*.log"))
+    assert len(logs) == 1
+    assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
 
 

@@ -5,6 +5,12 @@ import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
+from .process_logging import (
+    LoggingSession,
+    create_workflow_log_path,
+    get_logger,
+    result,
+)
 from .subtitle_job import (
     JOB_FILENAME,
     RESULTS_DIR,
@@ -56,12 +62,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Create or reuse a content-addressed subtitle job.")
     parser.add_argument("audio_path", help="Path to a local audio file.")
     try:
-        job_path = create_subtitle_job(parser.parse_args(argv).audio_path)
-    except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+        arguments = parser.parse_args(argv)
+    except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    print(f"subtitle_job: {job_path}")
-    return 0
+    session = LoggingSession(create_workflow_log_path("create-subtitle")).start()
+    try:
+        try:
+            job_path = create_subtitle_job(arguments.audio_path)
+            session.move_to(job_path.parent)
+            result(get_logger(__name__), "subtitle_job: %s", job_path)
+            return 0
+        except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+            session.report_failure(error)
+            return 1
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":
