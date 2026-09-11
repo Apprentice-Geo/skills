@@ -59,7 +59,7 @@ local audio
 
 Provider prepare 返回绑定加载配置摘要的 prepared model。生产入口和 benchmark 复用前比较加载时身份与当前请求；摘要包含模型（含 aligner）、设备、dtype/compute type 和实际加载用的线程、worker 或 batch 配置及 Qwen 的 max_new_tokens，语言不影响模型加载。这个摘要只绑定已核对的安装身份与加载参数，不是模型权重摘要。运行期间不得替换安装目录；不提供并发安装与推理的一致性事务。
 
-公共 v3 与旧结果隔离；公共版本同时参与 plan identity，旧 plan/chunk 即使复制到新 workspace 也不能被当作当前缓存复用。升级不能追认历史结果使用的模型身份，旧公共结果不迁移、不自动删除。
+公共 v2 与旧结果隔离；公共版本同时参与 plan identity，旧 plan/chunk 即使复制到新 workspace 也不能被当作当前缓存复用。升级不能追认历史结果使用的模型身份，旧公共结果不迁移、不自动删除。
 
 ## Alignment 与验证流程
 

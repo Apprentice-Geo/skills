@@ -27,7 +27,7 @@ metadata:
 
 检查器会写入带时间戳的 JSON 报告和日志，且不安装、下载或修复任何内容。首次检查成功时直接继续，不得运行 setup。
 
-2. 首次检查以非零状态退出时，先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 诊断；完成必要且获准的前置处理后，至多运行一次 setup：
+2. 首次检查以非零状态退出时，先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 诊断；完成必要且获准的前置处理后，开始第一轮 setup：
 
 ```powershell
 .\scripts\setup\setup_windows.bat
