@@ -85,8 +85,10 @@ class Qwen3AsrProvider:
         verified_request = self.request_identity()
         try:
             import torch
-            from qwen_asr import Qwen3ASRModel
-            from transformers import GenerationConfig
+            from qwen_asr import Qwen3ASRModel  # pyright: ignore[reportMissingImports]
+            from transformers import (  # pyright: ignore[reportMissingImports]
+                GenerationConfig,
+            )
         except ImportError as exc:
             raise RuntimeError(
                 "Qwen3-ASR dependencies are not installed. Run "

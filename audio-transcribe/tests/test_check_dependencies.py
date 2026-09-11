@@ -1,5 +1,8 @@
+import importlib.util
 import json
 from pathlib import Path
+
+import pytest
 
 from scripts import check_dependencies
 from scripts.dependency_policy import CORE_IMPORTS
@@ -22,6 +25,8 @@ def test_model_check_requires_revision_marker_and_required_files(
 
 
 def test_qwen_import_check_runs_in_a_clean_process() -> None:
+    if importlib.util.find_spec("qwen_asr") is None:
+        pytest.skip("qwen3-asr optional dependencies are not installed")
     imported, actual, error = check_dependencies.check_module_import("qwen_asr")
     assert imported is True
     assert actual
