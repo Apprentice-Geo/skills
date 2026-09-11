@@ -110,9 +110,9 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 
 ## 公共 Artifact 验证
 
-使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`。契约包 0.2.0 验证：
+使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`。契约包 0.3.0 验证：
 
-1. manifest 和正文的公共 schema version 为 2，status 为 `complete`；`request.public_schema_version` 为 2，固定 `alignment_policy` 与受支持的 v1 policy 匹配；
+1. manifest 和正文的公共 schema version 为 3，status 为 `complete`；固定 `alignment_policy` 与当前实际 policy 字段匹配；
 2. `audio.id` 和 `request.config_digest` 是 64 字符 SHA-256 值，后者与排除自身字段后的 canonical request JSON 匹配；
 3. manifest 只声明 transcript artifact 及其 SHA-256；路径相对于 manifest 目录，不能逃逸该目录或指向 manifest 自身；
 4. `transcript.json` 存在，文件字节与记录的 SHA-256 匹配；
@@ -120,7 +120,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 
 日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只验证元数据和路径，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。
 
-旧公共 schema v1 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v2 结果。固定 alignment policy 的版本继续为 1，与公共 schema v2 是不同层面的版本。
+旧公共 schema 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v3 结果。内部 policy 只记录实际生效字段，不维护独立 schema version。
 
 ## Cache 恢复
 

@@ -22,7 +22,6 @@ from ._types import PUBLIC_SCHEMA_VERSION, ResultManifest, Transcript, _Provider
 _SHA256_LENGTH = 64
 _PROVIDERS = {"faster-whisper", "qwen3-asr"}
 _ALIGNMENT_POLICY = {
-    "schema_version": 1,
     "timestamp_resolution_ms": 1,
     "zero_duration": "drop_item_and_owned_text",
     "ordering": "strict",
@@ -307,8 +306,6 @@ def _validate_manifest(
         raise ResultValidationError("request.language must be a non-empty string.")
     if request.get("alignment_policy") != _ALIGNMENT_POLICY:
         raise ResultValidationError("Invalid request.alignment_policy.")
-    if not _is_public_schema(request.get("public_schema_version")):
-        raise ResultValidationError("Invalid request.public_schema_version.")
     canonical_request = {
         key: value for key, value in request.items() if key != "config_digest"
     }

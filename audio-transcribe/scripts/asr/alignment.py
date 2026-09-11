@@ -9,7 +9,6 @@ from typing import Any, Final
 
 PUNCTUATION: Final = frozenset("，,；;。.!！？?")
 ALIGNMENT_POLICY: Final = {
-    "schema_version": 1,
     "timestamp_resolution_ms": 1,
     "zero_duration": "drop_item_and_owned_text",
     "ordering": "strict",

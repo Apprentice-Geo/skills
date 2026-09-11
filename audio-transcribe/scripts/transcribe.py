@@ -11,7 +11,6 @@ from typing import Any, Callable, Protocol
 
 import numpy as np
 from audio_transcribe_contract import (
-    PUBLIC_SCHEMA_VERSION,
     ResultValidationError,
     load_result,
 )
@@ -270,8 +269,6 @@ def run_transcribe(
         "execution_policy": execution,
         "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
         "planning_parameters": asdict(policy.planning_parameters),
-        "segmentation_schema_version": 1,
-        "public_schema_version": PUBLIC_SCHEMA_VERSION,
         "text_normalization": TEXT_NORMALIZATION_POLICY,
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }

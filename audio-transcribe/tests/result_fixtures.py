@@ -49,11 +49,9 @@ def resolved_request(
     return {
         "provider": provider,
         "language": language,
-        "public_schema_version": 2,
         "provider_identity": identity,
         "execution_policy": execution,
         "alignment_policy": {
-            "schema_version": 1,
             "timestamp_resolution_ms": 1,
             "zero_duration": "drop_item_and_owned_text",
             "ordering": "strict",
@@ -71,9 +69,7 @@ def resolved_request(
             "min_chunk_samples": 480000,
             "max_chunk_samples": 2880000,
         },
-        "segmentation_schema_version": 1,
         "text_normalization": {
-            "schema_version": 1,
             "unicode_normalization": "NFKC",
             "zh_conversion": "OpenCC t2s",
         },

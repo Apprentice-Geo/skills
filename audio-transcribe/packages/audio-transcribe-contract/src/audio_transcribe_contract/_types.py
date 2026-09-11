@@ -7,7 +7,7 @@ type JsonValue = (
 )
 type _JsonNumber = int | float
 type _Provider = Literal["faster-whisper", "qwen3-asr"]
-PUBLIC_SCHEMA_VERSION = 2
+PUBLIC_SCHEMA_VERSION = 3
 
 
 class _Audio(TypedDict):
@@ -19,7 +19,6 @@ class _Audio(TypedDict):
 
 
 class _AlignmentPolicy(TypedDict):
-    schema_version: Literal[1]
     timestamp_resolution_ms: Literal[1]
     zero_duration: Literal["drop_item_and_owned_text"]
     ordering: Literal["strict"]
@@ -92,7 +91,6 @@ class _PlanningParameters(TypedDict):
 
 
 class _TextNormalization(TypedDict):
-    schema_version: Literal[1]
     unicode_normalization: Literal["NFKC"]
     zh_conversion: Literal["OpenCC t2s"]
 
@@ -102,12 +100,10 @@ class _Request(TypedDict):
     provider: _Provider
     language: str
     alignment_policy: _AlignmentPolicy
-    public_schema_version: Literal[2]
     provider_identity: _WhisperIdentity | _QwenIdentity
     execution_policy: _WhisperExecution | _QwenExecution
     vad_parameters: _VadParameters
     planning_parameters: _PlanningParameters
-    segmentation_schema_version: Literal[1]
     text_normalization: _TextNormalization
 
 
@@ -120,7 +116,7 @@ class _ArtifactDigests(TypedDict):
 
 
 class ResultManifest(TypedDict):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     status: Literal["complete"]
     audio: _Audio
     request: _Request
@@ -129,7 +125,7 @@ class ResultManifest(TypedDict):
 
 
 class _PublicArtifact(TypedDict):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     audio_id: str
     config_digest: str
     provider: _Provider
