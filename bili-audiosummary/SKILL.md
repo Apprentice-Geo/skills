@@ -19,19 +19,28 @@ metadata:
 
 在 Windows 上，使用 Python 3.12 和 `uv`，并从此 Skill 目录运行命令。
 
-1. 准备 job 前，运行只读的 `scripts/check_dependencies.bat`。
-2. 如果首次检查以非零状态退出，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。如果仍以非零状态退出，停止执行并报告失败的检查；不得重复运行 setup。
-3. 需要转写时，单独安装并检查 `audio-transcribe` Skill。此 Skill 不安装 ASR 模型。
-
-## 主要步骤
-
-1. 从此 Skill 目录运行只读依赖检查，并读取其终端摘要：
+1. 准备 job 前运行一次只读依赖检查，并读取终端摘要：
 
 ```powershell
 .\scripts\check_dependencies.bat
 ```
 
-检查器会写入带时间戳的 JSON 报告和日志。它禁止安装、下载或修复任何内容。如果需要转写，在调用 `audio-transcribe` Skill 前单独运行其检查器。
+检查器会写入带时间戳的 JSON 报告和日志，且不安装、下载或修复任何内容。首次检查成功时直接继续，不得运行 setup。
+
+2. 首次检查以非零状态退出时，先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 诊断；完成必要且获准的前置处理后，至多运行一次 setup：
+
+```powershell
+.\scripts\setup\setup_windows.bat
+```
+
+setup 成功后再运行一次 `scripts/check_dependencies.bat` 复查。
+一次任务中至多运行三轮 setup 和复查，第三轮运行仍以非零状态退出时，停止执行并报告失败的检查及相关日志；未获得用户许可时，不得再次运行 setup 或依赖检查。
+
+3. 需要转写时，单独安装并检查 `audio-transcribe` Skill。此 Skill 不安装 ASR 模型。
+
+## 主要步骤
+
+1. 按[环境](#环境)中的策略完成依赖检查以及必要的 setup 和复查。只有最终检查成功时才继续；如果需要转写，在调用 `audio-transcribe` Skill 前单独运行其检查器。
 
 2. 从此 Skill 目录运行准备命令：
 

@@ -4,26 +4,28 @@
 
 ## 快速索引
 
-- [Setup 与依赖](#setup-与依赖)
-- [下载与网络失败](#下载与网络失败)
-- [HTTP 412 与 Cookie](#http-412-与-cookie)
-- [字幕选择](#字幕选择)
-- [Job Status](#job-status)
-- [外部转写输入](#外部转写输入)
-- [Summary Completion](#summary-completion)
-- [日志](#日志)
-- [停止条件](#停止条件)
+- [错误处理](#错误处理)
+  - [快速索引](#快速索引)
+  - [Setup 与依赖](#setup-与依赖)
+  - [下载与网络失败](#下载与网络失败)
+  - [HTTP 412 与 Cookie](#http-412-与-cookie)
+  - [字幕选择](#字幕选择)
+  - [Job Status](#job-status)
+  - [外部转写输入](#外部转写输入)
+  - [Summary Completion](#summary-completion)
+  - [日志](#日志)
+  - [停止条件](#停止条件)
 
 ## Setup 与依赖
 
-- 使用 `.\scripts\setup\setup_windows.bat` 运行 setup。
-- 如果 `uv` 不可用，从 <https://docs.astral.sh/uv/> 安装，然后重新运行 setup。
+- 依赖检查、setup 和复查的执行顺序与次数统一遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。
+- 如果 `uv` 不可用，从 <https://docs.astral.sh/uv/> 安装，再返回环境策略规定的后续步骤。
 - 如果现有 `.venv` 未使用 Python 3.12，停止执行。不得自动删除或替换它。
-- 如果 `.venv` 不完整，仅在用户明确批准后移除或修复它，然后重新运行 setup。
+- 如果 `.venv` 不完整，仅在用户明确批准后移除或修复它。
 - setup 后的命令使用 `uv run --no-sync python`。
 - 依赖同步失败时，检查 setup 日志以及 `pyproject.toml` / `uv.lock`。
-- 如果无法 import `audio_transcribe_contract`，重新运行 setup；不得用复制的 Skill 源码替换固定版本的 contract。
-- `ffmpeg-binaries-compat` 是受支持的 ffmpeg 来源。如果无法解析 `ffmpeg` 或 `ffprobe`，重新运行 setup，不得依赖系统 PATH。
+- 如果无法 import `audio_transcribe_contract`，检查 setup 日志以及固定版本的 contract 是否已同步；不得用复制的 Skill 源码替换它。
+- `ffmpeg-binaries-compat` 是受支持的 ffmpeg 来源。如果无法解析 `ffmpeg` 或 `ffprobe`，检查 setup 日志和依赖检查报告；不得依赖系统 PATH。
 - 此 setup 不安装 ASR 依赖或模型。job 需要转写时，遵循 `audio-transcribe` 文档。
 
 ## 下载与网络失败
