@@ -299,17 +299,11 @@ def validate_report(
             "Benchmark report structure is invalid; use a new report path."
         )
     config = validate_config(report["config"])
-    policy = report["comparison_policy"]
-    if (
-        not isinstance(policy, dict)
-        or set(policy) != set(COMPARISON_POLICY)
-        or not isinstance(policy["text_normalization"], dict)
-        or any(
-            not isinstance(policy[field], str)
-            for field in set(COMPARISON_POLICY) - {"text_normalization"}
+    if report["comparison_policy"] != COMPARISON_POLICY:
+        raise ValueError(
+            "Benchmark comparison policy differs from the current policy; "
+            "use a new report path."
         )
-    ):
-        raise ValueError("Benchmark report comparison policy is invalid")
     _validate_environment(report["environment"])
     if not isinstance(report["warmups"], list) or not isinstance(report["runs"], list):
         raise ValueError("Benchmark report runs are invalid")

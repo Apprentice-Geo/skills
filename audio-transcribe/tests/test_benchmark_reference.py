@@ -563,6 +563,50 @@ def test_resume_rejects_hardware_change_before_worker(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "mode_pairing",
+            "pair project-slicing and provider-native by repetition; "
+            "project-slicing is the denominator",
+        ),
+        (
+            "text_normalization",
+            {
+                "schema_version": 0,
+                "unicode_normalization": "NFKC",
+                "zh_conversion": "OpenCC t2s",
+            },
+        ),
+    ],
+)
+def test_resume_rejects_changed_comparison_policy_before_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+    value: Any,
+) -> None:
+    manifest_path, data, _samples_path, _value = _reference_tree(
+        tmp_path, actual_samples={("en", 8)}
+    )
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(benchmark, "REFERENCE_MANIFEST", manifest_path)
+    monkeypatch.setattr(benchmark, "DATA_DIR", data)
+    _patch_runtime(monkeypatch, calls)
+    args = _args(tmp_path / "report.json", language="en", minutes=8)
+    benchmark.run_benchmark(args)
+    calls.clear()
+    report = json.loads(args.report.read_text(encoding="utf-8"))
+    report["comparison_policy"][field] = value
+    write_json_atomic(args.report, report)
+
+    with pytest.raises(ValueError, match="comparison policy differs"):
+        benchmark.run_benchmark(_resume_args(args.report))
+
+    assert calls == []
+
+
 def test_worker_exit_restarts_session_and_rewarms(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
