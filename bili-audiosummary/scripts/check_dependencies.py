@@ -22,7 +22,6 @@ from scripts.process_logging import (
     warning,
 )
 
-SCHEMA_VERSION = 1
 SKILL_NAME = "bili-audiosummary"
 
 
@@ -242,7 +241,6 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     failed = [item for item in items if item["status"] == "fail"]
     return {
-        "schema_version": SCHEMA_VERSION,
         "skill": SKILL_NAME,
         "checked_at": now,
         "root": str(root),

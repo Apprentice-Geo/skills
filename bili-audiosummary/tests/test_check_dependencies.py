@@ -7,7 +7,6 @@ from scripts.dependency_policy import CORE_IMPORTS
 
 def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:
     report = check_dependencies.run_check(Path(__file__).resolve().parents[1])
-    assert report["schema_version"] == 1
     assert report["skill"] == "bili-audiosummary"
     assert {"id", "status", "expected", "actual", "message", "fix"} <= set(
         report["checks"][0]
@@ -35,7 +34,6 @@ def test_main_publishes_utf8_json_and_log_without_environment(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     report = {
-        "schema_version": 1,
         "skill": "bili-audiosummary",
         "overall_status": "ready",
         "checks": [],
@@ -51,7 +49,7 @@ def test_main_publishes_utf8_json_and_log_without_environment(
     paths = list((tmp_path / ".cache" / "logs").glob("dependency-check-*.json"))
     assert len(paths) == 1
     payload = json.loads(paths[0].read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["skill"] == "bili-audiosummary"
     assert "environment" not in paths[0].read_text(encoding="utf-8").lower()
 
 
@@ -59,7 +57,6 @@ def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     report = {
-        "schema_version": 1,
         "skill": "bili-audiosummary",
         "overall_status": "not_ready",
         "checks": [

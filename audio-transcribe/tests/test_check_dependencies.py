@@ -71,7 +71,6 @@ def test_pytorch_build_check_runs_in_a_clean_process(monkeypatch) -> None:
 
 def test_report_has_provider_statuses_and_stable_shape() -> None:
     report = check_dependencies.run_check(Path(__file__).resolve().parents[1])
-    assert report["schema_version"] == 1
     assert set(report["providers"]) == {"faster-whisper", "qwen3-asr"}
     assert report["overall_status"] in {"ready", "degraded", "not_ready"}
     assert all(
@@ -356,7 +355,6 @@ def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     report = {
-        "schema_version": 1,
         "skill": "audio-transcribe",
         "overall_status": "not_ready",
         "checks": [

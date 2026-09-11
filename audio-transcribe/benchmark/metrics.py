@@ -11,7 +11,6 @@ from scripts.text_normalization import (
 )
 
 COMPARISON_POLICY = {
-    "id": "benchmark-reference-v1",
     "text_normalization": TEXT_NORMALIZATION_POLICY,
     "zh_units": "remove Unicode whitespace and punctuation after NFKC and OpenCC t2s",
     "en_units": "Unicode words after NFKC and casefold; preserve internal ' and ’",

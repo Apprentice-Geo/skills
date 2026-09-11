@@ -7,7 +7,6 @@ from scripts import check_dependencies
 def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:
     report = check_dependencies.run_check(Path(__file__).resolve().parents[1])
 
-    assert report["schema_version"] == 1
     assert report["skill"] == "subtitle-creator"
     assert all(
         {"id", "status", "expected", "actual", "message", "fix"} <= set(item)
@@ -19,7 +18,6 @@ def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:
 
 def test_main_publishes_json_and_log(monkeypatch, tmp_path: Path, capsys) -> None:
     report = {
-        "schema_version": 1,
         "skill": "subtitle-creator",
         "overall_status": "ready",
         "checks": [],
@@ -31,7 +29,7 @@ def test_main_publishes_json_and_log(monkeypatch, tmp_path: Path, capsys) -> Non
     assert "JSON report:" in capsys.readouterr().out
     json_path = next((tmp_path / ".cache" / "logs").glob("dependency-check-*.json"))
     payload = json.loads(json_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["skill"] == "subtitle-creator"
     assert len(list((tmp_path / ".cache" / "logs").glob("dependency-check-*.log"))) == 1
 
 
@@ -39,7 +37,6 @@ def test_main_keeps_pass_details_in_log_and_routes_problems_to_stderr(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
     report = {
-        "schema_version": 1,
         "skill": "subtitle-creator",
         "overall_status": "not_ready",
         "checks": [

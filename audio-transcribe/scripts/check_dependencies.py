@@ -31,7 +31,6 @@ from scripts.model_artifacts import (
 )
 from scripts.model_identity import MODEL_REVISIONS, validate_installation
 
-SCHEMA_VERSION = 1
 SKILL_NAME = "audio-transcribe"
 CPU_SYNC_COMMAND = "uv sync --python 3.12 --no-dev --extra cpu"
 QWEN_SYNC_COMMAND = "uv sync --python 3.12 --no-dev --extra qwen3-asr"
@@ -504,7 +503,6 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         else ("ready" if ready_count == 2 else "degraded")
     )
     return {
-        "schema_version": SCHEMA_VERSION,
         "skill": SKILL_NAME,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "root": str(root),

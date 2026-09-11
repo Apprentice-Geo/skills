@@ -21,7 +21,6 @@ from .process_logging import (
     warning,
 )
 
-SCHEMA_VERSION = 1
 SKILL_NAME = "subtitle-creator"
 
 
@@ -190,7 +189,6 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     failed = [item for item in checks if item["status"] == "fail"]
     return {
-        "schema_version": SCHEMA_VERSION,
         "skill": SKILL_NAME,
         "checked_at": datetime.now(UTC).isoformat(),
         "root": str(root),

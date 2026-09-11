@@ -121,7 +121,7 @@ pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗
 
 ## 公共 contract 与发布
 
-`audio-transcribe-contract` 0.2.0 只接受公共 schema v2，独立于内部 alignment 模块。固定 alignment policy 的内部版本仍为 1；contract 拥有独立副本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。所有公共对象递归使用精确字段集合；完整 resolved 配置全部必需。Provider identity、model 和 execution policy 按 Provider 分别定义结构，校验类型、必要的值约束及 Provider/language 一致性。TypedDict 是字段结构的唯一实现来源，validator 从其解析字段；consumer 不 import 生产代码，不检查本地模型，也不限制 revision 必须等于当前生产 pin。新增任何层级字段或改变合同语义需要评估并升级公共 schema；包版本独立发布，非格式修复无需机械升级 schema。
+`audio-transcribe-contract` 0.2.0 只接受公共 schema v2，独立于内部 alignment 模块。v2 已发布的 resolved request 包含 `public_schema_version`、alignment policy version、segmentation version 和 text-normalization policy version；这些字段虽然不再作为新内部格式的设计范式，但属于已发布 v2 的必需结构，不得在 v2 下删除或改变语义。未来清理时应升级唯一的外层公共 schema，而不是继续为嵌套 policy 增加版本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。所有公共对象递归使用精确字段集合；完整 resolved 配置全部必需。Provider identity、model 和 execution policy 按 Provider 分别定义结构，校验类型、必要的值约束及 Provider/language 一致性。TypedDict 是字段结构的唯一实现来源，validator 从其解析字段；consumer 不 import 生产代码，不检查本地模型，也不限制 revision 必须等于当前生产 pin。新增任何层级字段或改变合同语义需要评估并升级公共 schema；包版本独立发布，非格式修复无需机械升级 schema。
 
 `load_result(path)` 完整验证后返回 `TranscriptionResult(manifest_path, transcript_path, manifest, transcript)`，路径均为绝对路径。正文 snapshot 同时提供 `segments` 和 `items`。外层 dataclass 冻结，内层 TypedDict/list 是普通可变内存对象，修改不写回文件。不再导出 `RawTimestamps` 类型或返回独立 timestamp 路径/snapshot。
 
