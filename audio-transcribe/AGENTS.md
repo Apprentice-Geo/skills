@@ -51,8 +51,10 @@
 开发环境同步：
 
 ```powershell
-uv sync --python 3.12
+uv sync --python 3.12 --extra cpu
 ```
+
+`cpu` 与 `qwen3-asr` extra 互斥，开发同步禁止使用 `--all-extras`。Qwen 环境的安装与切换命令见 `SKILL.md`。
 
 静态检查和完整测试：
 

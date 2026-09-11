@@ -29,6 +29,14 @@ local audio
 | `packages/audio-transcribe-contract/` | 面向 consumer，对公共 manifest 和 artifact 进行严格的只读验证 |
 | `tests/` | 行为与 contract 的回归覆盖 |
 
+## 依赖分层
+
+基础依赖提供 contract、faster-whisper、打包 ffmpeg、数值计算和文本规范化。语言识别依赖由 `speechbrain`、`torch`、`torchaudio` 组成，必须作为整体安装，避免由 SpeechBrain 的传递依赖选择错误的 PyTorch backend。Qwen3-ASR 依赖组包含同一组语言识别依赖及 Qwen 运行时依赖。
+
+`cpu` 与 `qwen3-asr` extra 分别从 PyTorch 官方 CPU 和 CUDA 12.6 explicit index 解析 `torch`、`torchaudio`，两者互斥。统一 `uv.lock` 同时记录两套互斥 resolution；extra 是解析选择，不作为持久化 profile 写入 checker schema、结果身份或 artifact。
+
+依赖检查通过独立 Python 子进程读取 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`，避免 checker 主进程加载 PyTorch。faster-whisper readiness 要求基础与语言识别 import、打包 ffmpeg、语言模型及 Whisper 模型；因此安装完整 Qwen 依赖的环境也可以运行 faster-whisper，但不应被描述为纯 CPU 环境。Qwen readiness 在这些共享条件之外，还要求 CUDA build、可用 GPU runtime、Qwen import、ASR 模型与 aligner 模型。
+
 ## 系统边界
 
 - 输入是本地音频文件；此 Skill 不下载媒体。

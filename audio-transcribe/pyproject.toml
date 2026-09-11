@@ -8,12 +8,14 @@ dependencies = [
     "ffmpeg-binaries-compat",
     "numpy",
     "OpenCC==1.4.1",
+]
+
+[project.optional-dependencies]
+cpu = [
     "speechbrain",
     "torch",
     "torchaudio",
 ]
-
-[project.optional-dependencies]
 qwen3-asr = [
     "accelerate",
     "huggingface-hub",
@@ -21,6 +23,9 @@ qwen3-asr = [
     "numba>=0.59.1",
     "qwen-asr",
     "soundfile",
+    "speechbrain",
+    "torch",
+    "torchaudio",
     "transformers",
 ]
 
@@ -46,6 +51,12 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 
 [tool.uv]
 index-strategy = "first-index"
+conflicts = [[{ extra = "cpu" }, { extra = "qwen3-asr" }]]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu126"
@@ -54,8 +65,14 @@ explicit = true
 
 [tool.uv.sources]
 audio-transcribe-contract = { path = "packages/audio-transcribe-contract" }
-torch = { index = "pytorch-cu126" }
-torchaudio = { index = "pytorch-cu126" }
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "qwen3-asr" },
+]
+torchaudio = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu126", extra = "qwen3-asr" },
+]
 
 [tool.ruff]
 target-version = "py312"

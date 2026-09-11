@@ -20,11 +20,20 @@ metadata:
 在 Windows 上，使用 Python 3.12 和 `uv`，并从此 Skill 目录运行命令。
 
 1. 转写前运行只读的 `scripts/check_dependencies.bat`。
-2. 如果首次检查以非零状态退出，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。
-3. 如果 setup 后没有 Provider ready，使用 `uv run --no-sync python -m scripts.setup.install_model --model faster-whisper` 安装一个本地模型，然后再检查一次。仅当 CUDA 可用时，才安装可选的 Qwen3-ASR 依赖组和模型。
+2. 如果首次检查以非零状态退出，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。默认 setup 使用 `cpu` extra，安装 CPU PyTorch、语言识别依赖和基础依赖。
+3. 如果 setup 后没有 Provider ready，使用 `uv run --no-sync python -m scripts.setup.install_model --model faster-whisper` 安装一个本地模型，然后再检查一次。Qwen3-ASR 必须显式切换到互斥的 `qwen3-asr` extra；不得同时启用 `cpu` 和 `qwen3-asr`，也不得使用 `--all-extras`。
 4. 适用的一次性修复完成后，如果检查仍以非零状态退出，停止执行并报告失败的检查。禁止自动重复运行 setup 或安装模型。
 
 依赖检查器不会安装、下载或修复任何内容。选择 Provider 前，读取其终端摘要。
+
+需要 Qwen3-ASR 时，按顺序执行：
+
+```powershell
+uv sync --python 3.12 --no-dev --extra qwen3-asr
+uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
+```
+
+模型安装在下载前验证 PyTorch 是 CUDA build 且 GPU runtime 可用。切回默认 CPU 环境时重新运行 `scripts/setup/setup_windows.bat`。extra 只描述本次依赖解析请求，不是持久化环境状态；以依赖检查报告中的 `pytorch:build` 和 Provider status 判断当前 readiness。
 
 ## 主要步骤
 

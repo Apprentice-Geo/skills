@@ -21,6 +21,8 @@
 
 - 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat` 执行 setup。
 - 使用 Python 3.12 和 `uv`；未经明确批准，不得修复或替换现有 `.venv`。
+- 默认 setup 执行 `uv sync --python 3.12 --no-dev --extra cpu`，并验证 `torch.version.cuda is None`。开发环境使用 `uv sync --python 3.12 --extra cpu`。
+- `cpu` 与 `qwen3-asr` extra 互斥；切换环境时只指定目标 extra，禁止同时启用，也禁止使用 `--all-extras`。
 - 依赖安装完成后，使用 `uv run --no-sync python` 运行转写命令和 setup 子命令。
 - 依赖同步失败时，先检查 setup 日志、`pyproject.toml` 和 `uv.lock`，再重试。
 - 项目 setup 提供打包的 ffmpeg 支持。如果由于找不到 ffmpeg 或缺少 import 依赖而解码失败，应重新运行或修复 setup，不得依赖无关的系统安装。
@@ -39,6 +41,8 @@ uv run --no-sync python -m scripts.setup.install_model --model faster-whisper
 uv sync --python 3.12 --no-dev --extra qwen3-asr
 uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
+
+Qwen 模型安装会在下载语言识别模型、ASR 模型或 aligner 前验证 `torch.version.cuda` 非空且 `torch.cuda.is_available()` 为 true。若 `pytorch:build` 显示 CPU build，重新同步 `qwen3-asr` extra；若已经是 CUDA build 但 `provider:qwen3-asr:cuda` 仍为 warning，先修复 NVIDIA driver、GPU 可见性或 runtime，不得开始模型下载。切回默认 CPU 环境时重新运行 `.\scripts\setup\setup_windows.bat`。
 
 安装校验要求 `.model_identity.json` 是无重复键且仅包含字符串 repo/revision 的 JSON 对象，并与固定配置完全匹配；必需文件与权重必须存在且非空，indexed safetensors 的索引和全部分片必须合法且位于模型目录内。setup 复用、依赖检查、自动 Provider 候选检查和运行时使用相同规则。模型加载仍负责识别文件内容是否可用。
 
@@ -108,7 +112,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 
 使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`。契约包 0.2.0 验证：
 
-1. manifest 和正文的公共 schema version 为 3，status 为 `complete`；`request.public_schema_version` 为 3，固定 `alignment_policy` 与受支持的 v1 policy 匹配；
+1. manifest 和正文的公共 schema version 为 2，status 为 `complete`；`request.public_schema_version` 为 2，固定 `alignment_policy` 与受支持的 v1 policy 匹配；
 2. `audio.id` 和 `request.config_digest` 是 64 字符 SHA-256 值，后者与排除自身字段后的 canonical request JSON 匹配；
 3. manifest 只声明 transcript artifact 及其 SHA-256；路径相对于 manifest 目录，不能逃逸该目录或指向 manifest 自身；
 4. `transcript.json` 存在，文件字节与记录的 SHA-256 匹配；

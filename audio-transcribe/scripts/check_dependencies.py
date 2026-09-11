@@ -17,7 +17,13 @@ from scripts.config import (
     QWEN3_ASR_ALIGNER_MODEL_DIR,
     QWEN3_ASR_MODEL_DIR,
 )
-from scripts.dependency_policy import CORE_IMPORTS
+from scripts.dependency_policy import (
+    BASE_IMPORTS,
+    LANGUAGE_ID_IMPORTS,
+    PYTORCH_PROBE,
+    QWEN3_ASR_IMPORTS,
+    parse_pytorch_probe,
+)
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
@@ -27,6 +33,8 @@ from scripts.model_identity import MODEL_REVISIONS, validate_installation
 
 SCHEMA_VERSION = 1
 SKILL_NAME = "audio-transcribe"
+CPU_SYNC_COMMAND = "uv sync --python 3.12 --no-dev --extra cpu"
+QWEN_SYNC_COMMAND = "uv sync --python 3.12 --no-dev --extra qwen3-asr"
 
 
 def item(
@@ -72,6 +80,81 @@ def check_module_import(module: str) -> tuple[bool, str, str]:
     return code == 0, (stdout or stderr)[:300], stderr[:300]
 
 
+def check_pytorch_build() -> tuple[bool, dict[str, str | bool | None], str]:
+    """Inspect the PyTorch build and GPU runtime in a clean interpreter process."""
+    code, stdout, stderr = run_command([sys.executable, "-c", PYTORCH_PROBE])
+    if code != 0:
+        return False, {}, (stderr or stdout)[:300]
+    try:
+        return True, parse_pytorch_probe(stdout), ""
+    except ValueError as exc:
+        return False, {}, str(exc)
+
+
+def dependency_sync_fix(probe_ok: bool, probe: dict[str, str | bool | None]) -> str:
+    """Select the repair command without persisting an environment profile."""
+    if probe_ok:
+        return (
+            QWEN_SYNC_COMMAND
+            if probe.get("cuda_build") is not None
+            else CPU_SYNC_COMMAND
+        )
+    return (
+        "Choose one mutually exclusive profile for the target Provider: "
+        f"faster-whisper -> {CPU_SYNC_COMMAND} | "
+        f"qwen3-asr -> {QWEN_SYNC_COMMAND}"
+    )
+
+
+def pytorch_checks(
+    probe_ok: bool,
+    probe: dict[str, str | bool | None],
+    error: str,
+) -> tuple[list[dict[str, str]], bool, bool]:
+    cuda_build = probe_ok and probe.get("cuda_build") is not None
+    cuda_available = probe_ok and probe.get("cuda_available") is True
+    if probe_ok:
+        build = probe["cuda_build"] or "cpu"
+        pytorch_actual = f"torch={probe['version']}; build={build}"
+        pytorch_message = (
+            "PyTorch CUDA build is installed."
+            if cuda_build
+            else "PyTorch CPU build is installed."
+        )
+    else:
+        pytorch_actual = error or "probe failed"
+        pytorch_message = "PyTorch build could not be inspected."
+    sync_fix = dependency_sync_fix(probe_ok, probe)
+    return (
+        [
+            item(
+                "pytorch:build",
+                "pass" if probe_ok else "fail",
+                "CPU or CUDA PyTorch build",
+                pytorch_actual,
+                pytorch_message,
+                sync_fix,
+            ),
+            item(
+                "provider:qwen3-asr:cuda",
+                "pass" if cuda_build and cuda_available else "warn",
+                "CUDA PyTorch build and available GPU runtime",
+                f"build={'cuda' if cuda_build else 'cpu-or-missing'}; "
+                f"runtime={cuda_available}",
+                "CUDA build and GPU runtime are available."
+                if cuda_build and cuda_available
+                else (
+                    "Qwen3-ASR requires both a CUDA PyTorch build and an available GPU."
+                ),
+                "uv sync --python 3.12 --no-dev --extra qwen3-asr; "
+                "verify the NVIDIA driver and GPU runtime",
+            ),
+        ],
+        cuda_build,
+        cuda_available,
+    )
+
+
 def model_check(
     check_id: str,
     directory: Path,
@@ -105,16 +188,24 @@ def provider_readiness(
     language_ready: bool,
     whisper_model_ready: bool,
     qwen_imports: bool,
-    cuda: bool,
+    cuda_build: bool,
+    cuda_available: bool,
     qwen_asr_model_ready: bool,
     qwen_aligner_ready: bool,
 ) -> dict[str, dict[str, str]]:
-    core_ready = all(import_status.get(module, False) for module in CORE_IMPORTS)
-    whisper_ready = core_ready and ffmpeg_ok and language_ready and whisper_model_ready
+    base_ready = all(import_status.get(module, False) for module in BASE_IMPORTS)
+    language_imports_ready = all(
+        import_status.get(module, False) for module in LANGUAGE_ID_IMPORTS
+    )
+    shared_ready = base_ready and language_imports_ready
+    whisper_ready = (
+        shared_ready and ffmpeg_ok and language_ready and whisper_model_ready
+    )
     qwen_ready = (
-        core_ready
+        shared_ready
         and qwen_imports
-        and cuda
+        and cuda_build
+        and cuda_available
         and ffmpeg_ok
         and language_ready
         and qwen_asr_model_ready
@@ -126,7 +217,7 @@ def provider_readiness(
     }
 
 
-def ffmpeg_checks() -> list[dict[str, str]]:
+def ffmpeg_checks(sync_fix: str) -> list[dict[str, str]]:
     try:
         import ffmpeg_binaries as ffmpeg
 
@@ -141,7 +232,7 @@ def ffmpeg_checks() -> list[dict[str, str]]:
                 "packaged ffmpeg and ffprobe",
                 "unavailable",
                 str(exc),
-                "uv sync --python 3.12",
+                sync_fix,
             )
         ]
     results = [
@@ -163,7 +254,7 @@ def ffmpeg_checks() -> list[dict[str, str]]:
                     "packaged executable",
                     str(path),
                     "Executable is missing.",
-                    "uv sync --python 3.12",
+                    sync_fix,
                 )
             )
             continue
@@ -175,7 +266,7 @@ def ffmpeg_checks() -> list[dict[str, str]]:
                 "-version exits 0",
                 str(path),
                 (out or err)[:300],
-                "uv sync --python 3.12" if code else "",
+                sync_fix if code else "",
             )
         )
     return results
@@ -247,6 +338,8 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             "Use the Skill .venv Python 3.12.",
         )
     )
+    pytorch_ok, pytorch, pytorch_error = check_pytorch_build()
+    sync_fix = dependency_sync_fix(pytorch_ok, pytorch)
     if uv and (root / "uv.lock").is_file():
         code, out, err = run_command([uv, "pip", "check", "--python", str(python)])
         checks.append(
@@ -258,7 +351,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                 "Dependencies are consistent."
                 if code == 0
                 else "Dependencies are missing or inconsistent.",
-                "uv sync --python 3.12",
+                sync_fix,
             )
         )
     else:
@@ -274,7 +367,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         )
 
     import_status: dict[str, bool] = {}
-    for module in CORE_IMPORTS:
+    for module in BASE_IMPORTS + LANGUAGE_ID_IMPORTS:
         imported_ok, actual, stderr = check_module_import(module)
         if imported_ok:
             import_status[module] = True
@@ -296,10 +389,10 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                     "module imports",
                     actual or "import failed",
                     stderr or actual,
-                    "uv sync --python 3.12",
+                    sync_fix,
                 )
             )
-    checks.extend(ffmpeg_checks())
+    checks.extend(ffmpeg_checks(sync_fix))
     language = model_check(
         "model:language-id",
         LANGUAGE_ID_MODEL_DIR,
@@ -340,7 +433,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     )
     checks.extend((qwen_asr, qwen_aligner))
     qwen_optional_imports: dict[str, bool] = {}
-    for module in ("qwen_asr", "transformers"):
+    for module in QWEN3_ASR_IMPORTS:
         imported_ok, actual, stderr = check_module_import(module)
         if imported_ok:
             qwen_optional_imports[module] = True
@@ -356,29 +449,11 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                     "uv sync --python 3.12 --no-dev --extra qwen3-asr",
                 )
             )
-    qwen_imports = all(
-        import_status.get(name, False) for name in ("torch", "torchaudio")
-    ) and all(qwen_optional_imports.values())
-    cuda = False
-    if import_status.get("torch"):
-        try:
-            import torch
-
-            cuda = bool(torch.cuda.is_available())
-        except Exception:
-            pass
-    checks.append(
-        item(
-            "provider:qwen3-asr:cuda",
-            "pass" if cuda else "warn",
-            "CUDA is available",
-            str(cuda),
-            "CUDA is available."
-            if cuda
-            else "Qwen3-ASR requires a CUDA GPU; faster-whisper can run on CPU.",
-            "Install a CUDA-enabled PyTorch build and GPU driver.",
-        )
+    qwen_imports = all(qwen_optional_imports.values())
+    pytorch_check_items, cuda_build, cuda_available = pytorch_checks(
+        pytorch_ok, pytorch, pytorch_error
     )
+    checks.extend(pytorch_check_items)
     checks.append(
         item(
             "provider:qwen3-asr:imports",
@@ -402,7 +477,8 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         language_ready=language["status"] == "pass",
         whisper_model_ready=whisper["status"] == "pass",
         qwen_imports=qwen_imports,
-        cuda=cuda,
+        cuda_build=cuda_build,
+        cuda_available=cuda_available,
         qwen_asr_model_ready=qwen_asr["status"] == "pass",
         qwen_aligner_ready=qwen_aligner["status"] == "pass",
     )
@@ -416,7 +492,8 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
         "ffmpeg-binaries",
         "ffmpeg",
         "ffprobe",
-    } | {f"import:{name}" for name in CORE_IMPORTS}
+        "pytorch:build",
+    } | {f"import:{name}" for name in BASE_IMPORTS + LANGUAGE_ID_IMPORTS}
     core_failed = any(
         check["id"] in core_ids and check["status"] == "fail" for check in checks
     )
