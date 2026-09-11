@@ -5,6 +5,13 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from scripts.config import SKILL_ROOT
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    get_logger,
+    result,
+)
 from scripts.run_pipeline import write_summary_prompt
 from scripts.summary_job import (
     JobValidationError,
@@ -21,6 +28,8 @@ from scripts.transcription_input import (
     load_transcription,
 )
 from scripts.utils import write_text_atomic
+
+logger = get_logger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -141,12 +150,21 @@ def continue_summary(job_path: Path, manifest_path: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    try:
-        job = continue_summary(args.job, args.transcription_manifest)
-    except (OSError, ValueError) as exc:
-        print(f"Cannot continue summary: {exc}")
-        return 1
-    print(f"Summary job is {job['status']}: {args.job.resolve()}")
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "continue")
+    with LoggingSession(log_path) as session:
+        try:
+            resolved_job_path = args.job.resolve()
+            job = continue_summary(resolved_job_path, args.transcription_manifest)
+            session.move_to(resolved_job_path.parent)
+        except (OSError, ValueError) as exc:
+            session.report_failure(exc)
+            return 1
+        result(
+            logger,
+            "Summary job is %s: %s",
+            job["status"],
+            resolved_job_path,
+        )
     return 0
 
 

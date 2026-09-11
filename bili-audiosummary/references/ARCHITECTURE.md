@@ -26,6 +26,7 @@ Bilibili URL
 | `scripts/transcript_output.py` | 通用 segment 验证、合并和 Markdown 渲染 |
 | `scripts/complete_summary.py` 和 `validate_summary.py` | 最终 summary 和 source 验证 |
 | `scripts/remove_summary_job.py` | 受限删除单个 job 目录，以便显式重新准备 |
+| `scripts/process_logging.py` | 每次 Python 命令的文件、stdout、stderr 日志路由和进程输出捕获 |
 | `scripts/summary_job.py` | schema、状态不变量、受限路径、锁和原子 job 写入 |
 | `assets/` | summary 指令和模板 |
 
@@ -58,6 +59,14 @@ preparation 选择以下分支之一：
 - prompt 仅引用 job-local `transcript.md` 和预期 summary 路径。
 - 日志承载运行诊断，而 job error 不包含 traceback、Cookie 和 transcript 文本。
 - 上游 contract 细节只存在于 adapter；job schema 和业务测试不复制上游结果结构。
+
+## 日志控制流
+
+每个 Python CLI 启动一个独立日志会话。单条业务消息由同一个标准库 `LogRecord` 同时写入文件和指定终端流：`status`/`result` 写入 stdout，`warning`/`error` 写入 stderr，`detail` 与带 traceback 的 `exception` 仅写入文件。普通 named logger 和捕获的第三方 logger、Python warnings 默认只写文件，不会因日志级别自动进入终端。活动会话内重复启动同一个对象是幂等操作，嵌套启动另一个会话会被拒绝；结束时恢复原 handler、warnings hook 和外部 logger 状态。
+
+setup、依赖检查、独立 validate 和 remove 的日志位于 `.cache/logs/`。pipeline 与 fetch 从 cache 启动，确定可信结果目录后沿用既有机制移动到 job 目录。continue 与 complete 仅在命令成功后把日志移动到 job 目录，失败日志留在 cache；remove 日志不会随被删除的 job 消失。子进程的完整命令和合并输出只进入文件日志，顶层 CLI 统一报告失败。
+
+argparse 自己的 help/解析错误，以及 `.bat` 的 `where uv`、目录切换和 `uv python install 3.12` 输出不属于 Python 日志会话。`uv python install 3.12` 在 bootstrap 启动前失败时不会生成 setup 日志，也不会报告虚假的 `Full log`。
 
 ## 生成的 artifact
 

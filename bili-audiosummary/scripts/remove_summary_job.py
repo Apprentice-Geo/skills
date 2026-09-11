@@ -7,10 +7,17 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from scripts.config import RESULTS_DIR
+from scripts.config import RESULTS_DIR, SKILL_ROOT
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    get_logger,
+    result,
+)
 from scripts.summary_job import JOB_FILENAME, JobValidationError
 
 VIDEO_ID_PATTERN = re.compile(r"BV[0-9A-Za-z]+(?:_p[1-9][0-9]*)?")
+logger = get_logger(__name__)
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -59,15 +66,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("summary_job_path", help="Absolute path to summary_job.json.")
     try:
-        job_path, removed = remove_summary_job(
-            Path(parser.parse_args(argv).summary_job_path)
-        )
-    except (OSError, JobValidationError, TypeError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        args = parser.parse_args(argv)
+    except JobValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
         return 1
-    label = "removed_summary_job" if removed else "summary_job_absent"
-    print(f"{label}: {job_path}")
-    return 0
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "remove")
+    with LoggingSession(log_path) as session:
+        try:
+            job_path, removed = remove_summary_job(Path(args.summary_job_path))
+        except (OSError, JobValidationError, TypeError, ValueError) as exc:
+            session.report_failure(exc)
+            return 1
+        label = "removed_summary_job" if removed else "summary_job_absent"
+        result(logger, "%s: %s", label, job_path)
+        return 0
 
 
 if __name__ == "__main__":

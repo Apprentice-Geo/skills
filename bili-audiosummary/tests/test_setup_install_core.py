@@ -33,9 +33,8 @@ def test_verify_core_imports_checks_installed_runtime_modules(
         (modules_dir / f"{name}.py").write_text("", encoding="utf-8")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(modules_dir)
-    logger = ProcessLogger(workspace_tmp_path / "setup.log")
-
-    verify_core_imports(Path(sys.executable), logger, env)
+    with ProcessLogger(workspace_tmp_path / "setup.log") as logger:
+        verify_core_imports(Path(sys.executable), logger, env)
 
 
 def test_resolve_packaged_ffmpeg_returns_package_binaries(
@@ -55,9 +54,8 @@ def test_resolve_packaged_ffmpeg_returns_package_binaries(
     )
     env = os.environ.copy()
     env["PYTHONPATH"] = str(modules_dir)
-    logger = ProcessLogger(workspace_tmp_path / "setup.log")
-
-    resolved = resolve_packaged_ffmpeg(Path(sys.executable), logger, env)
+    with ProcessLogger(workspace_tmp_path / "setup.log") as logger:
+        resolved = resolve_packaged_ffmpeg(Path(sys.executable), logger, env)
 
     assert resolved == (ffmpeg, ffprobe)
 

@@ -151,3 +151,62 @@ def test_continue_reuses_local_snapshot_without_reading_upstream(
     other_manifest = (workspace_tmp_path / "other" / "manifest.json").resolve()
 
     assert continue_summary.continue_summary(job_path, other_manifest) == first
+
+
+def test_continue_main_moves_success_log_and_keeps_stdout_contract(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = (workspace_tmp_path / "manifest.json").resolve()
+    manifest_path.write_text("opaque", encoding="utf-8")
+    monkeypatch.setattr(continue_summary, "SKILL_ROOT", workspace_tmp_path)
+    monkeypatch.setattr(
+        continue_summary,
+        "load_transcription",
+        lambda _path: transcription(continue_summary._file_sha256(audio_path)),
+    )
+
+    assert (
+        continue_summary.main(
+            [str(job_path), "--transcription-manifest", str(manifest_path)]
+        )
+        == 0
+    )
+
+    terminal = capsys.readouterr()
+    assert terminal.out == f"Summary job is prompt_ready: {job_path.resolve()}\n"
+    assert terminal.err == ""
+    assert len(list(job_path.parent.glob("continue-*.log"))) == 1
+    assert not list((workspace_tmp_path / ".cache" / "logs").glob("continue-*.log"))
+
+
+def test_continue_main_keeps_failure_log_in_cache(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    job_path, _audio_path = make_needs_job(workspace_tmp_path)
+    manifest_path = (workspace_tmp_path / "manifest.json").resolve()
+    manifest_path.write_text("opaque", encoding="utf-8")
+    monkeypatch.setattr(continue_summary, "SKILL_ROOT", workspace_tmp_path)
+    monkeypatch.setattr(
+        continue_summary,
+        "load_transcription",
+        lambda _path: transcription("a" * 64),
+    )
+
+    assert (
+        continue_summary.main(
+            [str(job_path), "--transcription-manifest", str(manifest_path)]
+        )
+        == 1
+    )
+
+    terminal = capsys.readouterr()
+    assert terminal.out == ""
+    assert "Error: transcription result audio does not match" in terminal.err
+    logs = list((workspace_tmp_path / ".cache" / "logs").glob("continue-*.log"))
+    assert len(logs) == 1
+    assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")

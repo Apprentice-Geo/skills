@@ -60,3 +60,40 @@ def test_remove_rejects_non_video_directory_name(results_dir: Path) -> None:
 
     with pytest.raises(JobValidationError):
         remove_summary_job.remove_summary_job(job_path)
+
+
+def test_remove_main_keeps_log_in_cache_after_deleting_job(
+    results_dir: Path,
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    job_path = (results_dir / "BV1Test123" / "summary_job.json").resolve()
+    job_path.parent.mkdir(parents=True)
+    job_path.write_text("removable", encoding="utf-8")
+    monkeypatch.setattr(remove_summary_job, "SKILL_ROOT", workspace_tmp_path)
+
+    assert remove_summary_job.main([str(job_path)]) == 0
+
+    terminal = capsys.readouterr()
+    assert terminal.out == f"removed_summary_job: {job_path}\n"
+    assert terminal.err == ""
+    logs = list((workspace_tmp_path / ".cache" / "logs").glob("remove-*.log"))
+    assert len(logs) == 1
+    assert not job_path.parent.exists()
+
+
+def test_remove_main_reports_parse_error_without_log_or_traceback(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    monkeypatch.setattr(remove_summary_job, "SKILL_ROOT", workspace_tmp_path)
+
+    assert remove_summary_job.main([]) == 1
+
+    terminal = capsys.readouterr()
+    assert terminal.out == ""
+    assert terminal.err.startswith("error: the following arguments are required")
+    assert "Traceback" not in terminal.err
+    assert not (workspace_tmp_path / ".cache" / "logs").exists()

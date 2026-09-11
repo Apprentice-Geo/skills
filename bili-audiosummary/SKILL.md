@@ -26,6 +26,7 @@ metadata:
 ```
 
 检查器会写入带时间戳的 JSON 报告和日志，且不安装、下载或修复任何内容。首次检查成功时直接继续，不得运行 setup。
+终端中的 PASS 聚合与报告路径写入 stdout，WARN/FAIL 写入 stderr；逐项 PASS 明细只写入日志。
 
 2. 首次检查以非零状态退出时，先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 诊断；完成必要且获准的前置处理后，开始第一轮 setup：
 
@@ -90,6 +91,8 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 ```
 
 该命令校验适用的 source、summary 文件及未替换的模板内容，这些校验通过后把 job 改为`complete`。命令可能在终端输出总结语言 warning，此时需读取 warning，并判断是否需要修订总结。该命令不替代前述内容检查。
+
+Python 命令成功时，原有结果行写入 stdout；warning 和 error 写入 stderr。失败时终端只显示简洁错误和精确日志路径，完整 traceback 与子进程输出只写入日志。日志位置与恢复方式见 [错误处理中的日志说明](references/ERROR-HANDLING.md#日志)。
 
 7. 可以把有效的 `complete` job 作为已完成结果返回。不得覆盖它。对于 `failed`、无效或可恢复的 job，遵循 [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)；job 仍为 `needs_transcription` 时禁止生成 summary。
 

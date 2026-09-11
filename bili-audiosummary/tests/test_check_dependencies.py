@@ -44,7 +44,9 @@ def test_main_publishes_utf8_json_and_log_without_environment(
     }
     monkeypatch.setattr(check_dependencies, "run_check", lambda _root: report)
     assert check_dependencies.main(["--root", str(tmp_path)]) == 0
-    output = capsys.readouterr().out
+    terminal = capsys.readouterr()
+    output = terminal.out
+    assert terminal.err == ""
     assert "JSON report:" in output
     paths = list((tmp_path / ".cache" / "logs").glob("dependency-check-*.json"))
     assert len(paths) == 1
@@ -70,11 +72,13 @@ def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(
     monkeypatch.setattr(check_dependencies, "run_check", lambda _root: report)
 
     assert check_dependencies.main(["--root", str(tmp_path)]) == 1
-    output = capsys.readouterr().out
+    terminal = capsys.readouterr()
+    output = terminal.out
     log_path = next((tmp_path / ".cache" / "logs").glob("*.log"))
     log = log_path.read_text(encoding="utf-8")
 
     assert "[PASS] Dependencies OK (1 checks passed)" in output
     assert "[PASS] uv: uv is ready" not in output
-    assert "[FAIL] yt_dlp: module failed" in output
+    assert "[FAIL] yt_dlp: module failed" not in output
+    assert terminal.err == "[FAIL] yt_dlp: module failed\n"
     assert "[PASS] uv: uv is ready" in log
