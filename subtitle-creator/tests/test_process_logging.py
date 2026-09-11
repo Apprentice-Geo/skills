@@ -7,6 +7,8 @@ import pytest
 
 from scripts.process_logging import (
     LoggingSession,
+    ProcessLogger,
+    SetupError,
     detail,
     error,
     exception,
@@ -15,7 +17,6 @@ from scripts.process_logging import (
     status,
     warning,
 )
-from scripts.process_logging import ProcessLogger, SetupError
 
 
 def test_logging_session_routes_console_and_keeps_traceback(
@@ -130,16 +131,18 @@ def test_process_failure_output_stays_in_log(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     log_path = tmp_path / "setup.log"
-    with ProcessLogger(log_path) as logger:
-        with pytest.raises(SetupError, match="Sync dependencies"):
-            logger.run(
-                [
-                    sys.executable,
-                    "-c",
-                    "import sys; print('private failure', file=sys.stderr); raise SystemExit(2)",
-                ],
-                "Sync dependencies",
-            )
+    with (
+        ProcessLogger(log_path) as logger,
+        pytest.raises(SetupError, match="Sync dependencies"),
+    ):
+        logger.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('private failure', file=sys.stderr); raise SystemExit(2)",
+            ],
+            "Sync dependencies",
+        )
 
     terminal = capsys.readouterr()
     assert terminal.out == ""

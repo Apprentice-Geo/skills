@@ -7,6 +7,12 @@ import tempfile
 from pathlib import Path
 from typing import NoReturn
 
+from .process_logging import (
+    LoggingSession,
+    create_workflow_log_path,
+    get_logger,
+    result,
+)
 from .subtitle_job import (
     SUBTITLE_FILENAME,
     SubtitleJobError,
@@ -15,12 +21,6 @@ from .subtitle_job import (
     expected_srt_bytes,
     read_json_object,
     validate_job,
-)
-from .process_logging import (
-    LoggingSession,
-    create_workflow_log_path,
-    get_logger,
-    result,
 )
 
 
