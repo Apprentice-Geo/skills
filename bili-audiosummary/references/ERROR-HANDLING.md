@@ -4,26 +4,28 @@
 
 ## 快速索引
 
-- [Setup 与依赖](#setup-与依赖)
-- [下载与网络失败](#下载与网络失败)
-- [HTTP 412 与 Cookie](#http-412-与-cookie)
-- [字幕选择](#字幕选择)
-- [Job Status](#job-status)
-- [外部转写输入](#外部转写输入)
-- [Summary Completion](#summary-completion)
-- [日志](#日志)
-- [停止条件](#停止条件)
+- [错误处理](#错误处理)
+  - [快速索引](#快速索引)
+  - [Setup 与依赖](#setup-与依赖)
+  - [下载与网络失败](#下载与网络失败)
+  - [HTTP 412 与 Cookie](#http-412-与-cookie)
+  - [字幕选择](#字幕选择)
+  - [Job Status](#job-status)
+  - [外部转写输入](#外部转写输入)
+  - [Summary Completion](#summary-completion)
+  - [日志](#日志)
+  - [停止条件](#停止条件)
 
 ## Setup 与依赖
 
-- 使用 `.\scripts\setup\setup_windows.bat` 运行 setup。
-- 如果 `uv` 不可用，从 <https://docs.astral.sh/uv/> 安装，然后重新运行 setup。
+- 依赖检查、setup 和复查的执行顺序与次数统一遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。
+- 如果 `uv` 不可用，从 <https://docs.astral.sh/uv/> 安装，再返回环境策略规定的后续步骤。
 - 如果现有 `.venv` 未使用 Python 3.12，停止执行。不得自动删除或替换它。
-- 如果 `.venv` 不完整，仅在用户明确批准后移除或修复它，然后重新运行 setup。
+- 如果 `.venv` 不完整，仅在用户明确批准后移除或修复它。
 - setup 后的命令使用 `uv run --no-sync python`。
 - 依赖同步失败时，检查 setup 日志以及 `pyproject.toml` / `uv.lock`。
-- 如果无法 import `audio_transcribe_contract`，重新运行 setup；不得用复制的 Skill 源码替换固定版本的 contract。
-- `ffmpeg-binaries-compat` 是受支持的 ffmpeg 来源。如果无法解析 `ffmpeg` 或 `ffprobe`，重新运行 setup，不得依赖系统 PATH。
+- 如果无法 import `audio_transcribe_contract`，检查 setup 日志以及固定版本的 contract 是否已同步；不得用复制的 Skill 源码替换它。
+- `ffmpeg-binaries-compat` 是受支持的 ffmpeg 来源。如果无法解析 `ffmpeg` 或 `ffprobe`，检查 setup 日志和依赖检查报告；不得依赖系统 PATH。
 - 此 setup 不安装 ASR 依赖或模型。job 需要转写时，遵循 `audio-transcribe` 文档。
 
 ## 下载与网络失败
@@ -38,7 +40,7 @@
 ## HTTP 412 与 Cookie
 
 - 如果 Bilibili 返回 `HTTP 412`，停止当前运行。不得查询其他来源或生成 summary。
-- 要求用户提供 Netscape 格式的 Cookie 文件。经过测试的 Chrome 和 Edge 导出流程见 [README.md](../README.md) 的 Cookie 章节。
+- 要求用户提供 Netscape 格式的 Cookie 文件。Chrome 和 Edge 的导出方式见 [README.md](../README.md#cookies-导出)。
 - pipeline 自动检测 Skill 根目录中的 `cookies.txt`、`www.bilibili.com_cookies.txt` 和 `bilibili_cookies.txt`。
 - 使用其他文件名或位置时：
 
@@ -50,7 +52,7 @@ uv run --no-sync python -m scripts.run_pipeline `
 ```
 
 - 如果 Cookie 被拒绝，确认其来自已登录的 Bilibili session、使用 Netscape 格式且尚未过期。
-- 禁止把 Cookie 值复制到 `summary_job.json`、summary 或错误报告中。
+- Cookie 文件只传给 yt-dlp，用于请求 Bilibili 视频元数据、字幕和音频。禁止把 Cookie 值复制到 `summary_job.json`、summary、日志或错误报告中。
 
 ## 字幕选择
 
@@ -83,10 +85,10 @@ Preparation 禁止静默替换已有的 `prompt_ready` 或 `complete` job。如�
 ```powershell
 uv run --no-sync python -m scripts.continue_summary `
   "<absolute-summary-job-path>" `
-  --transcription-manifest "<absolute-result-manifest-path>"
+  --transcription-manifest "<absolute-manifest-path>"
 ```
 
-transcription manifest 必须使用绝对路径。固定版本的 `audio-transcribe-contract` 验证其 complete status、schema、受限 artifact 路径、digest、identity、transcript segment 和 raw timestamp。随后，continue 比较 job `resources.audio` 的 SHA-256 与 `manifest.audio.id`。contract 或 audio-identity 失败时，不得发布 `transcript.md`、prompt 或更新后的 job。
+transcription manifest 必须使用绝对路径。adapter 通过固定版本的公共 contract 读取转写输入，随后 continue 比较 job `resources.audio` 的 SHA-256 与输入音频身份。读取或 audio-identity 失败时，不得发布 `transcript.md`、prompt 或更新后的 job。
 
 continue 失败时：
 
@@ -94,7 +96,13 @@ continue 失败时：
 - 不得编辑、删除或尝试修复外部 transcription 目录；
 - 报告加载或路径安全原因，由用户或 `audio-transcribe` workflow 提供可用结果。
 
-对于已经绑定 transcription 的 job，使用同一 manifest 再次调用 continue 时，会在刷新 prompt 前重新验证外部 manifest、job audio identity 和预期渲染的 Markdown。不同的 manifest 会被拒绝，不得静默替换。只有明确调用 continue 时，才更新已有 ready 或 complete job。
+对于已经导入 transcription 的 job，再次调用 continue 会直接复用本地快照，不读取传入的 manifest。需要采用不同或重新发布的 transcription manifest 时，先确认没有命令正在操作同一 job，再运行：
+
+```powershell
+uv run --no-sync python -m scripts.remove_summary_job "<absolute-summary-job-path>"
+```
+
+此命令删除整个 job 目录，包括下载资源、transcript、prompt 和 summary；需要保留时先要求用户自行备份。随后重新运行 preparation 和 continue。删除 summary job 不会删除或强制重新生成 `audio-transcribe` 结果。不得手动删除部分 artifact 或清空整个 `results/`。
 
 ## Summary Completion
 
@@ -108,15 +116,20 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 - summary 文件缺失或不是有效 UTF-8；
 - 仍有 template placeholder 或 prompt 注释；
-- 必需结构或语言验证失败。
+- 适用的 transcript source 无效。
 
-适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。有效 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
+summary 语言比例不足只产生 warning，命令仍以成功状态退出并把 job 改为 `complete`。warning 写入 stderr 和当次 complete 日志，不写入 `summary_job.json`。读取 warning，并根据总结指令判断是否需要修订。
+
+脚本不检查必需 section 是否存在，也不判断内容是否有 transcript 支持或时间戳是否对应相关内容；这些项目由 Agent 在运行 completion 前检查。适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。通过上述脚本校验的 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
 
 ## 日志
 
-- Setup 日志写入 `.cache/logs/`。
-- fetch 和 pipeline 日志从该目录开始，确定结果目录后移动到 `results/<BVID>/`。
-- continue 和 complete 命令输出简洁的验证或状态结果。preparation 失败使用 pipeline 日志，后续阶段失败使用命令输出。
+- Setup、依赖检查、独立 `validate_summary` 和 `remove_summary_job` 日志写入 `.cache/logs/`。remove 日志不会随 job 目录删除。
+- fetch 和 pipeline 日志从 `.cache/logs/` 开始，确定结果目录后移动到 `results/<BVID>/`；保留已有移动机制。
+- continue 和 complete 日志从 `.cache/logs/` 开始；命令成功后移动到对应 job 目录，失败时留在 cache。
+- Python 日志会话启动后，成功结果和进度写入 stdout，warning 和 error 写入 stderr；相同消息正文也写入文件。普通 logger、第三方 logger、Python warnings、逐项 PASS 明细和完整 traceback 只写入文件。
+- 子进程的完整命令和输出只写入日志，失败由顶层命令输出一条简洁错误及精确 `Full log` 路径，避免重复回放大量输出。
+- argparse 的 help 与参数解析错误、`.bat` 启动检查以及原始 `uv python install 3.12` 输出位于 Python 日志会话之外。该 uv 命令在 bootstrap 前失败时不会有 setup 日志，也不得推断 `Full log` 路径。
 - 日志不得记录 transcript 文本、Cookie 内容或外部模型对象。
 - `summary_job.error` 仅存储 `stage`、异常类型和 message；完整 traceback 写入日志。
 - 报告失败时，应包含精确命令、简洁错误、job 路径和完整日志路径。不得包含 secret。
@@ -125,7 +138,7 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 出现以下情况时，停止执行，不得生成或完成 summary：
 
-- 请求需要画面分析；
+- 事前已知请求所需的关键信息主要依赖画面，或读取 transcript 后确认其整体不足以支持请求；
 - 输入不是受支持的 Bilibili URL；
 - Bilibili 返回 `HTTP 412`，且没有有效 Cookie；
 - 既没有可用的原生字幕，也没有可用音频；

@@ -125,10 +125,13 @@ class WhisperCpuPolicy:
         pending: list[ChunkLayout],
         identity: dict[str, Any],
         cache: Callable[[ChunkTranscript], None],
+        prepared_model: Any | None = None,
     ) -> dict[str, BaseException]:
         if not pending:
             return {}
-        model = provider.prepare(identity)
+        model = (
+            prepared_model if prepared_model is not None else provider.prepare(identity)
+        )
         attempts = {layout.index: 0 for layout in pending}
         current = list(pending)
         failures: dict[str, BaseException] = {}

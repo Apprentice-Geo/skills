@@ -33,4 +33,5 @@ class ExecutionPolicy(Protocol[ProviderT]):
         pending: list[ChunkLayout],
         identity: dict[str, Any],
         cache: Callable[[ChunkTranscript], None],
+        prepared_model: Any | None = None,
     ) -> dict[str, BaseException]: ...

@@ -5,17 +5,22 @@ import importlib.util
 import math
 import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 import numpy as np
-from audio_transcribe_contract import load_result
+from audio_transcribe_contract import (
+    PUBLIC_SCHEMA_VERSION,
+    ResultValidationError,
+    load_result,
+)
 
 from scripts.artifacts import (
+    load_workspace_result,
+    matching_manifest,
     publish_result,
-    recover_public_artifacts,
-    variant_lock,
+    result_lock,
     write_workspace_result,
 )
 from scripts.asr.alignment import (
@@ -23,7 +28,10 @@ from scripts.asr.alignment import (
     AlignedTranscript,
     accept_provider_transcript,
 )
+from scripts.asr.pipeline_types import PipelineOutcome
+from scripts.asr.prepared_model import validate_prepared_model
 from scripts.io_utils import canonical_sha256, sha256_file
+from scripts.model_identity import validate_model
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
 from scripts.text_normalization import TEXT_NORMALIZATION_POLICY
 
@@ -45,10 +53,10 @@ class Engine(Protocol):
     ) -> AlignedTranscript: ...
 
 
-def _model_has_weights(directory: Path, pattern: str) -> bool:
-    from scripts.model_artifacts import model_has_weights
-
-    return model_has_weights(directory, (pattern,))
+@dataclass(frozen=True)
+class TranscribeOutcome:
+    manifest_path: Path
+    pipeline_outcome: PipelineOutcome | None
 
 
 def _decode_audio(path: Path) -> Any:
@@ -63,11 +71,7 @@ def _decode_audio(path: Path) -> Any:
 
 def _detect_language(samples: Any) -> str:
     model_dir = MODELS_DIR / "lang-id-voxlingua107-ecapa"
-    required = ("embedding_model.ckpt", "classifier.ckpt", "hyperparams.yaml")
-    if not all((model_dir / name).is_file() for name in required):
-        raise RuntimeError(
-            "Language identification model is missing. Pass --language or run setup."
-        )
+    validate_model("language-id", model_dir)
     try:
         import torch
         from speechbrain.inference.classifiers import EncoderClassifier
@@ -144,11 +148,13 @@ def _qwen3_asr_ready() -> bool:
         or importlib.util.find_spec("torch") is None
     ):
         return False
-    if not _model_has_weights(MODELS_DIR / "qwen3-asr-0.6b", "model*.safetensors"):
-        return False
-    if not _model_has_weights(
-        MODELS_DIR / "qwen3-forcedaligner-0.6b", "model*.safetensors"
-    ):
+    try:
+        validate_model(
+            "qwen3-asr",
+            MODELS_DIR / "qwen3-asr-0.6b",
+            MODELS_DIR / "qwen3-forcedaligner-0.6b",
+        )
+    except RuntimeError:
         return False
     import torch
 
@@ -156,11 +162,13 @@ def _qwen3_asr_ready() -> bool:
 
 
 def _whisper_ready() -> bool:
-    return importlib.util.find_spec(
-        "faster_whisper"
-    ) is not None and _model_has_weights(
-        MODELS_DIR / "faster-whisper-small", "model.bin"
-    )
+    if importlib.util.find_spec("faster_whisper") is None:
+        return False
+    try:
+        validate_model("faster-whisper", MODELS_DIR / "faster-whisper-small")
+    except RuntimeError:
+        return False
+    return True
 
 
 def _select_provider(requested: str | None, language: str) -> str:
@@ -196,7 +204,8 @@ def run_transcribe(
     vad_detector: Callable[[Any], list[tuple[int, int]]] | None = None,
     language_detector: Callable[[Any], str] = _detect_language,
     engine: Engine | None = None,
-) -> Path:
+    prepared_model: Any | None = None,
+) -> TranscribeOutcome:
     audio_path = audio_path.resolve()
     if not audio_path.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -218,13 +227,15 @@ def run_transcribe(
     normalized_audio = NormalizedAudio(
         np.asarray(samples, dtype=np.float32), SAMPLE_RATE
     )
-    speech_intervals = (
-        vad_detector(normalized_audio)
-        if vad_detector is not None
-        else detect_speech_samples(normalized_audio, DEFAULT_VAD_PARAMETERS)
-    )
+    speech_intervals: list[tuple[int, int]] | None = None
+    if language is None:
+        speech_intervals = (
+            vad_detector(normalized_audio)
+            if vad_detector is not None
+            else detect_speech_samples(normalized_audio, DEFAULT_VAD_PARAMETERS)
+        )
     detection_samples = (
-        _language_detection_samples(samples, speech_intervals)
+        _language_detection_samples(samples, speech_intervals or [])
         if language is None
         else samples
     )
@@ -260,15 +271,20 @@ def run_transcribe(
         "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
         "planning_parameters": asdict(policy.planning_parameters),
         "segmentation_schema_version": 1,
+        "public_schema_version": PUBLIC_SCHEMA_VERSION,
         "text_normalization": TEXT_NORMALIZATION_POLICY,
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }
-    variant_id = canonical_sha256(canonical_request)
-    request = {"variant_id": variant_id, **canonical_request}
-    variant_dir = (
-        results_dir / audio_id / (f"{provider}-{resolved_language}-{variant_id}")
+    if prepared_model is not None:
+        validate_prepared_model(
+            prepared_model, canonical_request["provider_identity"], execution
+        )
+    config_digest = canonical_sha256(canonical_request)
+    request = {"config_digest": config_digest, **canonical_request}
+    result_dir = (
+        results_dir / audio_id / (f"{provider}-{resolved_language}-{config_digest}")
     )
-    manifest_path = variant_dir / "result_manifest.json"
+    manifest_path = result_dir / "manifest.json"
     audio = {
         "id": audio_id,
         "size": size,
@@ -277,48 +293,75 @@ def run_transcribe(
         "duration": sample_count / SAMPLE_RATE,
     }
 
-    with variant_lock(variant_dir):
-        if manifest_path.exists():
+    with result_lock(result_dir):
+        if matching_manifest(manifest_path, audio=audio, request=request) is not None:
             try:
                 load_result(manifest_path)
-            except ValueError:
-                recover_public_artifacts(manifest_path)
-            return manifest_path.resolve()
+            except ResultValidationError:
+                pass
+            else:
+                return TranscribeOutcome(manifest_path.resolve(), None)
 
-        log_path = variant_dir / "transcribe.log"
-        with LoggingSession(log_path, mode="w"):
+        log_path = result_dir / "transcribe.log"
+        with LoggingSession(log_path, mode="a" if manifest_path.exists() else "w"):
             logger.info(
-                "Transcription invocation: input=%s audio_id=%s variant_id=%s",
+                "Transcription invocation: input=%s audio_id=%s config_digest=%s",
                 audio_path,
                 audio_id,
-                variant_id,
+                config_digest,
             )
-            workspace_path = variant_dir / "workspace" / "result.json"
-            if not workspace_path.exists():
+            workspace_path = result_dir / "workspace" / "result.json"
+            workspace_valid = False
+            if workspace_path.exists():
+                try:
+                    load_workspace_result(
+                        workspace_path,
+                        expected_audio_id=audio_id,
+                        expected_config_digest=config_digest,
+                        expected_provider=provider,
+                        expected_language=resolved_language,
+                        expected_duration=audio["duration"],
+                    )
+                except ResultValidationError:
+                    logger.warning(
+                        "Workspace result invalid: rebuilding from pipeline state."
+                    )
+                else:
+                    workspace_valid = True
+            pipeline_outcome: PipelineOutcome | None = None
+            if not workspace_valid:
                 if engine is None:
                     from scripts.asr.pipeline import run_asr_pipeline
 
                     if provider == "faster-whisper":
                         assert isinstance(provider_strategy, WhisperProvider)
                         assert isinstance(policy, WhisperCpuPolicy)
-                        run_asr_pipeline(
+                        pipeline_outcome = run_asr_pipeline(
                             audio_path,
-                            variant_dir / "workspace",
+                            result_dir / "workspace",
                             provider_strategy,
                             policy,
+                            audio_id=audio_id,
+                            config_digest=config_digest,
                             prepared_audio=normalized_audio,
                             prepared_vad=speech_intervals,
+                            prepared_model=prepared_model,
+                            vad_detector=vad_detector,
                         )
                     else:
                         assert isinstance(provider_strategy, Qwen3AsrProvider)
                         assert isinstance(policy, Qwen3AsrCudaPolicy)
-                        run_asr_pipeline(
+                        pipeline_outcome = run_asr_pipeline(
                             audio_path,
-                            variant_dir / "workspace",
+                            result_dir / "workspace",
                             provider_strategy,
                             policy,
+                            audio_id=audio_id,
+                            config_digest=config_digest,
                             prepared_audio=normalized_audio,
                             prepared_vad=speech_intervals,
+                            prepared_model=prepared_model,
+                            vad_detector=vad_detector,
                         )
                 else:
                     candidate = engine(samples, canonical_request, execution)
@@ -340,6 +383,8 @@ def run_transcribe(
                         )
                     write_workspace_result(
                         workspace_path,
+                        audio_id=audio_id,
+                        config_digest=config_digest,
                         text=result.text,
                         items=list(result.items),
                         duration=audio["duration"],
@@ -347,11 +392,12 @@ def run_transcribe(
                         language=resolved_language,
                     )
             manifest = publish_result(
-                variant_dir,
+                result_dir,
                 audio=audio,
                 request=request,
+                replace_existing=True,
             ).resolve()
-            return manifest
+            return TranscribeOutcome(manifest, pipeline_outcome)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -381,7 +427,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     try:
         with filtered_log_messages():
-            manifest_path = run_transcribe(
+            outcome = run_transcribe(
                 args.audio_path,
                 language=args.language,
                 provider=args.provider,
@@ -396,7 +442,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     elapsed = time.perf_counter() - started
     print(f"[Stage] Transcribe completed in {_format_elapsed(elapsed)}")
-    print(f"result_manifest: {manifest_path}")
+    print(f"manifest: {outcome.manifest_path}")
     return 0
 
 

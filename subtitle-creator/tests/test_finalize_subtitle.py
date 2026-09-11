@@ -1,63 +1,37 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import subprocess
-import sys
 from collections.abc import Iterator
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from scripts import finalize_subtitle, subtitle_job
+
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
-REQUEST = {"provider": "faster-whisper", "language": "zh"}
 
 
 def json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
 
 
-def canonical_sha256(value: dict[str, Any]) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-
-
-VARIANT_ID = canonical_sha256(REQUEST)
-
-
 def run_finalize(job_path: Path | str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, "-m", "scripts.finalize_subtitle", str(job_path)],
-        cwd=SKILL_DIR,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-
-
-def run_attach(job_path: Path, manifest_path: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "scripts.attach_transcription",
-            str(job_path),
-            "--transcription-manifest",
-            str(manifest_path),
-        ],
-        cwd=SKILL_DIR,
-        capture_output=True,
-        check=False,
-        text=True,
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        returncode = finalize_subtitle.main([str(job_path)])
+    return subprocess.CompletedProcess(
+        args=[str(job_path)],
+        returncode=returncode,
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
     )
 
 
@@ -70,91 +44,18 @@ def correction_job(
     audio_content = b"finalize audio"
     audio_path.write_bytes(audio_content)
     audio_id = hashlib.sha256(audio_content).hexdigest()
-    monkeypatch.setenv("SUBTITLE_CREATOR_RESULTS_DIR", str(tmp_path / "results"))
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(
-        __import__("scripts.subtitle_job", fromlist=["RESULTS_DIR"]), "RESULTS_DIR", results_dir
-    )
+    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", results_dir)
     monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)
 
-    result_dir = tmp_path / "upstream"
-    result_dir.mkdir()
-    (result_dir / "workspace").mkdir()
-    (result_dir / "transcription.log").write_text("complete\n", encoding="utf-8")
-    transcript_path = result_dir / "transcript.json"
-    transcript = {
-        "schema_version": 1,
-        "audio_id": audio_id,
-        "variant_id": VARIANT_ID,
-        "provider": "faster-whisper",
-        "language": "zh",
-        "duration": 360062,
-        "segments": [
-            {"id": 0, "start": 0.0004, "end": 1.9995, "text": "第一段"},
-            {
-                "id": 1,
-                "start": 1.9995,
-                "end": 360061.9995,
-                "text": "Second line --> x",
-            },
-        ],
-    }
-    transcript_path.write_bytes(json_bytes(transcript))
-    raw_path = result_dir / "raw_timestamps.json"
-    raw_path.write_bytes(
-        json_bytes(
-            {
-                "schema_version": 1,
-                "audio_id": audio_id,
-                "variant_id": VARIANT_ID,
-                "provider": "faster-whisper",
-                "language": "zh",
-                "duration": 360062,
-                "items": [
-                    {
-                        "text": "第一段 Second line --> x",
-                        "start": 0.0004,
-                        "end": 360061.9995,
-                        "probability": 0.9,
-                    }
-                ],
-            }
-        )
-    )
-    manifest_path = result_dir / "result_manifest.json"
-    manifest = {
-        "schema_version": 1,
-        "status": "complete",
-        "audio": {
-            "id": audio_id,
-            "size": len(audio_content),
-            "sample_count": 360062,
-            "sample_rate": 1,
-            "duration": 360062,
-        },
-        "request": {"variant_id": VARIANT_ID, **REQUEST},
-        "artifacts": {
-            "transcript": "transcript.json",
-            "raw_timestamps": "raw_timestamps.json",
-            "log": "transcription.log",
-            "workspace": "workspace",
-        },
-        "artifact_sha256": {
-            "transcript": hashlib.sha256(transcript_path.read_bytes()).hexdigest(),
-            "raw_timestamps": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
-        },
-    }
-    manifest_path.write_bytes(json_bytes(manifest))
+    manifest_path = tmp_path / "upstream" / "manifest.json"
+    manifest = {"opaque": True}
 
     baseline = {
-        "schema_version": 1,
-        "source": {
-            "manifest_path": str(manifest_path.resolve()),
-            "audio_id": audio_id,
-            "variant_id": VARIANT_ID,
-        },
+        "schema_version": 2,
+        "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",
         "duration": 360062,
@@ -174,21 +75,15 @@ def correction_job(
     normalized_path.write_bytes(json_bytes(baseline))
     job_path = job_dir / "subtitle_job.json"
     job = {
-        "schema_version": 1,
+        "schema_version": 2,
         "job_id": audio_id,
         "status": "editable",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
-        "transcription": {
-            "manifest_path": str(manifest_path.resolve()),
-            "variant_id": VARIANT_ID,
-        },
         "artifacts": {
             "normalized_transcript": str(normalized_path.resolve()),
-            "normalized_transcript_sha256": None,
             "before_correction": str(baseline_path.resolve()),
             "before_correction_sha256": hashlib.sha256(baseline_path.read_bytes()).hexdigest(),
             "subtitle": None,
-            "subtitle_sha256": None,
         },
         "changed_segment_ids": [],
     }
@@ -212,6 +107,9 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
     assert result.stderr == ""
+    logs = list(job_path.parent.glob("finalize-subtitle-*.log"))
+    assert len(logs) == 1
+    assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert (
         subtitle_path.read_bytes()
         == (
@@ -227,18 +125,10 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
     assert job["status"] == "editable"
     assert job["changed_segment_ids"] == [0, 1]
     assert (
-        job["artifacts"]["normalized_transcript_sha256"]
-        == hashlib.sha256(normalized_path.read_bytes()).hexdigest()
-    )
-    assert (
         job["artifacts"]["before_correction_sha256"]
         == hashlib.sha256(baseline_path.read_bytes()).hexdigest()
     )
     assert job["artifacts"]["subtitle"] == str(subtitle_path.resolve())
-    assert (
-        job["artifacts"]["subtitle_sha256"]
-        == hashlib.sha256(subtitle_path.read_bytes()).hexdigest()
-    )
 
 
 def test_finalize_reuses_unchanged_valid_srt_without_audio_or_rewriting(
@@ -265,8 +155,7 @@ def test_finalize_rebuilds_after_editing_finalized_transcript(
 ) -> None:
     job_path, normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
     assert run_finalize(job_path.resolve()).returncode == 0
-    first_job = json.loads(job_path.read_text(encoding="utf-8"))
-    first_digest = first_job["artifacts"]["normalized_transcript_sha256"]
+    first_subtitle = (job_path.parent / "subtitle.srt").read_bytes()
 
     normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
     normalized["segments"][0]["text"] = "final correction"
@@ -279,7 +168,7 @@ def test_finalize_rebuilds_after_editing_finalized_transcript(
     job = json.loads(job_path.read_text(encoding="utf-8"))
     assert job["status"] == "editable"
     assert job["changed_segment_ids"] == [0]
-    assert job["artifacts"]["normalized_transcript_sha256"] != first_digest
+    assert (job_path.parent / "subtitle.srt").read_bytes() != first_subtitle
 
 
 @pytest.mark.parametrize(
@@ -385,6 +274,11 @@ def test_finalize_rejects_baseline_digest_mismatch(
 
     assert result.returncode == 1
     assert result.stdout == ""
+    assert result.stderr.startswith("Error: ")
+    assert "Full log:" in result.stderr
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("finalize-subtitle-*.log"))
+    assert len(logs) == 1
+    assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
 
 
@@ -403,18 +297,12 @@ def test_finalize_rebuilds_damaged_srt(
     assert subtitle_path.read_bytes() != b"tampered"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     assert job["status"] == "editable"
-    assert (
-        job["artifacts"]["subtitle_sha256"]
-        == hashlib.sha256(subtitle_path.read_bytes()).hexdigest()
-    )
 
 
 def test_finalize_publishes_job_last(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts import finalize_subtitle
-
     job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
     original_write = finalize_subtitle.atomic_write_json
 
@@ -429,33 +317,3 @@ def test_finalize_publishes_job_last(
 
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
     assert (job_path.parent / "subtitle.srt").exists()
-
-
-def test_attach_editable_returns_normalized_and_rejects_different_variant(
-    correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
-) -> None:
-    job_path, _normalized_path, _baseline_path, manifest_path, manifest = correction_job
-    assert run_finalize(job_path.resolve()).returncode == 0
-    normalized_path = job_path.parent / "normalized_transcript.json"
-
-    reused = run_attach(job_path.resolve(), manifest_path.resolve())
-    assert reused.returncode == 0
-    assert reused.stdout == f"normalized_transcript: {normalized_path.resolve()}\n"
-
-    request = {"provider": "faster-whisper", "language": "en"}
-    variant_id = canonical_sha256(request)
-    manifest["request"] = {"variant_id": variant_id, **request}
-    for artifact_name in ("transcript", "raw_timestamps"):
-        artifact_path = manifest_path.parent / manifest["artifacts"][artifact_name]
-        artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
-        artifact["variant_id"] = variant_id
-        artifact["language"] = "en"
-        artifact_path.write_bytes(json_bytes(artifact))
-        manifest["artifact_sha256"][artifact_name] = hashlib.sha256(
-            artifact_path.read_bytes()
-        ).hexdigest()
-    manifest_path.write_bytes(json_bytes(manifest))
-
-    rejected = run_attach(job_path.resolve(), manifest_path.resolve())
-    assert rejected.returncode == 1
-    assert rejected.stdout == ""

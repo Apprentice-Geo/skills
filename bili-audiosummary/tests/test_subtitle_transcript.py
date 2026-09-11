@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import scripts.subtitle_transcript as subtitle_transcript
 from scripts.process_logging import LoggingSession
 from scripts.utils import read_json
@@ -54,7 +56,9 @@ def test_subtitle_to_transcript_skips_zero_duration_cue_and_warns(
     assert result["segments"] == [
         {"id": 0, "start": 2.0, "end": 3.0, "text": "keep me"}
     ]
-    assert warning in capsys.readouterr().out
+    terminal = capsys.readouterr()
+    assert terminal.out == "[Stage] Build transcript from subtitle\n"
+    assert warning in terminal.err
     assert warning in log_path.read_text(encoding="utf-8")
 
 
@@ -122,3 +126,18 @@ def test_subtitle_to_transcript_only_emits_stage(
         )
 
     assert capsys.readouterr().out == "[Stage] Build transcript from subtitle\n"
+
+
+def test_main_parse_error_does_not_start_logging_session(mocker) -> None:
+    mocker.patch(
+        "scripts.subtitle_transcript.parse_args",
+        side_effect=SystemExit(2),
+    )
+    create_log_path = mocker.patch(
+        "scripts.subtitle_transcript.create_timestamped_log_path"
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        subtitle_transcript.main()
+
+    create_log_path.assert_not_called()

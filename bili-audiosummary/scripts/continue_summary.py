@@ -5,12 +5,16 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from audio_transcribe_contract import load_result
-
+from scripts.config import SKILL_ROOT
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    get_logger,
+    result,
+)
 from scripts.run_pipeline import write_summary_prompt
 from scripts.summary_job import (
     JobValidationError,
-    TranscriptionValidationError,
     job_lock,
     load_job,
     publish_job,
@@ -18,7 +22,14 @@ from scripts.summary_job import (
     resolve_local_path,
 )
 from scripts.transcript_output import render_markdown
+from scripts.transcription_input import (
+    TranscriptionInput,
+    TranscriptionInputError,
+    load_transcription,
+)
 from scripts.utils import write_text_atomic
+
+logger = get_logger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -30,7 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--transcription-manifest",
         type=Path,
         required=True,
-        help="Absolute path to audio-transcribe result_manifest.json.",
+        help="Absolute path to an audio-transcribe manifest.json.",
     )
     return parser.parse_args(argv)
 
@@ -47,13 +58,13 @@ def _validated_transcript_markdown(
     job_path: Path,
     job: dict[str, Any],
     manifest_path: Path,
-) -> tuple[Any, str]:
-    result = load_result(manifest_path)
+) -> tuple[TranscriptionInput, str]:
+    transcription = load_transcription(manifest_path)
     audio_path = resolve_local_path(
         job_path, job["resources"]["audio"], "resources.audio"
     )
-    if _file_sha256(audio_path) != result.manifest["audio"]["id"]:
-        raise TranscriptionValidationError(
+    if _file_sha256(audio_path) != transcription.audio_id:
+        raise TranscriptionInputError(
             "transcription result audio does not match the summary job"
         )
     payload = {
@@ -61,12 +72,12 @@ def _validated_transcript_markdown(
         "bvid": job["video"]["bvid"],
         "url": job["video"]["url"],
         "uploader": job["video"].get("uploader"),
-        "duration": result.transcript["duration"],
+        "duration": transcription.duration,
         "source": "audio_transcribe",
-        "language": result.transcript["language"],
-        "segments": result.transcript["segments"],
+        "language": transcription.language,
+        "segments": transcription.segments,
     }
-    return result, render_markdown(payload)
+    return transcription, render_markdown(payload)
 
 
 def _write_prompt(
@@ -89,7 +100,7 @@ def _write_prompt(
 
 def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.is_absolute():
-        raise TranscriptionValidationError(
+        raise TranscriptionInputError(
             "--transcription-manifest must be an absolute path"
         )
     job_path = job_path.resolve()
@@ -101,44 +112,25 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
             raise JobValidationError(
                 f"cannot attach transcription to {job['transcript']['source']} job"
             )
-        recorded_manifest = Path(job["transcription_manifest"]).resolve()
-        if recorded_manifest != manifest_path:
-            raise JobValidationError(
-                "summary job already references a different transcription manifest"
-            )
-        result_dir = job_path.parent
-        markdown_path = result_dir / "transcript.md"
-        result, markdown = _validated_transcript_markdown(
-            job_path, job, recorded_manifest
-        )
-        if (
-            not markdown_path.is_file()
-            or markdown_path.read_text(encoding="utf-8") != markdown
-        ):
-            write_text_atomic(markdown_path, markdown)
-        updated = {
-            **job,
-            "prompt": _write_prompt(job_path, job, result.transcript["language"]),
-        }
-        publish_job(job_path, updated)
-        return updated
+        return job
 
     if job["status"] != "needs_transcription":
         raise JobValidationError(
             f"cannot continue summary job from status {job['status']!r}"
         )
 
-    result, markdown = _validated_transcript_markdown(job_path, job, manifest_path)
+    transcription, markdown = _validated_transcript_markdown(
+        job_path, job, manifest_path
+    )
     write_text_atomic(job_path.parent / "transcript.md", markdown)
-    prompt = _write_prompt(job_path, job, result.transcript["language"])
+    prompt = _write_prompt(job_path, job, transcription.language)
     updated = {
         **job,
         "status": "prompt_ready",
         "transcript": {
             "source": "audio_transcribe",
-            "path": str(result.transcript_path),
+            "path": "transcript.md",
         },
-        "transcription_manifest": str(manifest_path),
         "prompt": prompt,
         "error": None,
     }
@@ -148,7 +140,7 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
 
 def continue_summary(job_path: Path, manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.is_absolute():
-        raise TranscriptionValidationError(
+        raise TranscriptionInputError(
             "--transcription-manifest must be an absolute path"
         )
     job_path = job_path.resolve()
@@ -158,12 +150,21 @@ def continue_summary(job_path: Path, manifest_path: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    try:
-        job = continue_summary(args.job, args.transcription_manifest)
-    except (OSError, ValueError) as exc:
-        print(f"Cannot continue summary: {exc}")
-        return 1
-    print(f"Summary job is {job['status']}: {args.job.resolve()}")
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "continue")
+    with LoggingSession(log_path) as session:
+        try:
+            resolved_job_path = args.job.resolve()
+            job = continue_summary(resolved_job_path, args.transcription_manifest)
+            session.move_to(resolved_job_path.parent)
+        except (OSError, ValueError) as exc:
+            session.report_failure(exc)
+            return 1
+        result(
+            logger,
+            "Summary job is %s: %s",
+            job["status"],
+            resolved_job_path,
+        )
     return 0
 
 

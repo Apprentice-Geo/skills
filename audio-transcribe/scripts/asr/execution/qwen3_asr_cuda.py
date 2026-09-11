@@ -51,10 +51,13 @@ class Qwen3AsrCudaPolicy:
         pending: list[ChunkLayout],
         identity: dict[str, Any],
         cache: Callable[[ChunkTranscript], None],
+        prepared_model: Any | None = None,
     ) -> dict[str, BaseException]:
         if not pending:
             return {}
-        model = provider.prepare(identity)
+        model = (
+            prepared_model if prepared_model is not None else provider.prepare(identity)
+        )
         failures: dict[str, BaseException] = {}
         batch_size = int(identity["batch_size"])
         for offset in range(0, len(pending), batch_size):

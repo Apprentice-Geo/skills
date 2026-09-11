@@ -10,16 +10,14 @@ from ._validation import (
     _artifact_path,
     _read_object,
     _read_object_bytes,
-    _sha256,
     _validate_common_artifact,
     _validate_manifest,
-    _validate_raw_timestamps,
     _validate_transcript,
 )
 
 
-def load_result(path: str | Path) -> TranscriptionResult:
-    """Load and validate a transcription result from a manifest path."""
+def load_manifest(path: str | Path) -> ResultManifest:
+    """Validate metadata and paths only; this does not certify a complete result."""
     try:
         manifest_path = Path(path).resolve()
     except (OSError, RuntimeError, TypeError) as exc:
@@ -29,69 +27,51 @@ def load_result(path: str | Path) -> TranscriptionResult:
         raise ResultValidationError("Result manifest must be a file.") from error
 
     manifest_payload = _read_object(manifest_path, "result manifest")
-    (
-        artifacts,
-        digests,
-        audio_id,
-        variant_id,
-        provider,
-        language,
-        duration,
-    ) = _validate_manifest(manifest_payload)
+    artifacts, *_ = _validate_manifest(manifest_payload)
 
     root = manifest_path.parent.resolve()
     transcript_path = _artifact_path(root, artifacts.get("transcript"), "transcript")
-    raw_path = _artifact_path(root, artifacts.get("raw_timestamps"), "raw_timestamps")
-    log_path = _artifact_path(root, artifacts.get("log"), "log")
-    workspace_path = _artifact_path(root, artifacts.get("workspace"), "workspace")
-    for name, artifact_path in (
-        ("transcript", transcript_path),
-        ("raw_timestamps", raw_path),
-        ("log", log_path),
-    ):
-        if not artifact_path.is_file():
-            raise ResultValidationError(f"{name} artifact must be a file.")
-    if not workspace_path.is_dir():
-        raise ResultValidationError("workspace artifact must be a directory.")
+    if transcript_path == manifest_path:
+        raise ResultValidationError("Transcript must be separate from the manifest.")
+    return cast(ResultManifest, manifest_payload)
 
-    manifest = cast(ResultManifest, manifest_payload)
+
+def load_result(path: str | Path) -> TranscriptionResult:
+    """Read and validate a portable bundle, without logs or private workspace files."""
+    manifest = load_manifest(path)
+    manifest_path = Path(path).resolve()
+    transcript_path = _artifact_path(
+        manifest_path.parent, manifest["artifacts"]["transcript"], "transcript"
+    )
+    if not transcript_path.is_file():
+        raise ResultValidationError("transcript artifact must be a file.")
 
     try:
         transcript_bytes = transcript_path.read_bytes()
-        raw_bytes = raw_path.read_bytes()
     except OSError as exc:
         raise ResultValidationError("Unable to read a public artifact.") from exc
-    if hashlib.sha256(transcript_bytes).hexdigest() != _sha256(
-        digests.get("transcript"), "artifact_sha256.transcript"
+    if (
+        hashlib.sha256(transcript_bytes).hexdigest()
+        != manifest["artifact_sha256"]["transcript"]
     ):
         raise ResultValidationError("transcript artifact digest mismatch.")
-    if hashlib.sha256(raw_bytes).hexdigest() != _sha256(
-        digests.get("raw_timestamps"), "artifact_sha256.raw_timestamps"
-    ):
-        raise ResultValidationError("raw_timestamps artifact digest mismatch.")
     transcript_payload = _read_object_bytes(transcript_bytes, "transcript")
-    raw_payload = _read_object_bytes(raw_bytes, "raw timestamps")
-    for name, payload in (
-        ("transcript", transcript_payload),
-        ("raw_timestamps", raw_payload),
-    ):
-        _validate_common_artifact(
-            payload,
-            name=name,
-            audio_id=audio_id,
-            variant_id=variant_id,
-            provider=provider,
-            language=language,
-            duration=duration,
-        )
-    transcript = _validate_transcript(transcript_payload, duration)
-    raw_timestamps = _validate_raw_timestamps(raw_payload, duration, provider)
+    request = manifest["request"]
+    duration = float(manifest["audio"]["duration"])
+    _validate_common_artifact(
+        transcript_payload,
+        name="transcript",
+        audio_id=manifest["audio"]["id"],
+        config_digest=request["config_digest"],
+        provider=request["provider"],
+        language=request["language"],
+        duration=duration,
+    )
+    transcript = _validate_transcript(transcript_payload, duration, request["provider"])
 
     return TranscriptionResult(
         manifest_path=manifest_path,
         transcript_path=transcript_path,
-        raw_timestamps_path=raw_path,
         manifest=manifest,
         transcript=transcript,
-        raw_timestamps=raw_timestamps,
     )

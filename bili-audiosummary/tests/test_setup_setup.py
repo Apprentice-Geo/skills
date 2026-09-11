@@ -9,6 +9,8 @@ class RecordingSetupLogger:
         self.log_path = log_path
         self.steps: list[str] = []
         self.calls: list[tuple[list[str], Path | None]] = []
+        self.results: list[str] = []
+        self.failures: list[BaseException] = []
         self.logger = self
 
     def step(self, _current, _total, message):
@@ -17,6 +19,12 @@ class RecordingSetupLogger:
     def run(self, command, _description, *, cwd=None, **_kwargs):
         self.calls.append(([str(part) for part in command], cwd))
         return ProcessResult(0, "")
+
+    def result(self, message, *args):
+        self.results.append(message % args if args else message)
+
+    def report_failure(self, exc):
+        self.failures.append(exc)
 
     def exception(self, _message):
         pass

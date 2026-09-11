@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import argparse
 import logging
 from pathlib import Path
 
 import pytest
 
-from scripts import benchmark, transcribe
+from benchmark import runner as benchmark
+from scripts import transcribe
 from scripts.process_logging import filtered_log_messages
+
+pytestmark = pytest.mark.usefixtures("installed_models")
 
 
 @pytest.mark.parametrize(
@@ -70,18 +74,20 @@ def test_main_reports_elapsed_time_before_manifest(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    manifest = Path("result_manifest.json")
+    manifest = Path("manifest.json")
     times = iter((10.0, 10.0 + elapsed))
     monkeypatch.setattr(transcribe.time, "perf_counter", lambda: next(times))
     monkeypatch.setattr(
-        transcribe, "run_transcribe", lambda *_args, **_kwargs: manifest
+        transcribe,
+        "run_transcribe",
+        lambda *_args, **_kwargs: transcribe.TranscribeOutcome(manifest, None),
     )
 
     assert transcribe.main(["audio.wav"]) == 0
 
     assert capsys.readouterr().out.splitlines() == [
         f"[Stage] Transcribe completed in {formatted}",
-        f"result_manifest: {manifest}",
+        f"manifest: {manifest}",
     ]
 
 
@@ -135,4 +141,34 @@ def test_benchmark_parse_args_rejects_model_provider_alias() -> None:
 def test_benchmark_defaults_to_three_repetitions() -> None:
     args = benchmark.parse_args([])
 
-    assert args.repetitions == 3
+    config = benchmark.resolve_config(args)
+
+    assert args.repetitions is None
+    assert config["repetitions"] == 3
+
+
+def test_benchmark_config_is_canonical_and_partial_resume_inherits() -> None:
+    args = benchmark.parse_args(
+        [
+            "--provider",
+            "qwen3-asr",
+            "--provider",
+            "faster-whisper",
+            "--provider",
+            "qwen3-asr",
+            "--language",
+            "en",
+        ]
+    )
+    config = benchmark.resolve_config(args)
+
+    assert config["providers"] == ["faster-whisper", "qwen3-asr"]
+    assert config["languages"] == ["en"]
+    resumed = argparse.Namespace(
+        provider=["qwen3-asr", "faster-whisper"],
+        language=None,
+        minutes=None,
+        mode=None,
+        repetitions=None,
+    )
+    assert benchmark.resolve_config(resumed, config) == config

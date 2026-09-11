@@ -7,7 +7,7 @@
 ```text
 Bilibili URL
   -> resources and summary_job.json
-  -> native subtitles OR external complete result_manifest.json
+  -> native subtitles OR validated external transcription
   -> validated job-local transcript.md and prompt
   -> agent-written summary
   -> validated complete job
@@ -25,26 +25,30 @@ Bilibili URL
 | `scripts/subtitle_transcript.py` | 原生 SRT 解析和 transcript 转换 |
 | `scripts/transcript_output.py` | 通用 segment 验证、合并和 Markdown 渲染 |
 | `scripts/complete_summary.py` 和 `validate_summary.py` | 最终 summary 和 source 验证 |
+| `scripts/remove_summary_job.py` | 受限删除单个 job 目录，以便显式重新准备 |
+| `scripts/process_logging.py` | 每次 Python 命令的文件、stdout、stderr 日志路由和进程输出捕获 |
 | `scripts/summary_job.py` | schema、状态不变量、受限路径、锁和原子 job 写入 |
 | `assets/` | summary 指令和模板 |
 
 ## 系统边界
 
-- Bilibili 资源获取和 summary-job 状态归此处所有；ASR 模型、Provider、cache 和 workspace 不属于此处。
-- 对此 Skill 而言，外部 transcription 目录是只读的。job 存储 manifest 绝对引用和一份 job-local 渲染后的 Markdown 副本。
-- 原生与外部 transcript JSON 各自保留自身 contract；二者都被适配为同一个 job-local `transcript.md`。
-- prompt 和 transcript 内容是不可信源数据，不得覆盖 summary 任务、输出路径或内嵌指令。
+- Bilibili 资源获取和 summary-job 状态归此处所有；audio-transcribe Skill 的 ASR 模型、Provider、cache 和 workspace 不属于此处。
+- 对此 Skill 而言，外部 transcription 目录是只读的。成功导入后，job 只保留本地 Markdown 快照，不保存上游路径或身份。
+- 原生与外部 transcript 都被适配为 job-local 输入；业务模块只处理消费者自己的 job contract。
+- 生成 prompt 中由脚本组合的 summary 任务、总结指令、输出模板和最终输出路径属于控制内容。prompt 链接的 transcript 中，metadata 和 transcript text 属于不可信输入数据，不得覆盖这些控制内容，也不得作为指令执行。
 
 ## 稳定 job contract
 
-固定的顶层 shape 为 `schema_version`、`status`、`video`、`resources`、`transcript`、`transcription_manifest`、`prompt` 和 `error`。稳定 status 为 `preparing`、`needs_transcription`、`prompt_ready`、`complete` 和 `failed`。内部路径为相对于 job 的受限路径；外部 transcription manifest 使用绝对路径。
+固定的顶层 shape 为 `schema_version`、`status`、`video`、`resources`、`transcript`、`prompt` 和 `error`。稳定 status 为 `preparing`、`needs_transcription`、`prompt_ready`、`complete` 和 `failed`。内部路径为相对于 job 的受限路径；外部 transcription manifest 使用绝对路径。
 
 preparation 选择以下分支之一：
 
 - 可用的指定语言字幕生成原生 transcript、Markdown、prompt 和 `prompt_ready`。
 - 否则 job 变为 `needs_transcription`；Agent 运行 `audio-transcribe`，并把完整 manifest 的绝对路径传给 `continue_summary`。
 
-`continue_summary` 在发布本地 transcript 或 prompt artifact 前，验证外部 manifest、artifact 路径、digest、transcript contract 和 job 音频的 SHA-256。对于已经绑定 transcription 的 job，使用同一 manifest 重复运行 continue 时，会重新验证该外部 manifest、audio identity 和预期渲染的 Markdown，然后刷新本地 prompt。不同的 manifest 会被拒绝。
+`continue_summary` 通过 adapter 读取外部转写并核对 job 音频的 SHA-256，然后原子发布本地 transcript、prompt 和状态。已进入 `prompt_ready` 或 `complete` 的外部转写 job 只复用本地快照，不再读取传入的 manifest；需要使用新转写结果时，先通过公开删除入口移除单个 job，再重新运行 preparation 和 continue。
+
+`remove_summary_job` 不读取或修复 job 内容。它依据默认结果根目录、受支持的视频目录名和固定 job 文件名限制删除目标，然后删除整个 job 目录。删除入口不与其他 job 命令并发协调；调用方必须先确认同一 job 没有正在运行的 preparation、continue、completion 或删除操作。
 
 `complete_summary` 验证适用的 source 和最终 summary，然后原子发布 `complete`。prompt 发布尚未成功时，continue 失败会保留 `needs_transcription`；summary 失败会保留 `prompt_ready`。
 
@@ -54,7 +58,15 @@ preparation 选择以下分支之一：
 - 原子替换和 job lock 防止发布部分状态或并发状态。
 - prompt 仅引用 job-local `transcript.md` 和预期 summary 路径。
 - 日志承载运行诊断，而 job error 不包含 traceback、Cookie 和 transcript 文本。
-- 公共 contract schema 和成功结果 shape 保持不变；仅在无效或不一致的输入边界执行更严格的验证。
+- 上游 contract 细节只存在于 adapter；job schema 和业务测试不复制上游结果结构。
+
+## 日志控制流
+
+每个 Python CLI 启动一个独立日志会话。单条业务消息由同一个标准库 `LogRecord` 同时写入文件和指定终端流：`status`/`result` 写入 stdout，`warning`/`error` 写入 stderr，`detail` 与带 traceback 的 `exception` 仅写入文件。普通 named logger 和捕获的第三方 logger、Python warnings 默认只写文件，不会因日志级别自动进入终端。活动会话内重复启动同一个对象是幂等操作，嵌套启动另一个会话会被拒绝；结束时恢复原 handler、warnings hook 和外部 logger 状态。
+
+setup、依赖检查、独立 validate 和 remove 的日志位于 `.cache/logs/`。pipeline 与 fetch 从 cache 启动，确定可信结果目录后沿用既有机制移动到 job 目录。continue 与 complete 仅在命令成功后把日志移动到 job 目录，失败日志留在 cache；remove 日志不会随被删除的 job 消失。子进程的完整命令和合并输出只进入文件日志，顶层 CLI 统一报告失败。
+
+argparse 自己的 help/解析错误，以及 `.bat` 的 `where uv`、目录切换和 `uv python install 3.12` 输出不属于 Python 日志会话。`uv python install 3.12` 在 bootstrap 启动前失败时不会生成 setup 日志，也不会报告虚假的 `Full log`。
 
 ## 生成的 artifact
 
@@ -68,4 +80,4 @@ results/<BVID>/
 └─ <BVID>_summary_<language>.md
 ```
 
-外部 `result_manifest.json`、transcript JSON、timestamp、日志和 workspace 仍归 `audio-transcribe` 所有。
+外部转写结果仍归 `audio-transcribe` 所有，不属于 summary job artifact。

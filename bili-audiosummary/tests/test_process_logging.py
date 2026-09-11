@@ -3,7 +3,19 @@ import logging
 import warnings
 from pathlib import Path
 
-from scripts.process_logging import LoggingSession, YtDlpLogger, get_logger
+import pytest
+
+from scripts.process_logging import (
+    LoggingSession,
+    YtDlpLogger,
+    detail,
+    error,
+    exception,
+    get_logger,
+    result,
+    status,
+    warning,
+)
 
 
 def test_logging_session_filters_terminal_and_keeps_traceback(
@@ -14,19 +26,25 @@ def test_logging_session_filters_terminal_and_keeps_traceback(
 
     with LoggingSession(log_path):
         logger = get_logger(__name__)
-        logger.info("file only")
-        logger.info("terminal line", extra={"terminal": True})
+        detail(logger, "file only")
+        status(logger, "status line")
+        result(logger, "result line")
+        warning(logger, "warning line")
+        error(logger, "error line")
         try:
             raise RuntimeError("traceback detail")
         except RuntimeError:
-            logger.exception("pipeline failed")
+            exception(logger, "pipeline failed")
 
     terminal = capsys.readouterr()
-    assert terminal.out == "terminal line\n"
-    assert terminal.err == ""
+    assert terminal.out == "status line\nresult line\n"
+    assert terminal.err == "warning line\nerror line\n"
     log_text = log_path.read_text(encoding="utf-8")
     assert "file only" in log_text
-    assert "terminal line" in log_text
+    assert "status line" in log_text
+    assert "result line" in log_text
+    assert "warning line" in log_text
+    assert "error line" in log_text
     assert "Traceback (most recent call last)" in log_text
     assert "RuntimeError: traceback detail" in log_text
 
@@ -164,8 +182,22 @@ def test_logging_session_replays_failure_and_log_path(
 
     terminal = capsys.readouterr()
     assert terminal.out == ""
-    assert "RuntimeError: fatal detail" in terminal.err
+    assert terminal.err.startswith("Error: fatal detail\n")
+    assert "Traceback" not in terminal.err
     assert f"Full log: {log_path}" in terminal.err
     log_text = log_path.read_text(encoding="utf-8")
     assert "Traceback (most recent call last)" in log_text
     assert "RuntimeError: fatal detail" in log_text
+
+
+def test_logging_session_rejects_nested_session_and_same_start_is_idempotent(
+    workspace_tmp_path: Path,
+) -> None:
+    outer = LoggingSession(workspace_tmp_path / "outer.log").start()
+    try:
+        assert outer.start() is outer
+        with pytest.raises(RuntimeError, match="already active"):
+            LoggingSession(workspace_tmp_path / "inner.log").start()
+        assert LoggingSession.current() is outer
+    finally:
+        outer.close()

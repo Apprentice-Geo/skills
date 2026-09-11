@@ -15,7 +15,8 @@ from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     get_logger,
-    terminal_info,
+    status,
+    warning,
 )
 from scripts.subtitle_utils import infer_subtitle_language
 from scripts.transcript_output import write_markdown_from_json
@@ -62,13 +63,13 @@ def parse_srt(path: Path, *, report_zero_duration: bool = True) -> list[dict[str
         end = round(parse_srt_timestamp(match.group("end")), 3)
         if start == end:
             if report_zero_duration:
-                logger.warning(
+                warning(
+                    logger,
                     "Skipping zero-duration subtitle cue: %s (cue %s, %s --> %s)",
                     path_to_posix(path),
                     lines[0] if time_index == 1 else cue_number,
                     match.group("start"),
                     match.group("end"),
-                    extra={"terminal": True},
                 )
             continue
 
@@ -113,7 +114,7 @@ def subtitle_to_transcript(
     *,
     report_zero_duration: bool = True,
 ) -> dict[str, Any]:
-    terminal_info(logger, "[Stage] Build transcript from subtitle")
+    status(logger, "[Stage] Build transcript from subtitle")
     suffix = subtitle_path.suffix.lower()
     if suffix != ".srt":
         raise ValueError(f"Unsupported subtitle format: {subtitle_path}")
@@ -180,13 +181,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    args = parse_args()
     log_path = create_timestamped_log_path(
         SKILL_ROOT / ".cache" / "logs",
         "subtitle",
     )
     with LoggingSession(log_path) as session:
         try:
-            args = parse_args()
             subtitle_path = resolve_path(args.subtitle)
             manifest_path = resolve_manifest_path(args.manifest)
             manifest = load_manifest(manifest_path)

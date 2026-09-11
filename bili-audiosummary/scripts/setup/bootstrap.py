@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 from scripts.process_logging import ProcessLogger, SetupError
@@ -27,9 +26,9 @@ def run_setup(root: Path | None = None) -> Path:
     logger = ProcessLogger(create_log_path(paths))
     launcher_python = current_python()
     venv_python = paths.venv_python
-    print(f"Full log: {logger.log_path}")
     try:
         configure_environment(paths, os.environ)
+        logger.result("Full log: %s", logger.log_path)
         logger.step(1, 3, "Verify setup Python 3.12")
         assert_python_312(
             read_python_version(launcher_python, logger),
@@ -54,10 +53,10 @@ def run_setup(root: Path | None = None) -> Path:
         )
         verify_ffmpeg_executables(ffmpeg, ffprobe, logger)
 
-        print("Setup completed.")
+        logger.result("Setup completed.")
         return logger.log_path
     except Exception as exc:
-        logger.logger.error("Setup failed: %s", exc, exc_info=exc)
+        logger.report_failure(exc)
         if not isinstance(exc, SetupError):
             raise SetupError(f"Setup failed. See {logger.log_path}") from exc
         raise
@@ -68,8 +67,7 @@ def run_setup(root: Path | None = None) -> Path:
 def main() -> int:
     try:
         run_setup()
-    except SetupError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    except SetupError:
         return 1
     return 0
 

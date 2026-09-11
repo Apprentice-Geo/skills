@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from scripts.asr.alignment import AlignmentContractError, CleanupReport, TranscriptWord
+from scripts.asr.alignment import AlignmentContractError, TranscriptWord
 from scripts.asr.chunking import VadParameters
 from scripts.asr.pipeline_types import (
-    ASR_PIPELINE_SCHEMA_VERSION,
     AsrPipelinePlan,
     ChunkTranscript,
     SourceIdentity,
@@ -18,7 +18,6 @@ from scripts.utils import read_json, write_json_atomic
 VadArtifactReason = Literal[
     "missing",
     "unreadable",
-    "schema_mismatch",
     "source_mismatch",
     "parameters_mismatch",
     "invalid_structure",
@@ -36,10 +35,8 @@ def workspace_paths(root: Path) -> dict[str, Path]:
         "root": root,
         "plan": root / "asr_plan.json",
         "vad": root / "vad_result.json",
-        "progress": root / "progress.json",
         "chunks": root / "chunk_results",
         "result": root / "result.json",
-        "metrics": root / "metrics.json",
     }
 
 
@@ -70,8 +67,8 @@ def load_matching_plan(
         return None
     if (
         not plan.source.file_matches(audio_path)
-        or plan.provider_request != provider_request
-        or plan.execution_policy != expected_execution
+        or not _same_json_value(plan.provider_request, provider_request)
+        or not _same_json_value(plan.execution_policy, expected_execution)
         or plan.vad_parameters != vad_parameters
         or plan.planning_parameters != planning_parameters
     ):
@@ -81,15 +78,15 @@ def load_matching_plan(
 
 def write_vad_result(
     path: Path,
-    plan: AsrPipelinePlan,
+    source: SourceIdentity,
+    parameters: VadParameters,
     speech_intervals: list[tuple[int, int]],
 ) -> None:
     write_json_atomic(
         path,
         {
-            "schema_version": ASR_PIPELINE_SCHEMA_VERSION,
-            "source": asdict(plan.source),
-            "parameters": asdict(plan.vad_parameters),
+            "source": asdict(source),
+            "parameters": asdict(parameters),
             "speech_intervals": [
                 {"start_sample": start, "end_sample": end}
                 for start, end in speech_intervals
@@ -109,20 +106,37 @@ def load_valid_vad_result(
         return VadArtifactValidation(None, "unreadable")
     if not isinstance(data, dict):
         return VadArtifactValidation(None, "invalid_structure")
-    if data.get("schema_version") != ASR_PIPELINE_SCHEMA_VERSION:
-        return VadArtifactValidation(None, "schema_mismatch")
-    if data.get("source") != asdict(source):
-        return VadArtifactValidation(None, "source_mismatch")
-    if data.get("parameters") != asdict(parameters):
-        return VadArtifactValidation(None, "parameters_mismatch")
-    if not isinstance(data.get("speech_intervals"), list):
+    if set(data) != {"source", "parameters", "speech_intervals"}:
         return VadArtifactValidation(None, "invalid_structure")
-    intervals: list[tuple[int, int]] = []
+    if not _matches_dataclass_payload(data["source"], asdict(source)):
+        return VadArtifactValidation(None, "source_mismatch")
+    if not _matches_dataclass_payload(data["parameters"], asdict(parameters)):
+        return VadArtifactValidation(None, "parameters_mismatch")
+    if not isinstance(data["speech_intervals"], list):
+        return VadArtifactValidation(None, "invalid_structure")
+    try:
+        intervals = validate_vad_intervals(data["speech_intervals"], source)
+    except ValueError:
+        return VadArtifactValidation(None, "invalid_structure")
+    return VadArtifactValidation(intervals, None)
+
+
+def validate_vad_intervals(
+    intervals: Any, source: SourceIdentity
+) -> list[tuple[int, int]]:
+    if not isinstance(intervals, list):
+        raise ValueError("VAD speech intervals must be a list.")
+    validated: list[tuple[int, int]] = []
     previous_end = 0
-    for item in data["speech_intervals"]:
-        if not isinstance(item, dict):
-            return VadArtifactValidation(None, "invalid_structure")
-        start, end = item.get("start_sample"), item.get("end_sample")
+    for item in intervals:
+        if isinstance(item, dict):
+            if set(item) != {"start_sample", "end_sample"}:
+                raise ValueError("Invalid VAD speech interval fields.")
+            start, end = item["start_sample"], item["end_sample"]
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            start, end = item
+        else:
+            raise ValueError("Invalid VAD speech interval.")
         if (
             isinstance(start, bool)
             or not isinstance(start, int)
@@ -133,44 +147,78 @@ def load_valid_vad_result(
             or end <= start
             or end > source.sample_count
         ):
-            return VadArtifactValidation(None, "invalid_structure")
-        intervals.append((start, end))
+            raise ValueError("Invalid VAD speech interval.")
+        validated.append((start, end))
         previous_end = end
-    return VadArtifactValidation(intervals, None)
+    return validated
 
 
 def chunk_payload(plan: AsrPipelinePlan, transcript: ChunkTranscript) -> dict[str, Any]:
     return {
-        "schema_version": ASR_PIPELINE_SCHEMA_VERSION,
-        "plan": plan.to_dict(),
-        **asdict(transcript),
+        "plan_id": plan.plan_id,
+        "chunk_index": transcript.chunk_index,
+        "text": transcript.text,
+        "items": [asdict(item) for item in transcript.words],
     }
 
 
 def transcript_from_payload(data: Any, plan: AsrPipelinePlan) -> ChunkTranscript | None:
     if (
         not isinstance(data, dict)
-        or data.get("schema_version") != ASR_PIPELINE_SCHEMA_VERSION
-        or data.get("plan") != plan.to_dict()
+        or set(data) != {"plan_id", "chunk_index", "text", "items"}
+        or data["plan_id"] != plan.plan_id
+        or type(data["chunk_index"]) is not int
+        or not isinstance(data["text"], str)
+        or not isinstance(data["items"], list)
     ):
         return None
     try:
+        chunk_index = data["chunk_index"]
+        layout = plan.chunks[chunk_index]
+        words = []
+        for item in data["items"]:
+            if not isinstance(item, dict) or set(item) != {
+                "text",
+                "start",
+                "end",
+                "probability",
+            }:
+                return None
+            if not isinstance(item["text"], str):
+                return None
+            for field in ("start", "end"):
+                value = item[field]
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                ):
+                    return None
+            probability = item["probability"]
+            if probability is not None and (
+                isinstance(probability, bool)
+                or not isinstance(probability, (int, float))
+                or not math.isfinite(probability)
+            ):
+                return None
+            words.append(
+                TranscriptWord(
+                    text=item["text"],
+                    start=item["start"],
+                    end=item["end"],
+                    probability=probability,
+                )
+            )
         transcript = ChunkTranscript(
-            chunk_index=data["chunk_index"],
-            start_sample=data["start_sample"],
-            end_sample=data["end_sample"],
+            chunk_index=chunk_index,
+            start_sample=layout.start_sample,
+            end_sample=layout.end_sample,
             text=data["text"],
-            words=tuple(TranscriptWord(**word) for word in data["words"]),
-            provider_metadata=dict(data["provider_metadata"]),
-            elapsed_seconds=float(data["elapsed_seconds"]),
-            cleanup_report=CleanupReport(**data["cleanup_report"]),
+            words=tuple(words),
+            provider_metadata={},
+            elapsed_seconds=0.0,
         )
-        layout = plan.chunks[transcript.chunk_index]
-        if (
-            transcript.chunk_index != layout.index
-            or transcript.start_sample != layout.start_sample
-            or transcript.end_sample != layout.end_sample
-        ):
+        if transcript.chunk_index != layout.index:
             return None
         transcript.validate(language=str(plan.provider_request["language"]))
     except (AlignmentContractError, IndexError, KeyError, TypeError, ValueError):
@@ -190,23 +238,25 @@ def load_chunk_results(root: Path, plan: AsrPipelinePlan) -> dict[str, ChunkTran
     return results
 
 
-def rebuild_progress(
-    plan: AsrPipelinePlan,
-    results: dict[str, ChunkTranscript],
-    failures: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    failures = failures or {}
-    return {
-        "schema_version": ASR_PIPELINE_SCHEMA_VERSION,
-        "plan": plan.to_dict(),
-        "chunks": {
-            (key := chunk_key(layout.index)): {
-                "status": "succeeded"
-                if key in results
-                else ("failed" if key in failures else "pending"),
-                "error": failures.get(key),
-                "result_path": f"chunk_results/{key}.json",
-            }
-            for layout in plan.chunks
-        },
-    }
+def _matches_dataclass_payload(data: Any, expected: dict[str, Any]) -> bool:
+    if not isinstance(data, dict) or set(data) != set(expected):
+        return False
+    return all(
+        type(data[key]) is type(expected_value) and data[key] == expected_value
+        for key, expected_value in expected.items()
+    )
+
+
+def _same_json_value(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(
+            _same_json_value(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _same_json_value(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right

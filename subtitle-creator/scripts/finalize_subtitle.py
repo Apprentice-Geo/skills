@@ -14,8 +14,13 @@ from .subtitle_job import (
     compare_normalized_correction,
     expected_srt_bytes,
     read_json_object,
-    sha256_file,
     validate_job,
+)
+from .process_logging import (
+    LoggingSession,
+    create_workflow_log_path,
+    get_logger,
+    result,
 )
 
 
@@ -73,31 +78,22 @@ def finalize_subtitle(job_path: Path) -> Path:
     baseline = read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True)
     normalized_path = Path(artifacts["normalized_transcript"])
     normalized = read_json_object(normalized_path, decimal_numbers=True)
-    changed_ids = compare_normalized_correction(
-        baseline,
-        normalized,
-        audio_id=job["audio"]["id"],
-        variant_id=job["transcription"]["variant_id"],
-        manifest_path=Path(job["transcription"]["manifest_path"]),
-    )
-    normalized_digest = sha256_file(normalized_path)
+    changed_ids = compare_normalized_correction(baseline, normalized)
     subtitle_path = (job_path.parent / SUBTITLE_FILENAME).resolve()
     recorded_subtitle = artifacts["subtitle"]
+    expected_subtitle = expected_srt_bytes(normalized)
     if (
-        artifacts["normalized_transcript_sha256"] == normalized_digest
-        and recorded_subtitle == str(subtitle_path)
+        recorded_subtitle == str(subtitle_path)
         and subtitle_path.is_file()
-        and artifacts["subtitle_sha256"] == sha256_file(subtitle_path)
+        and subtitle_path.read_bytes() == expected_subtitle
         and job["changed_segment_ids"] == changed_ids
     ):
         return subtitle_path
 
-    _atomic_write(subtitle_path, expected_srt_bytes(normalized))
+    _atomic_write(subtitle_path, expected_subtitle)
 
     job["changed_segment_ids"] = changed_ids
-    artifacts["normalized_transcript_sha256"] = normalized_digest
     artifacts["subtitle"] = str(subtitle_path)
-    artifacts["subtitle_sha256"] = sha256_file(subtitle_path)
     validate_job(job_path, job)
     atomic_write_json(job_path, job)
     return subtitle_path
@@ -107,12 +103,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Generate and publish an SRT subtitle.")
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
     try:
-        subtitle_path = finalize_subtitle(Path(parser.parse_args(argv).subtitle_job_path))
-    except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+        arguments = parser.parse_args(argv)
+    except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    print(f"subtitle: {subtitle_path}")
-    return 0
+    session = LoggingSession(create_workflow_log_path("finalize-subtitle")).start()
+    try:
+        try:
+            subtitle_path = finalize_subtitle(Path(arguments.subtitle_job_path))
+            session.move_to(subtitle_path.parent)
+            result(get_logger(__name__), "subtitle: %s", subtitle_path)
+            return 0
+        except (OSError, SubtitleJobError, TypeError, ValueError) as error:
+            session.report_failure(error)
+            return 1
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":

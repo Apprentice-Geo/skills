@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import numpy as np
+import pytest
 
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
 from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
@@ -15,6 +16,8 @@ from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
 from scripts.config import QWEN3_ASR_DEVICE_MAP, QWEN3_ASR_DTYPE
 from scripts.process_logging import LoggingSession, get_logger
 from scripts.runtime_options import TranscribeOptions
+
+pytestmark = pytest.mark.usefixtures("installed_models")
 
 
 @contextmanager
@@ -137,7 +140,7 @@ def test_qwen_provider_parses_probability_as_none() -> None:
 
 
 def test_whisper_prepare_logs_only_safe_model_configuration(
-    workspace_tmp_path: Path, monkeypatch
+    workspace_tmp_path: Path, monkeypatch, installed_models
 ) -> None:
     faster_whisper = ModuleType("faster_whisper")
     faster_whisper.WhisperModel = lambda *_args, **_kwargs: object()
@@ -145,7 +148,7 @@ def test_whisper_prepare_logs_only_safe_model_configuration(
     provider = WhisperProvider(
         TranscribeOptions(
             language="en",
-            model_path="custom-whisper",
+            model_path=str(installed_models / "faster-whisper-small"),
             device="cpu",
             compute_type="int8",
         )
@@ -163,13 +166,13 @@ def test_whisper_prepare_logs_only_safe_model_configuration(
 
     log_text = log_path.read_text(encoding="utf-8")
     assert (
-        "provider=faster-whisper model=custom-whisper device=cpu compute_type=int8 "
+        f"provider=faster-whisper model={installed_models / 'faster-whisper-small'} device=cpu compute_type=int8 "
         "policy=whisper-cpu num_workers=2 cpu_threads=3"
     ) in log_text
 
 
 def test_qwen_prepare_logs_only_safe_model_configuration(
-    workspace_tmp_path: Path, monkeypatch
+    workspace_tmp_path: Path, monkeypatch, installed_models
 ) -> None:
     torch = ModuleType("torch")
     torch.cuda = SimpleNamespace(is_available=lambda: True)
@@ -185,9 +188,6 @@ def test_qwen_prepare_logs_only_safe_model_configuration(
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "qwen_asr", qwen_asr)
     monkeypatch.setitem(sys.modules, "transformers", transformers)
-    monkeypatch.setattr(
-        "scripts.asr.providers.qwen3_asr.model_has_weights", lambda *_args: True
-    )
     provider = Qwen3AsrProvider("zh")
     log_path = workspace_tmp_path / "qwen-prepare.log"
 
@@ -313,6 +313,42 @@ def test_whisper_policy_shares_one_prepared_model_across_workers(monkeypatch) ->
     assert failures == {}
     assert seen_models == [model, model]
     assert cached == ["ok", "ok"]
+
+
+def test_execution_policies_accept_caller_prepared_models() -> None:
+    audio = NormalizedAudio(np.zeros(16_000, dtype=np.float32))
+    layout = ChunkLayout(0, 0, 16_000, "audio_end", 1)
+    prepared = object()
+    seen: list[object] = []
+    provider = SimpleNamespace(
+        name="test",
+        prepare=lambda _identity: pytest.fail("prepare must not be called"),
+        transcribe_one=lambda model, *_args: seen.append(model) or "one",
+        transcribe_batch=lambda model, _items: seen.append(model) or ["batch"],
+    )
+
+    whisper_failures = WhisperCpuPolicy(
+        TranscribeOptions(num_workers=1, cpu_threads=1)
+    ).execute(
+        provider,
+        audio,
+        [layout],
+        {"num_workers": 1, "cpu_threads": 1},
+        lambda _result: None,
+        prepared_model=prepared,
+    )
+    qwen_failures = Qwen3AsrCudaPolicy().execute(
+        provider,
+        audio,
+        [layout],
+        {"batch_size": 1},
+        lambda _result: None,
+        prepared_model=prepared,
+    )
+
+    assert whisper_failures == {}
+    assert qwen_failures == {}
+    assert seen == [prepared, prepared]
 
 
 def test_whisper_policy_returns_final_exception_and_logs_second_traceback(

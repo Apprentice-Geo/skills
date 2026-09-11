@@ -17,11 +17,13 @@ from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     get_logger,
-    terminal_info,
+    result,
+    status,
 )
 from scripts.runtime_options import FetchOptions, PipelineOptions
 from scripts.summary_job import (
     JOB_FILENAME,
+    SCHEMA_VERSION,
     job_lock,
     load_job,
     publish_job,
@@ -199,7 +201,7 @@ def _job_base(
         Path(path).resolve() for path in fetch_result.get("audio_files") or []
     ]
     return {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "status": "preparing",
         "video": {
             "bvid": str(fetch_result["video_id"]),
@@ -219,7 +221,6 @@ def _job_base(
             "subtitle_skipped": bool(options.skip_subtitles),
         },
         "transcript": None,
-        "transcription_manifest": None,
         "prompt": None,
         "error": None,
     }
@@ -252,7 +253,7 @@ def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
     except ValueError as exc:
         raise ValueError("Video result path escapes the results directory.") from exc
     return result_dir / JOB_FILENAME, {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "status": "preparing",
         "video": {
             "bvid": video_id,
@@ -268,7 +269,6 @@ def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
             "subtitle_skipped": bool(options.skip_subtitles),
         },
         "transcript": None,
-        "transcription_manifest": None,
         "prompt": None,
         "error": None,
     }
@@ -287,7 +287,6 @@ def _failed_job(payload: dict[str, Any], stage: str, exc: Exception) -> dict[str
         **payload,
         "status": "failed",
         "transcript": None,
-        "transcription_manifest": None,
         "prompt": None,
         "error": {
             "stage": stage,
@@ -345,7 +344,7 @@ def _run_pipeline_unlocked(
     except Exception as exc:
         publish_job(job_path, _failed_job(job, "fetch", exc))
         raise
-    terminal_info(
+    status(
         logger,
         "[Stage] Fetch completed in %s",
         format_duration(time.perf_counter() - fetch_started_at),
@@ -394,7 +393,7 @@ def _run_pipeline_unlocked(
                 report_zero_duration=False,
             )
             stage = "build_prompt"
-            terminal_info(logger, "[Stage] Build summary prompt")
+            status(logger, "[Stage] Build summary prompt")
             prompt_result = write_summary_prompt(
                 result_dir=result_dir,
                 video_id=fetch_result["video_id"],
@@ -427,20 +426,20 @@ def _run_pipeline_unlocked(
         publish_job(job_path, _failed_job(job, stage, exc))
         raise
 
-    terminal_info(
+    status(
         logger,
         "Pipeline prepared in %s",
         format_duration(time.perf_counter() - pipeline_started_at),
     )
-    terminal_info(logger, "Summary Job: %s", path_to_posix(job_path))
+    result(logger, "Summary Job: %s", path_to_posix(job_path))
     if job["status"] == "needs_transcription":
-        terminal_info(
+        result(
             logger,
             "Transcription required for audio: %s",
             job["resources"]["audio"],
         )
     else:
-        terminal_info(
+        result(
             logger,
             "Summary Prompt: %s",
             path_to_posix(result_dir / job["prompt"]["path"]),

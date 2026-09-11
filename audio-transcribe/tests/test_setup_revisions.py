@@ -1,13 +1,141 @@
+import ast
 import json
+import tomllib
 from pathlib import Path
+
+import pytest
 
 from scripts.model_artifacts import model_has_weights
 from scripts.model_identity import MODEL_REVISIONS
+from scripts.process_logging import SetupError
 from scripts.setup import install_model
 from scripts.setup.download_models import download_model
+from scripts.setup.install_core import verify_cpu_pytorch_build
 
 
-def test_setup_and_variant_identity_share_pinned_revisions() -> None:
+def test_dependency_profiles_and_sources_are_explicit_and_mutually_exclusive() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    project = config["project"]
+    extras = project["optional-dependencies"]
+
+    for dependency in ("speechbrain", "torch", "torchaudio"):
+        assert dependency not in project["dependencies"]
+        assert dependency in extras["cpu"]
+        assert dependency in extras["qwen3-asr"]
+
+    uv = config["tool"]["uv"]
+    assert uv["sources"]["audio-transcribe-contract"] == {
+        "path": "packages/audio-transcribe-contract"
+    }
+    assert uv["sources"]["torch"] == [
+        {"index": "pytorch-cpu", "extra": "cpu"},
+        {"index": "pytorch-cu126", "extra": "qwen3-asr"},
+    ]
+    assert uv["sources"]["torchaudio"] == uv["sources"]["torch"]
+    assert uv["conflicts"] == [[{"extra": "cpu"}, {"extra": "qwen3-asr"}]]
+    indexes = {entry["name"]: entry for entry in uv["index"]}
+    assert indexes["pytorch-cpu"]["explicit"] is True
+    assert indexes["pytorch-cpu"]["url"] == "https://download.pytorch.org/whl/cpu"
+    assert indexes["pytorch-cu126"]["explicit"] is True
+    assert indexes["pytorch-cu126"]["url"] == ("https://download.pytorch.org/whl/cu126")
+    lock = (root / "uv.lock").read_text(encoding="utf-8")
+    assert 'registry = "https://download.pytorch.org/whl/cpu"' in lock
+    assert 'registry = "https://download.pytorch.org/whl/cu126"' in lock
+
+
+def test_default_setup_selects_cpu_extra_and_never_all_extras() -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "scripts" / "setup" / "bootstrap.py").read_text(encoding="utf-8")
+
+    tree = ast.parse(source)
+    list_literals = [
+        [element.value for element in node.elts]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.List)
+        and all(isinstance(element, ast.Constant) for element in node.elts)
+    ]
+    assert [
+        "uv",
+        "sync",
+        "--python",
+        "3.12",
+        "--no-dev",
+        "--extra",
+        "cpu",
+    ] in list_literals
+    assert "--all-extras" not in source
+
+
+@pytest.mark.parametrize(
+    ("cuda_build", "raises"),
+    [(None, False), ("12.6", True)],
+)
+def test_default_setup_requires_cpu_pytorch_build(cuda_build, raises) -> None:
+    class Logger:
+        def run(self, *_args, **_kwargs):
+            payload = {
+                "version": "2.7.1",
+                "cuda_build": cuda_build,
+                "cuda_available": False,
+            }
+            return type("Result", (), {"output": json.dumps(payload)})()
+
+    if raises:
+        with pytest.raises(SetupError, match="requires the CPU PyTorch build"):
+            verify_cpu_pytorch_build(Path("python.exe"), Logger(), {})
+    else:
+        verify_cpu_pytorch_build(Path("python.exe"), Logger(), {})
+
+
+@pytest.mark.parametrize(
+    ("cuda_build", "cuda_available", "error"),
+    [
+        (None, False, "CUDA-enabled PyTorch build"),
+        ("12.6", False, "available CUDA GPU"),
+    ],
+)
+def test_qwen_environment_rejects_unready_cuda_before_model_download(
+    cuda_build, cuda_available, error
+) -> None:
+    events: list[str] = []
+
+    class Logger:
+        def run(self, command, description, **_kwargs):
+            events.append(description)
+            if "CUDA environment" in description:
+                payload = {
+                    "version": "2.7.1",
+                    "cuda_build": cuda_build,
+                    "cuda_available": cuda_available,
+                }
+                return type("Result", (), {"output": json.dumps(payload)})()
+            return type("Result", (), {"output": ""})()
+
+    with pytest.raises(SetupError, match=error):
+        install_model.verify_qwen3_asr_environment(Path("python.exe"), Logger())
+
+    assert events == ["Verify Qwen3-ASR imports", "Verify Qwen3-ASR CUDA environment"]
+
+
+def test_qwen_environment_accepts_cuda_build_with_available_gpu() -> None:
+    class Logger:
+        def run(self, _command, description, **_kwargs):
+            output = ""
+            if "CUDA environment" in description:
+                output = json.dumps(
+                    {
+                        "version": "2.7.1+cu126",
+                        "cuda_build": "12.6",
+                        "cuda_available": True,
+                    }
+                )
+            return type("Result", (), {"output": output})()
+
+    install_model.verify_qwen3_asr_environment(Path("python.exe"), Logger())
+
+
+def test_setup_and_config_identity_share_pinned_revisions() -> None:
     assert (
         install_model.WHISPER_MODEL_REVISION
         == (MODEL_REVISIONS["faster-whisper"]["revision"])

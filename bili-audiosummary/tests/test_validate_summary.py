@@ -168,7 +168,9 @@ def test_validate_summary_reports_language_warning_separately_from_errors(
 def test_main_prints_pass_message_for_valid_summary(
     workspace_tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(validate_summary, "SKILL_ROOT", workspace_tmp_path)
     summary = workspace_tmp_path / "summary.md"
     summary.write_text("# Summary\n\n- Complete.\n", encoding="utf-8")
 
@@ -181,32 +183,65 @@ def test_main_prints_pass_message_for_valid_summary(
 def test_main_prints_all_errors_for_invalid_summary(
     workspace_tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(validate_summary, "SKILL_ROOT", workspace_tmp_path)
     summary = workspace_tmp_path / "summary.md"
     summary.write_text("{{title}}\n<!-- remove this -->\n", encoding="utf-8")
 
     exit_code = validate_summary.main([str(summary)])
 
     assert exit_code == 1
-    assert capsys.readouterr().out == (
+    terminal = capsys.readouterr()
+    assert terminal.out == ""
+    assert terminal.err.startswith(
         "Summary validation failed:\n"
         "- placeholder remains\n"
         "- template comment remains\n"
     )
+    assert "Full log:" in terminal.err
 
 
 def test_main_warns_about_template_language_without_failing(
     workspace_tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(validate_summary, "SKILL_ROOT", workspace_tmp_path)
     summary = workspace_tmp_path / "BVTEST_summary_en.md"
     summary.write_text("# 视频总结\n\n这是完整内容。\n", encoding="utf-8")
 
     exit_code = validate_summary.main([str(summary)])
 
     assert exit_code == 0
-    assert capsys.readouterr().out == (
-        "Summary validation passed with warnings:\n"
+    terminal = capsys.readouterr()
+    assert terminal.out == "Summary validation passed with warnings:\n"
+    assert terminal.err == (
         "- summary language does not match the en template: English letters are "
         "0.0% of the language characters; rewrite the summary in English\n"
     )
+
+
+def test_main_logs_runtime_read_error_without_terminal_traceback(
+    workspace_tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(validate_summary, "SKILL_ROOT", workspace_tmp_path)
+    monkeypatch.setattr(
+        validate_summary,
+        "validate_summary",
+        lambda _path: (_ for _ in ()).throw(PermissionError("read denied")),
+    )
+
+    assert validate_summary.main([str(workspace_tmp_path / "summary.md")]) == 1
+
+    terminal = capsys.readouterr()
+    assert terminal.out == ""
+    assert terminal.err.startswith("Error: read denied\nFull log: ")
+    assert "Traceback" not in terminal.err
+    logs = list((workspace_tmp_path / ".cache" / "logs").glob("validate-*.log"))
+    assert len(logs) == 1
+    log_text = logs[0].read_text(encoding="utf-8")
+    assert "Traceback (most recent call last)" in log_text
+    assert "PermissionError: read denied" in log_text

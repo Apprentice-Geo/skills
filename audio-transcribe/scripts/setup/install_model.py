@@ -5,6 +5,12 @@ import os
 import sys
 from pathlib import Path
 
+from scripts.dependency_policy import (
+    LANGUAGE_ID_IMPORTS,
+    PYTORCH_PROBE,
+    QWEN3_ASR_IMPORTS,
+    parse_pytorch_probe,
+)
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
@@ -56,10 +62,11 @@ def install_language_id_model(
         )
 
 
-def verify_qwen3_asr_imports(python: Path, logger: ProcessLogger) -> None:
+def verify_qwen3_asr_environment(python: Path, logger: ProcessLogger) -> None:
+    imports = LANGUAGE_ID_IMPORTS + QWEN3_ASR_IMPORTS
     try:
         logger.run(
-            [python, "-c", "import qwen_asr; import torch; import torchaudio"],
+            [python, "-c", "; ".join(f"import {module}" for module in imports)],
             "Verify Qwen3-ASR imports",
             env=os.environ,
         )
@@ -69,6 +76,25 @@ def verify_qwen3_asr_imports(python: Path, logger: ProcessLogger) -> None:
             r"uv sync --python 3.12 --no-dev --extra qwen3-asr "
             "before installing Qwen3-ASR models."
         ) from exc
+    result = logger.run(
+        [python, "-c", PYTORCH_PROBE],
+        "Verify Qwen3-ASR CUDA environment",
+        env=os.environ,
+    )
+    try:
+        probe = parse_pytorch_probe(result.output)
+    except ValueError as exc:
+        raise SetupError("Unable to inspect the installed PyTorch build.") from exc
+    if probe["cuda_build"] is None:
+        raise SetupError(
+            "Qwen3-ASR requires a CUDA-enabled PyTorch build. Run "
+            r"uv sync --python 3.12 --no-dev --extra qwen3-asr."
+        )
+    if not probe["cuda_available"]:
+        raise SetupError(
+            "Qwen3-ASR requires an available CUDA GPU and compatible driver; "
+            f"the installed PyTorch build targets CUDA {probe['cuda_build']}."
+        )
 
 
 def install_faster_whisper_model(
@@ -93,9 +119,6 @@ def install_qwen_models(
     paths: SetupPaths,
     logger: ProcessLogger,
 ) -> None:
-    logger.step(3, 5, "Verify Qwen3-ASR extra imports")
-    verify_qwen3_asr_imports(python, logger)
-
     logger.step(4, 5, "Download and verify Qwen3-ASR model")
     download_model(
         python,
@@ -136,7 +159,11 @@ def run_model_setup(model: str, root: Path | None = None) -> Path:
         total_steps = 3 if model == "faster-whisper" else 5
         logger.step(1, total_steps, "Verify uv-managed Python 3.12 environment")
         assert_python_312(read_python_version(python, logger), "Existing .venv")
-        logger.step(2, total_steps, "Download and verify language ID model")
+        if model == "qwen3-asr":
+            logger.step(2, total_steps, "Verify Qwen3-ASR CUDA environment")
+            verify_qwen3_asr_environment(python, logger)
+        language_step = 2 if model == "faster-whisper" else 3
+        logger.step(language_step, total_steps, "Download and verify language ID model")
         install_language_id_model(python, paths, logger)
 
         if model == "faster-whisper":

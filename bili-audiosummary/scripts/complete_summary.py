@@ -5,6 +5,15 @@ import math
 from pathlib import Path
 from typing import Any
 
+from scripts.config import SKILL_ROOT
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    error,
+    get_logger,
+    warning,
+)
+from scripts.process_logging import result as log_result
 from scripts.summary_job import (
     JobValidationError,
     job_lock,
@@ -14,6 +23,8 @@ from scripts.summary_job import (
 )
 from scripts.utils import read_json
 from scripts.validate_summary import ValidationResult, validate_summary
+
+logger = get_logger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -26,14 +37,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _validate_source(job_path: Path, job: dict[str, Any]) -> None:
     transcript = job["transcript"]
+    transcript_path = resolve_local_path(
+        job_path, transcript["path"], "transcript.path"
+    )
+    if not transcript_path.is_file():
+        raise JobValidationError(f"transcript does not exist: {transcript_path}")
     if transcript["source"] == "bilibili_subtitle":
-        transcript_path = resolve_local_path(
-            job_path, transcript["path"], "transcript.path"
-        )
-        if not transcript_path.is_file():
-            raise JobValidationError(
-                f"subtitle transcript does not exist: {transcript_path}"
-            )
         transcript_payload = read_json(transcript_path)
         if (
             not isinstance(transcript_payload, dict)
@@ -108,23 +117,33 @@ def complete_summary(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    try:
-        job, validation = complete_summary(args.job)
-    except (OSError, ValueError) as exc:
-        print(f"Cannot complete summary: {exc}")
-        return 1
-    if not validation.ok:
-        print("Summary validation failed:")
-        for error in validation.errors:
-            print(f"- {error}")
-        return 1
-    if validation.warnings:
-        print("Summary validation passed with warnings:")
-        for warning in validation.warnings:
-            print(f"- {warning}")
-    else:
-        print("Summary validation passed.")
-    print(f"Summary job is {job['status']}: {args.job.resolve()}")
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "complete")
+    with LoggingSession(log_path) as session:
+        try:
+            resolved_job_path = args.job.resolve()
+            job, validation = complete_summary(resolved_job_path)
+        except (OSError, ValueError) as exc:
+            session.report_failure(exc)
+            return 1
+        if not validation.ok:
+            message = "Summary validation failed:\n" + "\n".join(
+                f"- {item}" for item in validation.errors
+            )
+            error(logger, "%s\nFull log: %s", message, session.log_path)
+            return 1
+        session.move_to(resolved_job_path.parent)
+        if validation.warnings:
+            log_result(logger, "Summary validation passed with warnings:")
+            for item in validation.warnings:
+                warning(logger, "- %s", item)
+        else:
+            log_result(logger, "Summary validation passed.")
+        log_result(
+            logger,
+            "Summary job is %s: %s",
+            job["status"],
+            resolved_job_path,
+        )
     return 0
 
 

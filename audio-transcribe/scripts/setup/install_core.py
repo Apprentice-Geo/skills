@@ -4,7 +4,12 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from scripts.dependency_policy import CORE_IMPORTS
+from scripts.dependency_policy import (
+    BASE_IMPORTS,
+    LANGUAGE_ID_IMPORTS,
+    PYTORCH_PROBE,
+    parse_pytorch_probe,
+)
 from scripts.process_logging import ProcessLogger, SetupError
 
 FFMPEG_RESOLVER = r"""
@@ -32,12 +37,36 @@ def verify_core_imports(
     logger: ProcessLogger,
     env: Mapping[str, str],
 ) -> None:
-    statement = "; ".join(f"import {module}" for module in CORE_IMPORTS)
+    statement = "; ".join(
+        f"import {module}" for module in BASE_IMPORTS + LANGUAGE_ID_IMPORTS
+    )
     logger.run(
         [python, "-c", statement],
         "Verify core imports",
         env=env,
     )
+
+
+def verify_cpu_pytorch_build(
+    python: Path,
+    logger: ProcessLogger,
+    env: Mapping[str, str],
+) -> None:
+    result = logger.run(
+        [python, "-c", PYTORCH_PROBE],
+        "Verify CPU PyTorch build",
+        env=env,
+    )
+    try:
+        probe = parse_pytorch_probe(result.output)
+    except ValueError as exc:
+        raise SetupError("Unable to inspect the installed PyTorch build.") from exc
+    if probe["cuda_build"] is not None:
+        raise SetupError(
+            "Default setup requires the CPU PyTorch build, but found "
+            f"torch {probe['version']} with CUDA {probe['cuda_build']}. "
+            r"Run uv sync --python 3.12 --no-dev --extra cpu."
+        )
 
 
 def resolve_packaged_ffmpeg(

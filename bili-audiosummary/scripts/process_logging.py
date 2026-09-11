@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 import sys
-import traceback
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,9 +15,13 @@ LOGGER_NAME = "bili_audiosummary"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
-class TerminalFilter(logging.Filter):
+class ConsoleFilter(logging.Filter):
+    def __init__(self, console: str) -> None:
+        super().__init__()
+        self.console = console
+
     def filter(self, record: logging.LogRecord) -> bool:
-        return bool(getattr(record, "terminal", False))
+        return getattr(record, "console", None) == self.console
 
 
 class ForwardingHandler(logging.Handler):
@@ -45,8 +48,33 @@ def get_logger(name: str | None = None) -> logging.Logger:
     return logging.getLogger(f"{LOGGER_NAME}.{name}")
 
 
-def terminal_info(logger: logging.Logger, message: str, *args: object) -> None:
-    logger.info(message, *args, extra={"terminal": True})
+def detail(
+    logger: logging.Logger,
+    message: str,
+    *args: object,
+    level: int = logging.INFO,
+) -> None:
+    logger.log(level, message, *args, extra={"console": None})
+
+
+def status(logger: logging.Logger, message: str, *args: object) -> None:
+    logger.info(message, *args, extra={"console": "stdout"})
+
+
+def result(logger: logging.Logger, message: str, *args: object) -> None:
+    logger.info(message, *args, extra={"console": "stdout"})
+
+
+def warning(logger: logging.Logger, message: str, *args: object) -> None:
+    logger.warning(message, *args, extra={"console": "stderr"})
+
+
+def error(logger: logging.Logger, message: str, *args: object) -> None:
+    logger.error(message, *args, extra={"console": "stderr"})
+
+
+def exception(logger: logging.Logger, message: str, *args: object) -> None:
+    logger.exception(message, *args, extra={"console": None})
 
 
 def create_timestamped_log_path(logs_dir: Path, prefix: str) -> Path:
@@ -61,7 +89,8 @@ class LoggingSession:
         self.log_path = Path(log_path)
         self._logger = get_logger()
         self._file_handler: logging.FileHandler | None = None
-        self._stream_handler: logging.StreamHandler | None = None
+        self._stdout_handler: logging.StreamHandler | None = None
+        self._stderr_handler: logging.StreamHandler | None = None
         self._captured_loggers: dict[str, CapturedLoggerState] = {}
         self._previous_showwarning = None
         self._previous_logger_state = None
@@ -84,7 +113,9 @@ class LoggingSession:
 
         previous = LoggingSession._current
         if previous is not None and previous is not self:
-            previous.close()
+            raise RuntimeError(
+                f"another logging session is already active: {previous.log_path}"
+            )
 
         self._previous_logger_state = CapturedLoggerState(
             handlers=list(self._logger.handlers),
@@ -97,12 +128,19 @@ class LoggingSession:
         self._logger.setLevel(logging.DEBUG)
         self._logger.propagate = False
         self._file_handler = self._make_file_handler(self.log_path)
-        self._stream_handler = logging.StreamHandler(sys.stdout)
-        self._stream_handler.setLevel(logging.DEBUG)
-        self._stream_handler.setFormatter(logging.Formatter("%(message)s"))
-        # Filter 过滤器，只输出 extra={"terminal": True} 的日志记录到终端
-        self._stream_handler.addFilter(TerminalFilter())
-        self._logger.handlers[:] = [self._file_handler, self._stream_handler]
+        self._stdout_handler = logging.StreamHandler(sys.stdout)
+        self._stdout_handler.setLevel(logging.DEBUG)
+        self._stdout_handler.setFormatter(logging.Formatter("%(message)s"))
+        self._stdout_handler.addFilter(ConsoleFilter("stdout"))
+        self._stderr_handler = logging.StreamHandler(sys.stderr)
+        self._stderr_handler.setLevel(logging.DEBUG)
+        self._stderr_handler.setFormatter(logging.Formatter("%(message)s"))
+        self._stderr_handler.addFilter(ConsoleFilter("stderr"))
+        self._logger.handlers[:] = [
+            self._file_handler,
+            self._stdout_handler,
+            self._stderr_handler,
+        ]
         self._started = True
         LoggingSession._current = self
         self.capture_logger("py.warnings")
@@ -182,9 +220,9 @@ class LoggingSession:
         return target_path
 
     def report_failure(self, exc: BaseException) -> None:
-        get_logger(__name__).exception("Process failed")
-        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
-        print(f"Full log: {self.log_path}", file=sys.stderr)
+        logger = get_logger(__name__)
+        logger.error("Process failed: %s", exc, exc_info=exc)
+        error(logger, "Error: %s\nFull log: %s", exc, self.log_path)
 
     def close(self) -> None:
         if not self._started:
@@ -203,7 +241,11 @@ class LoggingSession:
             state.forwarding_handler.close()
         self._captured_loggers.clear()
 
-        for handler in (self._file_handler, self._stream_handler):
+        for handler in (
+            self._file_handler,
+            self._stdout_handler,
+            self._stderr_handler,
+        ):
             if handler is None:
                 continue
             try:
@@ -223,7 +265,8 @@ class LoggingSession:
             self._logger.disabled = state.disabled
             self._previous_logger_state = None
         self._file_handler = None
-        self._stream_handler = None
+        self._stdout_handler = None
+        self._stderr_handler = None
         self._started = False
         if LoggingSession._current is self:
             LoggingSession._current = None
@@ -269,7 +312,13 @@ class ProcessLogger:
         self.logger = get_logger("setup")
 
     def step(self, current: int, total: int, message: str) -> None:
-        terminal_info(self.logger, "[%d/%d] %s", current, total, message)
+        status(self.logger, "[%d/%d] %s", current, total, message)
+
+    def result(self, message: str, *args: object) -> None:
+        result(self.logger, message, *args)
+
+    def report_failure(self, exc: BaseException) -> None:
+        self.session.report_failure(exc)
 
     def run(
         self,
@@ -299,9 +348,7 @@ class ProcessLogger:
                 subprocess.list2cmdline(command_text),
                 exc,
             )
-            raise SetupError(
-                f"{description} could not start. See {self.log_path}"
-            ) from exc
+            raise SetupError(f"{description} could not start.") from exc
         output = completed.stdout or ""
         self.logger.info(
             "$ %s\n%s[exit %d]",
@@ -312,11 +359,7 @@ class ProcessLogger:
 
         result = ProcessResult(completed.returncode, output)
         if check and completed.returncode != 0:
-            print(f"Error: {description} failed.", file=sys.stderr)
-            if output:
-                print(output.rstrip(), file=sys.stderr)
-            print(f"Full log: {self.log_path}", file=sys.stderr)
-            raise SetupError(f"{description} failed. See {self.log_path}")
+            raise SetupError(f"{description} failed.")
         return result
 
     def close(self) -> None:

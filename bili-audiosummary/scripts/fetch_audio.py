@@ -20,7 +20,8 @@ from scripts.process_logging import (
     YtDlpLogger,
     create_timestamped_log_path,
     get_logger,
-    terminal_info,
+    result,
+    status,
 )
 from scripts.runtime_options import FetchOptions
 from scripts.subtitle_utils import infer_subtitle_language
@@ -470,8 +471,8 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     options = FetchOptions.from_args(args)
     ensure_dir(options.output_dir)
     normalized_url = normalize_bilibili_video_url(options.url)
-    terminal_info(logger, "[Stage] Fetch metadata, subtitles, and audio")
-    terminal_info(logger, "[BiliBili] Extracting URL: %s", normalized_url)
+    status(logger, "[Stage] Fetch metadata, subtitles, and audio")
+    status(logger, "[BiliBili] Extracting URL: %s", normalized_url)
 
     cookie_path = resolve_cookie_path(options)
     if cookie_path and not options.cookies:
@@ -507,7 +508,7 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
         paths["result"], info, audio_files, subtitle_files, canonical_url
     )
 
-    terminal_info(logger, "Title: %s", info.get("title") or info.get("id"))
+    result(logger, "Title: %s", info.get("title") or info.get("id"))
     logger.info("BVID: %s", video_id)
     logger.info("Canonical URL: %s", canonical_url)
     logger.info("Result: %s", path_to_posix(paths["result"]))

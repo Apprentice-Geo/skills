@@ -5,11 +5,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from audio_transcribe_contract import ResultValidationError
-
 from scripts.utils import read_json, write_json_atomic
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 JOB_FILENAME = "summary_job.json"
 JOB_KEYS = {
     "schema_version",
@@ -17,7 +15,6 @@ JOB_KEYS = {
     "video",
     "resources",
     "transcript",
-    "transcription_manifest",
     "prompt",
     "error",
 }
@@ -28,7 +25,6 @@ STABLE_STATUSES = {
     "complete",
     "failed",
 }
-TranscriptionValidationError = ResultValidationError
 
 
 class JobValidationError(ValueError):
@@ -121,16 +117,11 @@ def validate_job(job_path: Path, payload: Any) -> dict[str, Any]:
             resolve_local_path(job_path, value, f"resources.{key}")
 
     transcript = payload.get("transcript")
-    transcription_manifest = payload.get("transcription_manifest")
     prompt = payload.get("prompt")
     error = payload.get("error")
 
     if status in {"preparing", "needs_transcription"}:
-        if (
-            transcript is not None
-            or transcription_manifest is not None
-            or prompt is not None
-        ):
+        if transcript is not None or prompt is not None:
             raise JobValidationError(
                 f"{status} job must not contain transcript or prompt"
             )
@@ -143,29 +134,10 @@ def validate_job(job_path: Path, payload: Any) -> dict[str, Any]:
         if set(transcript_payload) != {"source", "path"}:
             raise JobValidationError("transcript has an invalid shape")
         source = transcript_payload.get("source")
-        if source == "bilibili_subtitle":
+        if source in {"bilibili_subtitle", "audio_transcribe"}:
             resolve_local_path(
                 job_path, transcript_payload.get("path"), "transcript.path"
             )
-            if transcription_manifest is not None:
-                raise JobValidationError(
-                    "subtitle job must not contain transcription_manifest"
-                )
-        elif source == "audio_transcribe":
-            if (
-                not isinstance(transcript_payload.get("path"), str)
-                or not Path(transcript_payload["path"]).is_absolute()
-            ):
-                raise JobValidationError(
-                    "audio_transcribe transcript.path must be absolute"
-                )
-            if (
-                not isinstance(transcription_manifest, str)
-                or not Path(transcription_manifest).is_absolute()
-            ):
-                raise JobValidationError(
-                    "audio_transcribe transcription_manifest must be absolute"
-                )
         else:
             raise JobValidationError("transcript.source is invalid")
 
@@ -179,11 +151,7 @@ def validate_job(job_path: Path, payload: Any) -> dict[str, Any]:
         if error is not None:
             raise JobValidationError(f"{status} job must not contain an error")
     else:
-        if (
-            transcript is not None
-            or transcription_manifest is not None
-            or prompt is not None
-        ):
+        if transcript is not None or prompt is not None:
             raise JobValidationError("failed job must not contain transcript or prompt")
         error_payload = _require_mapping(error, "error")
         if set(error_payload) != {"stage", "type", "message"}:

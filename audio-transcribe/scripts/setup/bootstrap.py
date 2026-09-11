@@ -19,6 +19,7 @@ def run_setup(root: Path | None = None) -> Path:
     from scripts.setup.install_core import (
         resolve_packaged_ffmpeg,
         verify_core_imports,
+        verify_cpu_pytorch_build,
         verify_ffmpeg_executables,
     )
 
@@ -36,10 +37,10 @@ def run_setup(root: Path | None = None) -> Path:
             "Setup launcher",
         )
 
-        logger.step(2, 3, "Sync core dependencies")
+        logger.step(2, 3, "Sync default CPU dependencies")
         logger.run(
-            ["uv", "sync", "--python", "3.12", "--no-dev"],
-            "Sync core dependencies",
+            ["uv", "sync", "--python", "3.12", "--no-dev", "--extra", "cpu"],
+            "Sync default CPU dependencies",
             env=os.environ,
             cwd=root,
         )
@@ -47,6 +48,7 @@ def run_setup(root: Path | None = None) -> Path:
 
         logger.step(3, 3, "Verify core imports and packaged ffmpeg")
         verify_core_imports(venv_python, logger, os.environ)
+        verify_cpu_pytorch_build(venv_python, logger, os.environ)
         ffmpeg, ffprobe = resolve_packaged_ffmpeg(
             venv_python,
             logger,

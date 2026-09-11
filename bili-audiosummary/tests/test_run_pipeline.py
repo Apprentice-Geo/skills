@@ -94,14 +94,12 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
         "video",
         "resources",
         "transcript",
-        "transcription_manifest",
         "prompt",
         "error",
     }
     assert job["status"] == "prompt_ready"
     assert job["transcript"]["source"] == "bilibili_subtitle"
     assert job["resources"]["subtitle"] == "resource/subtitle/BVTEST.zh-Hans.srt"
-    assert job["transcription_manifest"] is None
     assert (result["job_path"].parent / "transcript.md").is_file()
     assert (result["job_path"].parent / job["prompt"]["path"]).is_file()
     prompt = (result["job_path"].parent / job["prompt"]["path"]).read_text(
@@ -307,7 +305,7 @@ def test_prepare_does_not_overwrite_existing_ready_job(
     write_json(transcript_path, {"segments": [{"text": "keep"}]})
     prompt_path.write_text("keep", encoding="utf-8")
     existing = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": status,
         "video": {
             "bvid": "BVTEST",
@@ -324,7 +322,6 @@ def test_prepare_does_not_overwrite_existing_ready_job(
             "source": "bilibili_subtitle",
             "path": "BVTEST_transcript.json",
         },
-        "transcription_manifest": None,
         "prompt": {
             "path": "BVTEST_summary_prompt.md",
             "summary_path": "BVTEST_summary_zh.md",
@@ -357,7 +354,7 @@ def test_prepare_page_job_does_not_touch_existing_base_ready_job(
     )
     base_job_path = workspace_tmp_path / "results" / "BVTEST" / "summary_job.json"
     existing = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": status,
         "video": {
             "bvid": "BVTEST",
@@ -374,7 +371,6 @@ def test_prepare_page_job_does_not_touch_existing_base_ready_job(
             "source": "bilibili_subtitle",
             "path": "BVTEST_transcript.json",
         },
-        "transcription_manifest": None,
         "prompt": {
             "path": "BVTEST_summary_prompt.md",
             "summary_path": "BVTEST_summary_zh.md",

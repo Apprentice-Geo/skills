@@ -3,10 +3,21 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from scripts.config import SKILL_ROOT
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    error,
+    get_logger,
+    warning,
+)
+from scripts.process_logging import result as log_result
+
 LANGUAGE_THRESHOLD = 0.8
 SUMMARY_LANGUAGE_PATTERN = re.compile(r"_summary_(zh|en)\.md$", re.IGNORECASE)
 CHINESE_CHARACTER_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 ENGLISH_LETTER_PATTERN = re.compile(r"[A-Za-z]")
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -97,24 +108,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    result = validate_summary(args.summary_path)
-    if result.ok:
-        if result.warnings:
-            print("Summary validation passed with warnings:")
-            for warning in result.warnings:
-                print(f"- {warning}")
-        else:
-            print("Summary validation passed.")
-        return 0
+    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "validate")
+    with LoggingSession(log_path) as session:
+        try:
+            validation = validate_summary(args.summary_path)
+        except (OSError, ValueError) as exc:
+            session.report_failure(exc)
+            return 1
+        if validation.ok:
+            if validation.warnings:
+                log_result(logger, "Summary validation passed with warnings:")
+                for item in validation.warnings:
+                    warning(logger, "- %s", item)
+            else:
+                log_result(logger, "Summary validation passed.")
+            return 0
 
-    print("Summary validation failed:")
-    for error in result.errors:
-        print(f"- {error}")
-    if result.warnings:
-        print("Summary validation warnings:")
-        for warning in result.warnings:
-            print(f"- {warning}")
-    return 1
+        message = "Summary validation failed:\n" + "\n".join(
+            f"- {item}" for item in validation.errors
+        )
+        if validation.warnings:
+            message += "\nSummary validation warnings:\n" + "\n".join(
+                f"- {item}" for item in validation.warnings
+            )
+        error(logger, "%s\nFull log: %s", message, log_path)
+        return 1
 
 
 if __name__ == "__main__":

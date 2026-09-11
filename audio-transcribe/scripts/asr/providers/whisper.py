@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -8,9 +9,9 @@ import numpy as np
 from scripts.asr.alignment import TranscriptWord
 from scripts.asr.chunking import ChunkLayout
 from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript
+from scripts.asr.prepared_model import PreparedModel, unwrap_model
 from scripts.config import DEFAULT_WHISPER_MODEL_DIR
-from scripts.model_artifacts import WHISPER_WEIGHT_PATTERNS, model_has_weights
-from scripts.model_identity import provider_model_identity
+from scripts.model_identity import validate_model
 from scripts.process_logging import get_logger
 from scripts.runtime_options import TranscribeOptions
 from scripts.utils import path_to_posix
@@ -33,7 +34,7 @@ class WhisperProvider:
         return {
             "provider": self.name,
             "language": self.language,
-            "model": provider_model_identity(self.name),
+            "model": validate_model(self.name, Path(self.model_path)),
             "beam_size": self.options.beam_size,
             "device": self.options.device,
             "compute_type": self.options.compute_type,
@@ -41,14 +42,7 @@ class WhisperProvider:
         }
 
     def prepare(self, execution_identity: dict[str, Any]) -> Any:
-        if not self.options.model_path and not model_has_weights(
-            DEFAULT_WHISPER_MODEL_DIR, WHISPER_WEIGHT_PATTERNS
-        ):
-            raise RuntimeError(
-                "Local faster-whisper model is missing. Run "
-                r"uv run --no-sync python -m scripts.setup.install_model --model faster-whisper "
-                "before using faster-whisper ASR."
-            )
+        verified_request = self.request_identity()
         from faster_whisper import WhisperModel
 
         logger.info(
@@ -62,7 +56,7 @@ class WhisperProvider:
             int(execution_identity["num_workers"]),
             int(execution_identity["cpu_threads"]),
         )
-        return WhisperModel(
+        model = WhisperModel(
             self.model_path,
             device=self.options.device,
             compute_type=self.options.compute_type,
@@ -70,11 +64,18 @@ class WhisperProvider:
             num_workers=int(execution_identity["num_workers"]),
         )
 
+        logger.info(
+            "ASR model loaded: provider=%s verified_installation=%s",
+            self.name,
+            verified_request["model"],
+        )
+        return PreparedModel.bind(model, verified_request, execution_identity)
+
     def transcribe_one(
         self, prepared: Any, samples: np.ndarray, layout: ChunkLayout
     ) -> ChunkTranscript:
         started = time.perf_counter()
-        raw_segments, info = prepared.transcribe(
+        raw_segments, info = unwrap_model(prepared).transcribe(
             samples,
             language=self.language,
             beam_size=self.options.beam_size,
