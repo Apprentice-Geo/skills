@@ -110,17 +110,9 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 
 ## 公共 Artifact 验证
 
-使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`。契约包 0.3.0 验证：
+使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`；完整校验合同见[公共 contract 与发布](ARCHITECTURE.md#公共-contract-与发布)。验证失败时，consumer 必须停止使用结果，生产端应使用原音频重新运行转写，由恢复流程决定重建或重新发布，不得手动修改公共 JSON。
 
-1. manifest 和正文的公共 schema version 为 3，status 为 `complete`；固定 `alignment_policy` 与当前实际 policy 字段匹配；
-2. `audio.id` 和 `request.config_digest` 是 64 字符 SHA-256 值，后者与排除自身字段后的 canonical request JSON 匹配；
-3. manifest 只声明 transcript artifact 及其 SHA-256；路径相对于 manifest 目录，不能逃逸该目录或指向 manifest 自身；
-4. `transcript.json` 存在，文件字节与记录的 SHA-256 匹配；
-5. 两份 JSON 的所有对象（包括 request 内全部配置）均要求精确字段集合和正确类型；拒绝未知字段、缺失字段和跨 Provider 配置。identity、Provider、language、duration、句子分段、item probability 和严格 timing contract 均有效。
-
-日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只验证元数据和路径，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。
-
-旧公共 schema 和旧入口/API 不兼容。不手动重命名或编辑旧文件迁移；重新运行命令生成 v3 结果。内部 policy 只记录实际生效字段，不维护独立 schema version。
+日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只供生产端检查恢复所需的元数据，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。旧公共 schema 和旧入口/API 不迁移，重新运行命令生成当前格式结果。
 
 ## Cache 恢复
 
