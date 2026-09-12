@@ -87,7 +87,7 @@ Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。
 
 ## 私有 cache
 
-私有 cache 只支持当前代码能够严格解析的格式，不承担 schema 兼容或迁移责任。`asr_plan.json` 通过 canonical plan payload 的 SHA-256 `plan_id` 绑定 source、Provider request（含公共 schema 版本）、execution policy、VAD、规划参数和 chunk layouts；读取时重新计算身份并验证精确字段、类型和 layout 不变量。旧 schema、未知字段、错误 policy 或损坏数据自然成为 cache miss。
+私有 cache 只支持当前代码能够严格解析的格式，不承担 schema 兼容或迁移责任。`asr_plan.json` 通过 canonical plan payload 的 SHA-256 `plan_id` 绑定 source、Provider request、execution policy、VAD、规划参数和 chunk layouts；读取时重新计算身份并验证精确字段、类型和 layout 不变量。旧 schema、未知字段、错误 policy 或损坏数据自然成为 cache miss。
 
 `vad_result.json` 只是 plan miss 时的可选输入。合法 plan 是 chunk 恢复的唯一权威，命中时不读取 VAD，也不从 VAD 重新推导 layout。chunk payload 仅保存 `plan_id`、`chunk_index`、accepted text 和 items；边界由 plan 恢复。Provider metadata、elapsed timing 和 `CleanupReport` 不落盘，因此 cleanup warning 只为本次新接受的 candidate 输出，不为 cached chunk 重放。
 
