@@ -7,13 +7,13 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-from .subtitle_job import JOB_FILENAME, RESULTS_DIR, SubtitleJobError
 from .process_logging import (
     LoggingSession,
     create_workflow_log_path,
     get_logger,
     result,
 )
+from .subtitle_job import JOB_FILENAME, RESULTS_DIR, SubtitleJobError
 
 JOB_ID_PATTERN = re.compile(r"[0-9a-f]{64}")
 

@@ -58,7 +58,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     request = {"config_digest": _canonical_sha256(request), **request}
     duration = 1.0
     transcript = {
-        "schema_version": 2,
+        "schema_version": 3,
         "audio_id": "a" * 64,
         "config_digest": request["config_digest"],
         "provider": provider,
@@ -81,7 +81,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     transcript_path = root / "transcript.json"
     _write_json(transcript_path, transcript)
     manifest = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "complete",
         "audio": {
             "id": "a" * 64,
@@ -209,17 +209,9 @@ def test_transcript_objects_are_recursively_strict(
     [
         ("execution_policy", resolved_request("qwen3-asr")["execution_policy"]),
         ("provider_identity", resolved_request("qwen3-asr")["provider_identity"]),
-        (
-            "alignment_policy",
-            {**resolved_request()["alignment_policy"], "schema_version": True},
-        ),
-        (
-            "text_normalization",
-            {**resolved_request()["text_normalization"], "schema_version": True},
-        ),
     ],
 )
-def test_resolved_request_rejects_mixed_provider_and_boolean_versions(
+def test_resolved_request_rejects_mixed_provider_configuration(
     workspace_tmp_path: Path, field: str, value: Any
 ) -> None:
     path = _write_result(workspace_tmp_path / "result")
@@ -236,8 +228,8 @@ def test_resolved_request_rejects_mixed_provider_and_boolean_versions(
         load_manifest(path)
 
 
-@pytest.mark.parametrize("target", ["manifest", "transcript", "request"])
-def test_v1_is_rejected_even_with_valid_digests(
+@pytest.mark.parametrize("target", ["manifest", "transcript"])
+def test_unsupported_public_schema_is_rejected_even_with_valid_digests(
     workspace_tmp_path: Path, target: str
 ) -> None:
     path = _write_result(workspace_tmp_path / "result")
@@ -246,22 +238,7 @@ def test_v1_is_rejected_even_with_valid_digests(
             path, "transcript", lambda value: value.update(schema_version=1)
         )
     else:
-
-        def mutate(manifest):
-            if target == "manifest":
-                manifest["schema_version"] = 1
-            else:
-                request = manifest["request"]
-                request["public_schema_version"] = 1
-                request["config_digest"] = _canonical_sha256(
-                    {
-                        key: value
-                        for key, value in request.items()
-                        if key != "config_digest"
-                    }
-                )
-
-        _rewrite_manifest(path, mutate)
+        _rewrite_manifest(path, lambda manifest: manifest.update(schema_version=1))
     with pytest.raises(ResultValidationError, match="schema_version"):
         load_result(path)
 
@@ -292,12 +269,10 @@ def test_public_typed_dict_key_boundaries() -> None:
         "provider",
         "language",
         "alignment_policy",
-        "public_schema_version",
         "provider_identity",
         "execution_policy",
         "vad_parameters",
         "planning_parameters",
-        "segmentation_schema_version",
         "text_normalization",
     }
     assert request.__optional_keys__ == set()
@@ -358,7 +333,7 @@ def test_load_manifest_does_not_certify_body(workspace_tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("field", ["log", "workspace", "raw_timestamps"])
-def test_v2_manifest_rejects_legacy_artifact_references(
+def test_manifest_rejects_legacy_artifact_references(
     workspace_tmp_path: Path, field: str
 ) -> None:
     path = _write_result(workspace_tmp_path / "result")
@@ -376,24 +351,6 @@ def test_manifest_cannot_reference_itself(workspace_tmp_path: Path) -> None:
         lambda value: value["artifacts"].__setitem__("transcript", "manifest.json"),
     )
     with pytest.raises(ResultValidationError, match="separate"):
-        load_manifest(path)
-
-
-@pytest.mark.parametrize("value", [None, 1, True])
-def test_public_schema_participates_in_config_identity(
-    workspace_tmp_path: Path, value: Any
-) -> None:
-    path = _write_result(workspace_tmp_path / "result")
-
-    def mutate(manifest):
-        request = manifest["request"]
-        request["public_schema_version"] = value
-        request["config_digest"] = _canonical_sha256(
-            {key: item for key, item in request.items() if key != "config_digest"}
-        )
-
-    _rewrite_manifest(path, mutate)
-    with pytest.raises(ResultValidationError, match="public_schema_version"):
         load_manifest(path)
 
 

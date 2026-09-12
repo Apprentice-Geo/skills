@@ -44,7 +44,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
 
 它会写入带时间戳的 JSON 和日志文件，但禁止安装、下载或修复依赖或模型。根据报告中的 provider status 选择自动路径。如果用户明确要求不可用的 Provider，立即停止执行并报告失败的检查。
-2. 需要核对 setup、模型安装或 CLI 选项时，读取 [README.md](README.md)。
+2. 需要 setup 时读取 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖)，需要安装模型时读取[模型安装](references/ERROR-HANDLING.md#模型安装)；需要核对 CLI 选项时，运行 `uv run --no-sync python -m scripts.transcribe --help`。
 3. 从此 Skill 目录运行转写：
 
 ```powershell
@@ -61,19 +61,17 @@ uv run --no-sync python -m scripts.transcribe "<absolute-or-relative-audio-path>
 
 ## 结果契约
 
-`manifest.json` 是唯一的公共入口。契约包 `audio-transcribe-contract` 0.2.0 只接受公共 schema v2。manifest 记录音频信息、完整 resolved request，以及 `transcript.json` 的相对路径和 SHA-256；不记录日志或 workspace。所有公共对象递归拒绝未知字段，resolved 配置字段全部必需；新增字段必须升级公共 schema。正文同时包含句子级 `segments` 和细粒度 `items`。
+`manifest.json` 是唯一的公共入口。必须使用 `audio_transcribe_contract.load_result()` 验证完整 bundle，不得自行解析或放宽字段、路径、摘要和 timestamp 校验。公共结构与 identity 的详细合同见 [references/ARCHITECTURE.md](references/ARCHITECTURE.md#公共-contract-与发布)。
 
-`request.config_digest` 是已解析转写配置的 canonical JSON SHA-256，包含模型、执行和文本处理策略及公共格式版本；不是单次调用编号。结果由 `audio_id + config_digest` 定位。固定 alignment policy 仍为 v1，item 必须严格有序、互不重叠，并满足 `0 <= start < end <= duration`。
+`request.config_digest` 由 resolved request 的实际配置字段计算，不包含独立的公共 schema 或内部 policy 版本，也不是单次调用编号。结果由 `audio_id + config_digest` 定位。
 
 完整有效 bundle 直接复用。损坏结果经生产命令修复后，可能在同一音频与配置身份下重新发布不同内容并更新正文 SHA-256；该摘要标识整个正文文件的具体字节。需要固定历史结果时保存独立 bundle，consumer loader 始终只读。
 
 其他 Skill 可以保留 manifest 路径，或将 `manifest.json` 与其引用的 `transcript.json` 一起复制、移动为独立 bundle，保持字节和相对路径不变。不得改写公共 JSON、读取或迁移私有 workspace。只移动这两个公共文件即可；日志和 workspace 不属于 bundle。
 
-`load_result()` 返回 `manifest_path`、`transcript_path`、`manifest` 和 `transcript`。外层 dataclass 冻结，内层字典和列表是可修改的内存快照，修改不会写回磁盘。`load_manifest()` 仅验证元数据，供生产端恢复使用；它不能证明正文有效，不得替代 `load_result()` 声称转写成功。
+`load_result()` 返回 `manifest_path`、`transcript_path`、`manifest` 和 `transcript`；修改返回的内存 snapshot 不会写回磁盘。`load_manifest()` 不能证明正文有效，不得替代 `load_result()` 声称转写成功。
 
-旧公共 schema v1、`result_manifest.json`、独立 `raw_timestamps.json`、`variant_id` 字段及旧 Python API 不做兼容或自动迁移。重新运行转写命令生成新格式结果，不删除历史结果。
-
-公共 transcript 和 timestamp 文本使用 Unicode NFKC 规范化。resolved language 为 `zh` 时还使用 OpenCC `t2s`；包括 `yue` 在内的其他语言不执行简体中文转换。Provider chunk cache 保持不变。
+旧公共 schema、`result_manifest.json`、独立 `raw_timestamps.json`、`variant_id` 字段及旧 Python API 不做兼容或自动迁移。重新运行转写命令生成新格式结果，不删除历史结果。
 
 生产命令在请求身份及 cache 查询前核对本地模型安装；缺失或错误的安装标记不能通过完整旧结果绕过。独立 consumer 读取 bundle 不需要本地模型。详见[模型安装](references/ERROR-HANDLING.md#模型安装)。
 

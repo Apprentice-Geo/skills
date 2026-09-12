@@ -5,7 +5,6 @@ import unicodedata
 from opencc import OpenCC
 
 TEXT_NORMALIZATION_POLICY = {
-    "schema_version": 1,
     "unicode_normalization": "NFKC",
     "zh_conversion": "OpenCC t2s",
 }

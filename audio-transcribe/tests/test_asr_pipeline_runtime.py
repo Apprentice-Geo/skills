@@ -248,9 +248,7 @@ def test_pipeline_rejects_caller_audio_identity_mismatch(
         )
 
 
-@pytest.mark.parametrize(
-    "change", ["request", "execution", "planning", "vad", "public_schema"]
-)
+@pytest.mark.parametrize("change", ["request", "execution", "planning", "vad"])
 def test_identity_change_invalidates_cache(
     workspace_tmp_path: Path, fake_audio, monkeypatch, change: str
 ) -> None:
@@ -268,8 +266,6 @@ def test_identity_change_invalidates_cache(
             else None
         ),
     )
-    if change == "public_schema":
-        monkeypatch.setattr("scripts.asr.pipeline.PUBLIC_SCHEMA_VERSION", 4)
     if change == "vad":
         monkeypatch.setattr(
             "scripts.asr.pipeline.DEFAULT_VAD_PARAMETERS",

@@ -310,12 +310,10 @@ def test_content_identity_reuses_result_after_input_rename(
     manifest = load_result(first_manifest).manifest
     assert manifest["request"]["provider"] == "faster-whisper"
     assert manifest["request"]["text_normalization"] == {
-        "schema_version": 1,
         "unicode_normalization": "NFKC",
         "zh_conversion": "OpenCC t2s",
     }
     assert manifest["request"]["alignment_policy"] == {
-        "schema_version": 1,
         "timestamp_resolution_ms": 1,
         "zero_duration": "drop_item_and_owned_text",
         "ordering": "strict",
@@ -328,19 +326,20 @@ def test_content_identity_reuses_result_after_input_rename(
     ]
     assert "first.audio" not in json.dumps(manifest, ensure_ascii=False)
     request = manifest["request"]
-    assert request["public_schema_version"] == 2
     assert (
         canonical_sha256(
             {key: value for key, value in request.items() if key != "config_digest"}
         )
         == request["config_digest"]
     )
-    old_format = {
-        key: value
-        for key, value in request.items()
-        if key not in {"config_digest", "public_schema_version"}
+    changed_policy = {
+        key: value for key, value in request.items() if key != "config_digest"
     }
-    assert canonical_sha256(old_format) != request["config_digest"]
+    changed_policy["alignment_policy"] = {
+        **request["alignment_policy"],
+        "timestamp_resolution_ms": 2,
+    }
+    assert canonical_sha256(changed_policy) != request["config_digest"]
 
 
 def test_production_reuses_bundle_without_private_state(

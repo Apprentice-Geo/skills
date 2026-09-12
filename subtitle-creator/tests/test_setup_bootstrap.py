@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -7,7 +8,7 @@ from scripts.setup import bootstrap
 
 
 class FakeProcessLogger:
-    instances: list["FakeProcessLogger"] = []
+    instances: ClassVar[list["FakeProcessLogger"]] = []
     failure_description: str | None = None
 
     def __init__(self, log_path: Path) -> None:

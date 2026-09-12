@@ -6,10 +6,11 @@ import shutil
 import subprocess
 import sys
 import warnings
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Self
 
 LOGGER_NAME = "subtitle_creator"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -79,7 +80,7 @@ def exception(logger: logging.Logger, message: str, *args: object) -> None:
 
 
 def create_timestamped_log_path(logs_dir: Path, prefix: str) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
     return logs_dir / f"{prefix}-{timestamp}.log"
 
 
@@ -112,7 +113,7 @@ class LoggingSession:
         handler.setFormatter(logging.Formatter(LOG_FORMAT))
         return handler
 
-    def start(self) -> LoggingSession:
+    def start(self) -> Self:
         if self._started:
             return self
         previous = LoggingSession._current
@@ -254,7 +255,7 @@ class LoggingSession:
         if LoggingSession._current is self:
             LoggingSession._current = None
 
-    def __enter__(self) -> LoggingSession:
+    def __enter__(self) -> Self:
         return self.start()
 
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
@@ -328,7 +329,7 @@ class ProcessLogger:
     def close(self) -> None:
         self.session.close()
 
-    def __enter__(self) -> ProcessLogger:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
