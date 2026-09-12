@@ -142,6 +142,41 @@ def test_gpu_identity_is_empty_without_nvidia_smi(
     assert benchmark._gpus() == []
 
 
+def test_worker_request_timeout_marks_protocol_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    session = benchmark_worker.WorkerSession.__new__(benchmark_worker.WorkerSession)
+    session.process = SimpleNamespace(stdin=io.StringIO(), stdout=io.StringIO())
+    session.session_id = "0" * 32
+    session._protocol_failed = False
+    observed: list[float] = []
+
+    def timeout(seconds: float) -> dict[str, object]:
+        observed.append(seconds)
+        raise TimeoutError("test timeout")
+
+    session._read_protocol_message = timeout
+    monkeypatch.setattr(benchmark_worker, "wav_duration", lambda _path: 120.0)
+
+    result = session._request(
+        "run",
+        {
+            "provider": "faster-whisper",
+            "language": "en",
+            "minutes": 8,
+            "mode": "project-slicing",
+            "repetition": 1,
+        },
+        tmp_path / "sample.wav",
+        tmp_path / "worker",
+    )
+
+    assert observed == [600.0]
+    assert result["status"] == "failed"
+    assert result["error"] == "TimeoutError: test timeout"
+    assert session._protocol_failed
+
+
 def test_persistent_worker_reuses_model_by_configuration(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

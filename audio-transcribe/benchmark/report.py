@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import statistics
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Any
 
 from benchmark import LANGUAGES, MINUTES, MODES, PROVIDERS
 from benchmark.metrics import COMPARISON_POLICY
-from scripts.io_utils import write_json_atomic
+from scripts.io_utils import write_bytes_atomic, write_json_atomic
 
 _REFERENCE_COMPARISON_FIELDS = {
     "metric",
@@ -46,6 +47,15 @@ def _valid_digest(value: Any) -> bool:
 
 def _valid_session_id(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{32}", value) is not None
+
+
+def _valid_elapsed_seconds(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
 
 
 def _validate_environment(value: Any) -> dict[str, Any]:
@@ -349,6 +359,8 @@ def validate_report(
             or language not in config["languages"]
             or minute not in config["minutes"]
             or mode not in config["modes"]
+            or not isinstance(repetition, int)
+            or isinstance(repetition, bool)
             or repetition != 0
             or status not in ("succeeded", "failed")
             or not _valid_session_id(item.get("session_id"))
@@ -429,6 +441,11 @@ def validate_report(
         if status == "succeeded":
             if not isinstance(item.get("text"), str):
                 raise ValueError("Successful benchmark run is missing text")
+            if any(
+                not _valid_elapsed_seconds(item.get(field))
+                for field in ("wall_seconds", "rtf", "provider_stage_seconds")
+            ):
+                raise ValueError("Successful benchmark run has invalid runtime metrics")
             if not isinstance(item.get("execution_identity"), dict) or not isinstance(
                 item.get("provider_identity"), dict
             ):
@@ -612,6 +629,4 @@ def summarize(report: dict[str, Any]) -> str:
 
 def write_report(path: Path, report: dict[str, Any]) -> None:
     write_json_atomic(path, report)
-    path.with_suffix(".md").write_text(
-        summarize(report), encoding="utf-8", newline="\n"
-    )
+    write_bytes_atomic(path.with_suffix(".md"), summarize(report).encode("utf-8"))

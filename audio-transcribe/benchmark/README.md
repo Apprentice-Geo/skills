@@ -50,9 +50,11 @@ uv run --no-sync python -m benchmark
 
 新报告会冻结完整的 Provider、语言、时长、mode 和 repetition config；续跑时，未显式提供的矩阵参数继承报告值，显式参数规范化后必须与完整 config 一致。扩展或缩小矩阵必须使用新报告路径。
 
-当前格式 JSON 会原子保存恢复点：成功 run 按 identity 跳过，失败 attempt 保留并在下次执行时追加重试。报告中的 `comparison_policy` 必须与当前指标策略完全一致，否则必须使用新报告路径。缺少当前 Qwen `max_new_tokens` 加载配置的报告同样要求新路径。旧格式不迁移、不重评分，也不为已有成功 run 重新计算指标；缺少当前硬件身份、session 或 warmup 信息的旧报告必须使用新路径。
+当前格式 JSON 会原子保存恢复点，Markdown 摘要也通过原子替换发布：成功 run 按 identity 跳过，失败 attempt 保留并在下次执行时追加重试。报告中的 `comparison_policy` 必须与当前指标策略完全一致，否则必须使用新报告路径。缺少当前 Qwen `max_new_tokens` 加载配置的报告同样要求新路径。旧格式不迁移、不重评分，也不为已有成功 run 重新计算指标；缺少当前硬件身份、session 或 warmup 信息的旧报告必须使用新路径。
 
 每个仍有待执行项的 Provider 启动一个持久 worker 子进程。正式 run 所需的每种模型加载配置首次出现时，worker 使用该 run 相同的音频和 mode 完成一次不计入统计的预热，然后在同一 session 中复用 prepared model；Qwen 加载时的 `max_new_tokens` 也属于配置；语言不影响模型加载，因此不属于缓存 key。faster-whisper 的 `project-slicing` 配置可能随时长改变，`provider-native` 则固定使用单 worker 和生产 policy 算出的全部 CPU 线程预算；不同配置会分别预热。每个正式 run 仍使用带随机 nonce 的独立 `benchmark/tmp/<run-id>-<nonce>/results/`，不会复用先前 run 的 workspace。worker 意外退出时当前 run 失败，后续 run 在新 session 中重新预热。续跑也总是创建新 session 并重新预热待执行配置；若没有待执行项，则不启动 worker。
+
+worker 启动必须在 30 秒内返回协议握手。warmup 和正式 run 的响应超时为 300 秒与音频时长 5 倍中的较大值；超时的当前操作记为失败并终止复用该 worker，后续 run 在新 session 中重新预热。
 
 顶层 `environment` 将 CPU 型号、逻辑核心数、物理内存总量以及按设备序号排序的 GPU 型号和总显存记录为硬件身份。续跑前会重新采集并严格比较这些字段；不同或缺失时，在 worker 启动前拒绝并要求使用新报告路径。不支持跨设备续跑。系统、Python、commit、依赖和代码声明的模型 revision 是只展示的审计信息，不参与自动续跑判断；代码、依赖或模型变化后仍应主动使用新报告路径。
 

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import subprocess
 import sys
+import threading
 import time
 import uuid
 import wave
@@ -16,6 +18,9 @@ from scripts.asr.prepared_model import model_configuration, validate_prepared_mo
 from scripts.io_utils import read_json
 
 PROTOCOL_PREFIX = "@@benchmark-worker@@"
+WORKER_START_TIMEOUT_SECONDS = 30.0
+MIN_REQUEST_TIMEOUT_SECONDS = 300.0
+REQUEST_TIMEOUT_RTF = 5.0
 
 
 def wav_duration(path: Path) -> float:
@@ -168,10 +173,13 @@ class WorkerSession:
         )
         if self.process.stdout is None:
             raise RuntimeError("Benchmark worker stdout is unavailable")
+        self._messages: queue.Queue[dict[str, Any] | Exception] = queue.Queue()
+        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
+        self._reader.start()
         try:
-            message = self._read_protocol_message()
+            message = self._read_protocol_message(WORKER_START_TIMEOUT_SECONDS)
             self.session_id = str(message["session_id"])
-        except (KeyError, OSError, TypeError, ValueError) as exc:
+        except (KeyError, OSError, TimeoutError, TypeError, ValueError) as exc:
             self.close()
             raise RuntimeError("Benchmark worker failed to start") from exc
 
@@ -179,17 +187,34 @@ class WorkerSession:
     def alive(self) -> bool:
         return not self._protocol_failed and self.process.poll() is None
 
-    def _read_protocol_message(self) -> dict[str, Any]:
+    def _read_stdout(self) -> None:
         if self.process.stdout is None:
-            raise BrokenPipeError("worker stdout is unavailable")
-        for line in self.process.stdout:
-            if line.startswith(PROTOCOL_PREFIX):
-                candidate = json.loads(line[len(PROTOCOL_PREFIX) :])
-                if not isinstance(candidate, dict):
-                    raise ValueError("worker response is not an object")
-                return candidate
-            print(line, end="", file=sys.stderr)
-        raise BrokenPipeError("worker exited without a response")
+            self._messages.put(BrokenPipeError("worker stdout is unavailable"))
+            return
+        try:
+            for line in self.process.stdout:
+                if line.startswith(PROTOCOL_PREFIX):
+                    candidate = json.loads(line[len(PROTOCOL_PREFIX) :])
+                    if not isinstance(candidate, dict):
+                        raise ValueError("worker response is not an object")
+                    self._messages.put(candidate)
+                else:
+                    print(line, end="", file=sys.stderr)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            self._messages.put(exc)
+            return
+        self._messages.put(BrokenPipeError("worker exited without a response"))
+
+    def _read_protocol_message(self, timeout: float) -> dict[str, Any]:
+        try:
+            message = self._messages.get(timeout=timeout)
+        except queue.Empty as exc:
+            raise TimeoutError(
+                f"worker did not respond within {timeout:g} seconds"
+            ) from exc
+        if isinstance(message, Exception):
+            raise message
+        return message
 
     def _request(
         self,
@@ -200,6 +225,8 @@ class WorkerSession:
     ) -> dict[str, Any]:
         directory.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
+        duration = wav_duration(sample)
+        timeout = max(MIN_REQUEST_TIMEOUT_SECONDS, duration * REQUEST_TIMEOUT_RTF)
         request = {
             "action": action,
             "run": run,
@@ -211,12 +238,11 @@ class WorkerSession:
                 raise BrokenPipeError("worker pipes are unavailable")
             self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
             self.process.stdin.flush()
-            response = self._read_protocol_message()
-        except (BrokenPipeError, OSError, json.JSONDecodeError, ValueError) as exc:
+            response = self._read_protocol_message(timeout)
+        except (BrokenPipeError, OSError, TimeoutError, ValueError) as exc:
             self._protocol_failed = True
             response = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
         wall_seconds = time.perf_counter() - started
-        duration = wav_duration(sample)
         return {
             **run,
             **response,

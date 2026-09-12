@@ -818,6 +818,29 @@ def test_report_rejects_identity_and_invalid_comparison_shape(
             ),
             "error rate",
         ),
+        (
+            lambda report: report["warmups"][0].update(
+                {
+                    "repetition": False,
+                    "run_id": "faster-whisper-en-8-project-slicing-False",
+                }
+            ),
+            "warmup identity",
+        ),
+        (
+            lambda report: report["runs"][0].pop("wall_seconds"),
+            "runtime metrics",
+        ),
+        (
+            lambda report: report["runs"][0].update({"rtf": False}),
+            "runtime metrics",
+        ),
+        (
+            lambda report: report["runs"][0].update(
+                {"provider_stage_seconds": "invalid"}
+            ),
+            "runtime metrics",
+        ),
     ]:
         changed = deepcopy(pristine)
         mutation(changed)
