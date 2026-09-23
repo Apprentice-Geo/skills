@@ -1,7 +1,6 @@
 ---
 name: coding-guidelines
-description: 用于代码实现、审查、缺陷诊断和改动方案评估，指导范围判断、代码复用、验证
-  和结果汇报。
+description: 用于代码实现、审查、缺陷诊断和改动方案评估，指导范围判断、代码复用、信息组织、验证和结果汇报。
 license: Apache-2.0
 metadata:
   Github: https://github.com/Apprentice-Geo/skills/tree/main/coding-guidelines
