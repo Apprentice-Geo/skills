@@ -6,14 +6,14 @@ import tomllib
 from importlib import metadata
 from pathlib import Path
 
-from packaging.requirements import Requirement
-from packaging.version import Version
-
 
 def check_contract(root: Path) -> list[dict[str, str]]:
     expected, actual = "valid project dependency", "unavailable"
     fix = "uv sync --python 3.12; rerun the dependency checker"
     try:
+        from packaging.requirements import Requirement
+        from packaging.version import Version
+
         project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         requirements = [Requirement(value) for value in project["project"]["dependencies"]]
         matches = [
@@ -30,7 +30,14 @@ def check_contract(root: Path) -> list[dict[str, str]]:
         actual = metadata.version("audio-transcribe-contract")
         if Version(actual) not in requirement.specifier:
             raise ValueError("Installed distribution does not satisfy the project requirement")
-    except (OSError, ValueError, KeyError, TypeError, metadata.PackageNotFoundError) as exc:
+    except (
+        ImportError,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        metadata.PackageNotFoundError,
+    ) as exc:
         version_status, version_message = "fail", f"{type(exc).__name__}: {exc}"
     else:
         version_status, version_message = (
