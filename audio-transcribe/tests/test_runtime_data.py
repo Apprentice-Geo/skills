@@ -206,7 +206,10 @@ def test_check_uses_writable_data_without_writing_skill_root(tmp_path, monkeypat
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows launcher")
 @pytest.mark.parametrize("cli_override", [False, True])
-def test_setup_launcher_resolves_data_before_uv_and_cwd(tmp_path, cli_override):
+@pytest.mark.parametrize("profile", ["cpu", "qwen3-asr"])
+def test_setup_launcher_resolves_data_before_uv_and_cwd(
+    tmp_path, cli_override, profile
+):
     root = Path(__file__).resolve().parents[1]
     command_dir = tmp_path / "bin"
     command_dir.mkdir()
@@ -233,6 +236,7 @@ def test_setup_launcher_resolves_data_before_uv_and_cwd(tmp_path, cli_override):
     environment[DATA_DIR_ENV] = str(tmp_path / "environment")
     environment.pop("UV_CACHE_DIR", None)
     command = [str(root / "scripts/setup/setup_windows.bat")]
+    command.extend(["--environment", profile])
     if cli_override:
         command.extend(["--data-dir", "relative data"])
     completed = subprocess.run(
@@ -248,6 +252,7 @@ def test_setup_launcher_resolves_data_before_uv_and_cwd(tmp_path, cli_override):
     invocations = launch_log.read_text()
     assert str(selected / ".cache" / "uv") in invocations
     assert f'--data-dir "{selected}"' in invocations
+    assert f"--environment {profile}" in invocations
     assert not selected.exists()
 
 

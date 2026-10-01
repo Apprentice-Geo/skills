@@ -8,6 +8,8 @@
 
 ## 全局视图
 
+Agent 先检查失败原因，按所请求 Provider 执行获准且适用的一次环境修复并复查，再仅安装缺失或无效模型、复查后转写。setup 的 `--environment` 默认 `cpu`，Qwen 直接选择 `qwen3-asr`，两者互斥；Qwen setup 与模型安装复用连续导入和 CUDA 验证。检查器保持只读，不承担修复。权限、项目文件和 GPU/driver 问题分别诊断，不进入自动重装；详细条件见 [Setup 与依赖](ERROR-HANDLING.md#setup-与依赖)。
+
 ```text
 local audio
   -> identity and runtime resolution

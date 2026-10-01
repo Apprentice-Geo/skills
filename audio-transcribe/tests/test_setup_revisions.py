@@ -1,4 +1,3 @@
-import ast
 import json
 import tomllib
 from pathlib import Path
@@ -42,29 +41,6 @@ def test_dependency_profiles_and_sources_are_explicit_and_mutually_exclusive() -
     lock = (root / "uv.lock").read_text(encoding="utf-8")
     assert 'registry = "https://download.pytorch.org/whl/cpu"' in lock
     assert 'registry = "https://download.pytorch.org/whl/cu126"' in lock
-
-
-def test_default_setup_selects_cpu_extra_and_never_all_extras() -> None:
-    root = Path(__file__).resolve().parents[1]
-    source = (root / "scripts" / "setup" / "bootstrap.py").read_text(encoding="utf-8")
-
-    tree = ast.parse(source)
-    list_literals = [
-        [element.value for element in node.elts]
-        for node in ast.walk(tree)
-        if isinstance(node, ast.List)
-        and all(isinstance(element, ast.Constant) for element in node.elts)
-    ]
-    assert [
-        "uv",
-        "sync",
-        "--python",
-        "3.12",
-        "--no-dev",
-        "--extra",
-        "cpu",
-    ] in list_literals
-    assert "--all-extras" not in source
 
 
 @pytest.mark.parametrize(

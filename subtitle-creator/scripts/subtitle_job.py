@@ -223,6 +223,10 @@ def expected_srt_bytes(normalized: dict[str, Any]) -> bytes:
     return ("\n\n".join(blocks) + "\n").encode("utf-8-sig")
 
 
+def subtitle_matches_normalized(subtitle_path: Path, normalized: dict[str, Any]) -> bool:
+    return subtitle_path.is_file() and subtitle_path.read_bytes() == expected_srt_bytes(normalized)
+
+
 def validate_job(
     job_path: Path,
     job: dict[str, Any],
@@ -304,7 +308,7 @@ def validate_job(
         raise SubtitleJobError("subtitle artifact is missing")
     if (
         subtitle_path.is_file()
-        and subtitle_path.read_bytes() != expected_srt_bytes(normalized)
+        and not subtitle_matches_normalized(subtitle_path, normalized)
         and not allow_stale_derived
     ):
         raise SubtitleJobError(

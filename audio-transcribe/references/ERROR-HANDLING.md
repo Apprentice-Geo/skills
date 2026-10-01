@@ -31,13 +31,13 @@
 
 ## Setup 与依赖
 
-- 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat` 执行 setup。
-- 使用 Python 3.12 和 `uv`；未经明确批准，不得修复或替换现有 `.venv`。
-- 默认 setup 执行 `uv sync --python 3.12 --no-dev --extra cpu`，并验证 `torch.version.cuda is None`。开发环境使用 `uv sync --python 3.12 --extra cpu`。
+- 修复顺序与次数遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。使用 Python 3.12 和 `uv`；已有环境配置授权可执行适用同步，不得据此删除或替换现有 `.venv`。
+- 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat --environment cpu|qwen3-asr`。默认 `cpu` 同步 CPU extra 并验证 `torch.version.cuda is None`；`qwen3-asr` 直接同步同名互斥 extra，复用模型安装器的连续导入与 CUDA 检查，不下载模型。Python bootstrap 接受相同 `--environment`。开发同步保留当前 Provider 的 extra 并安装开发依赖，禁止 `--all-extras`。
+- 必需依赖缺失、已安装包不一致或所请求 Qwen 使用 CPU build，适用对应环境同步；可选模块误触发或其他导入兼容异常保留原始原因，不盲目重装。CUDA build 已正确但 GPU runtime 不可用时诊断 GPU/driver，不进入依赖重装。项目文件缺失、Python 版本错误、子进程启动失败、权限或日志/报告写入失败分别诊断，不作为缺包处理。
 - `cpu` 与 `qwen3-asr` extra 互斥；切换环境时只指定目标 extra，禁止同时启用，也禁止使用 `--all-extras`。
 - 依赖安装完成后，使用 `uv run --no-sync python` 运行转写命令和 setup 子命令。
-- 依赖同步失败时，先检查 setup 日志、`pyproject.toml` 和 `uv.lock`，再重试。
-- 项目 setup 提供打包的 ffmpeg 支持。如果由于找不到 ffmpeg 或缺少 import 依赖而解码失败，应重新运行或修复 setup，不得依赖无关的系统安装。
+- 依赖同步失败时，检查 setup 日志、`pyproject.toml` 和 `uv.lock`，停止本轮自动修复，不重复 setup。
+- 项目 setup 提供打包的 ffmpeg 支持。打包依赖缺失时按上述一次修复策略处理；路径或执行权限失败诊断真实原因，不得依赖无关的系统安装。
 
 ### 连续导入兼容
 
@@ -66,7 +66,7 @@ Qwen 模型安装会在下载语言识别模型、ASR 模型或 aligner 前验�
 
 安装校验要求 `.model_identity.json` 是无重复键且仅包含字符串 repo/revision 的 JSON 对象，并与固定配置完全匹配；必需文件与权重必须存在且非空，indexed safetensors 的索引和全部分片必须合法且位于模型目录内。setup 复用、依赖检查、自动 Provider 候选检查和运行时使用相同规则。模型加载仍负责识别文件内容是否可用。
 
-marker 缺失、损坏、不匹配或模型文件不完整时，重新安装所请求的模型。禁止推测 revision 或手工补写 marker。显式 Provider 失败时立即停止；自动选择排除不合格候选，解析完成后不再切换。模型加载前复核；完整 cache 不能绕过请求身份前的模型检查。Whisper 自定义路径同样必须匹配固定身份；Qwen 的 ASR 与 aligner 独立校验。
+marker 缺失、损坏、不匹配或模型文件不完整时，按环境策略安装所请求的模型，安装器跳过已有效的模型；不为模型问题重复 setup。禁止推测 revision 或手工补写 marker。显式 Provider 未 ready 时停止转写，但已有环境配置授权可执行适用修复与复查；解析完成后的加载或推理失败不切换 Provider。自动选择排除不合格候选。模型加载前复核；完整 cache 不能绕过请求身份前的模型检查。Whisper 自定义路径同样必须匹配固定身份；Qwen 的 ASR 与 aligner 独立校验。
 
 这只证明目录具有匹配安装记录及基本文件结构，不证明安装后每个模型字节未变。项目不计算全量/抽样权重摘要，不以 mtime 或文件大小指纹冒充内容身份。运行期间不得替换模型目录。consumer loader 只验证 bundle，不访问模型。
 
@@ -96,7 +96,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 - 如果 `--provider` 指定了不受支持的 Provider，停止执行。
 - 如果 `--provider qwen3-asr` 搭配不受支持的语言，停止执行并报告受支持的语言集合。
 - 如果未指定 Provider，仅从当前环境中 ready 的 Provider 里选择。
-- 如果没有 Provider ready，停止执行，并要求用户安装 Qwen3-ASR 或 faster-whisper。
+- 如果没有 Provider ready，停止转写；已有环境配置授权时按环境策略修复并复查，仍未 ready 则报告失败。
 - Provider 一旦解析完成，发生加载、推理、alignment 或 artifact 失败后，不得静默切换 Provider。
 
 ## Execution Policy

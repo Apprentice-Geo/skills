@@ -26,10 +26,9 @@ dependency checker 将 JSON 原子发布到 `.cache/logs/`，并从同一份 rep
 
 `remove_subtitle_job` 的日志始终保留在 `.cache/logs/`，避免日志随 job 目录删除或产生打开句柄冲突。任何 workflow 在获得可信 job 路径前失败时，日志也留在 cache。
 
-成功时 stdout 只包含原有的一行结果：
+`create_subtitle` 成功时 stdout 为单行 JSON，字段为 `status`、`subtitle_job`、`audio_path`、`normalized_transcript`、`subtitle`；格式与恢复决策见 [创建或恢复任务](../SKILL.md#1-从音频创建或恢复任务)。摘要不修改 job、不执行 finalize。其他命令保持原有的一行结果：
 
 ```text
-subtitle_job: <absolute-path>
 normalized_transcript: <absolute-path>
 subtitle: <absolute-path>
 removed_subtitle_job: <absolute-path>
@@ -38,6 +37,14 @@ subtitle_job_absent: <absolute-path>
 
 失败时 stdout 为空，stderr 包含简洁错误；日志可用时附带 `Full log` 路径。根据日志修复输入或环境后，从上一个成功状态重试；不得根据未发布的临时文件推断成功。
 
+
+## 环境修复分类
+
+- 必需依赖缺失、已安装包不一致、合同包版本不符或公共 API 不完整：显式运行一次 setup 同步当前项目声明，再以 `--no-sync` 复查；仍失败时停止，不重复 setup。
+- 日志或报告写入失败、数据或 `.venv` 路径权限错误：按真实失败路径诊断，运行数据问题可显式指定可写数据目录；不以 setup 修复文件系统权限。
+- 项目文件缺失、声明不可读或无效：定位并修复项目文件，不把这些错误当作合同包缺失。
+- uv 不可用、Python 版本不符、子进程无法启动：诊断工具与解释器；不自动删除或替换现有 `.venv`。
+- baseline 损坏、normalized transcript 缺失、非法时间轴属于任务输入错误，停止恢复并报告；不运行 setup、不改写源 artifact 来绕过校验。合法文本编辑和陈旧 SRT 保持可恢复，创建输出 `subtitle: null`，通过 finalize 重建。
 
 ## 合同包检查
 

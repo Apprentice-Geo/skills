@@ -18,9 +18,9 @@ metadata:
 在 Windows 上，使用 Python 3.12 和 `uv`，并从此 Skill 目录运行命令。
 
 1. 创建或恢复任务前，运行只读的 `scripts/check_dependencies.bat`。它会写入带时间戳的 JSON 报告和日志，但禁止安装、下载或修复依赖。
-2. 如果首次检查因日志或报告写入失败而退出，按[错误处理](references/ERROR-HANDLING.md#运行目录与写入失败)修复路径后重试，不运行 setup。其他首次检查以非零状态退出时，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。如果仍以非零状态退出，停止执行并报告失败的检查；不得重复运行 setup。
+2. 首次检查失败时，先按[环境修复分类](references/ERROR-HANDLING.md#环境修复分类)定位原因；仅对适用的依赖失败运行一次 `scripts/setup/setup_windows.bat`，随后复查。合同包版本不匹配进入显式同步；权限、项目文件缺失或运行环境错误进入对应诊断。复查仍失败时停止并报告，不重复 setup。
 3. 需要转写时，先单独安装并检查 `audio-transcribe` Skill，再调用它；此处的检查不会定位或配置该 Skill。
-4. 使用 `uv run --no-dev python -m ...` 运行 workflow 命令。
+4. 使用 `uv run --no-sync python -m ...` 运行 workflow 命令。
 
 检查器与 setup 均验证合同包满足 `pyproject.toml` 声明且提供当前公共 API；诊断规则见 [合同包检查](references/ERROR-HANDLING.md#合同包检查)。
 
@@ -77,24 +77,24 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 无论是新任务还是恢复已有任务，都从音频入口开始；不要要求用户提供 job 路径。命令按音频内容定位已有 job，并允许合法文本编辑或 SRT 损坏造成的派生产物不一致，以便后续根据 `status` 恢复。baseline 损坏、normalized transcript 缺失、时间戳被修改等非法输入仍会使命令失败。
 
 ```powershell
-uv run --no-dev python -m scripts.create_subtitle "<audio-path>"
+uv run --no-sync python -m scripts.create_subtitle "<audio-path>"
 ```
 
-记录：
+成功时 stdout 为单行 JSON，例如：
 
-```text
-subtitle_job: <absolute-path>
+```json
+{"status":"needs_transcription","subtitle_job":"D:\\skill-data\\subtitle-creator\\results\\<audio-id>\\subtitle_job.json","audio_path":"D:\\audio\\sample.wav","normalized_transcript":null,"subtitle":null}
 ```
 
-读取命令返回的任务，并根据 `status` 继续：
+路径均为绝对路径，不可用的 artifact 为 `null`。输出来自已验证的 job，不隐式执行 finalize；仅当 SRT 与当前合法 normalized transcript 一致时 `subtitle` 才是路径。根据 JSON 的 `status` 直接继续，无需为判断状态先读取 job：
 
-- 对于 `needs_transcription`，读取 `audio.path`，调用已安装的 `audio-transcribe` Skill，并等待其已完成的 `manifest.json` 绝对路径。
-- 对于 `editable`，不得再次关联 transcription。读取声明的 normalized transcript，按需编辑分段 `text`，然后直接运行 finalize；该步骤会复用有效 SRT，或从合法文本修改、SRT 损坏及 SRT 缺失中恢复。
+- 对于 `needs_transcription`，使用输出的 `audio_path` 调用已安装的 `audio-transcribe` Skill，并等待其已完成的 `manifest.json` 绝对路径。
+- 对于 `editable`，不得再次关联 transcription。读取输出的 `normalized_transcript`，按需编辑分段 `text`，然后直接运行 finalize；该步骤会复用有效 SRT，或从合法文本修改、SRT 损坏及 SRT 缺失中恢复。`subtitle` 为 `null` 时不能声称已有可交付字幕。
 
 ### 2. 关联转写结果
 
 ```powershell
-uv run --no-dev python -m scripts.attach_transcription "<absolute-job-path>" --transcription-manifest "<absolute-manifest-path>"
+uv run --no-sync python -m scripts.attach_transcription "<absolute-job-path>" --transcription-manifest "<absolute-manifest-path>"
 ```
 
 成功导入后输出：
@@ -108,7 +108,7 @@ normalized_transcript: <absolute-path>
 ### 3. 完成字幕
 
 ```powershell
-uv run --no-dev python -m scripts.finalize_subtitle "<absolute-job-path>"
+uv run --no-sync python -m scripts.finalize_subtitle "<absolute-job-path>"
 ```
 
 交付：
@@ -126,7 +126,7 @@ subtitle: <absolute-path>
 确认没有 `create_subtitle`、`attach_transcription`、`finalize_subtitle` 或其他删除命令正在操作同一任务，然后运行：
 
 ```powershell
-uv run --no-dev python -m scripts.remove_subtitle_job "<absolute-job-path>"
+uv run --no-sync python -m scripts.remove_subtitle_job "<absolute-job-path>"
 ```
 
 命令只接受当前配置数据目录下 `results/<audio-sha256>/subtitle_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从创建步骤重新执行，并把目标 manifest 传给 `attach_transcription`。`audio-transcribe` 可能复用相同请求的有效结果；删除此任务不保证上游重新执行模型推理。

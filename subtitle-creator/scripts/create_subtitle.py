@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any, NoReturn
@@ -21,6 +22,7 @@ from .subtitle_job import (
     atomic_write_json,
     read_json_object,
     sha256_file,
+    subtitle_matches_normalized,
     validate_job,
 )
 
@@ -76,8 +78,29 @@ def main(argv: list[str] | None = None) -> int:
     try:
         try:
             job_path = create_subtitle_job(arguments.audio_path, results_dir=paths.results_dir)
+            job = read_json_object(job_path)
+            validate_job(job_path, job, results_dir=paths.results_dir, allow_stale_derived=True)
+            artifacts = job["artifacts"]
+            normalized_path = artifacts["normalized_transcript"] if artifacts else None
+            subtitle_path = artifacts["subtitle"] if artifacts else None
+            if (
+                subtitle_path is not None
+                and normalized_path is not None
+                and not subtitle_matches_normalized(
+                    Path(subtitle_path),
+                    read_json_object(Path(normalized_path), decimal_numbers=True),
+                )
+            ):
+                subtitle_path = None
+            summary = {
+                "status": job["status"],
+                "subtitle_job": str(job_path),
+                "audio_path": job["audio"]["path"],
+                "normalized_transcript": normalized_path,
+                "subtitle": subtitle_path,
+            }
             session.move_to(job_path.parent)
-            result(get_logger(__name__), "subtitle_job: %s", job_path)
+            result(get_logger(__name__), "%s", json.dumps(summary, ensure_ascii=False))
             return 0
         except (OSError, SubtitleJobError, TypeError, ValueError) as error:
             session.report_failure(error)

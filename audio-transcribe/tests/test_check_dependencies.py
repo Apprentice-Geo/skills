@@ -88,6 +88,36 @@ def test_report_has_provider_statuses_and_stable_shape() -> None:
     assert set(BASE_IMPORTS + LANGUAGE_ID_IMPORTS) <= checked_imports
 
 
+@pytest.mark.parametrize(
+    "probe_ok,cuda_build,cuda_available,repair",
+    [
+        (True, None, False, "sync"),
+        (True, "12.6", False, "driver"),
+        (True, "12.6", True, ""),
+        (False, None, False, "probe failure"),
+    ],
+)
+def test_qwen_cuda_repair_distinguishes_build_driver_and_probe_failure(
+    probe_ok, cuda_build, cuda_available, repair
+):
+    checks, _, _ = check_dependencies.pytorch_checks(
+        probe_ok,
+        {
+            "version": "2.7.1",
+            "cuda_build": cuda_build,
+            "cuda_available": cuda_available,
+        },
+        "probe error",
+    )
+    fix = checks[1]["fix"]
+    if repair:
+        assert repair in fix
+    else:
+        assert fix == ""
+    if repair != "sync":
+        assert "uv sync" not in fix
+
+
 def test_missing_core_import_blocks_all_providers() -> None:
     import_status = {module: True for module in BASE_IMPORTS + LANGUAGE_ID_IMPORTS}
     import_status["opencc"] = False

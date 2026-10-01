@@ -146,6 +146,16 @@ def pytorch_checks(
         pytorch_actual = error or "probe failed"
         pytorch_message = "PyTorch build could not be inspected."
     sync_fix = dependency_sync_fix(probe_ok, probe)
+    if not probe_ok:
+        cuda_fix = "Inspect the PyTorch probe failure before choosing a repair."
+    elif not cuda_build:
+        cuda_fix = QWEN_SYNC_COMMAND
+    elif not cuda_available:
+        cuda_fix = (
+            "Verify the NVIDIA driver and GPU runtime; do not reinstall dependencies."
+        )
+    else:
+        cuda_fix = ""
     return (
         [
             item(
@@ -167,8 +177,7 @@ def pytorch_checks(
                 else (
                     "Qwen3-ASR requires both a CUDA PyTorch build and an available GPU."
                 ),
-                "uv sync --python 3.12 --no-dev --extra qwen3-asr; "
-                "verify the NVIDIA driver and GPU runtime",
+                cuda_fix,
             ),
         ],
         cuda_build,

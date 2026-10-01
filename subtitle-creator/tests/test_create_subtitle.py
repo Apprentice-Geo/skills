@@ -48,7 +48,14 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
 
     job_path = (RESULTS_DIR / audio_id / "subtitle_job.json").resolve()
     assert result.returncode == 0
-    assert result.stdout == f"subtitle_job: {job_path}\n"
+    assert json.loads(result.stdout) == {
+        "status": "needs_transcription",
+        "subtitle_job": str(job_path),
+        "audio_path": str(audio_path.resolve()),
+        "normalized_transcript": None,
+        "subtitle": None,
+    }
+    assert len(result.stdout.splitlines()) == 1
     assert result.stderr == ""
     logs = list(job_path.parent.glob("create-subtitle-*.log"))
     assert len(logs) == 1
@@ -85,10 +92,7 @@ def test_create_reuses_job_and_rebinds_same_content_to_new_path(
     )
 
 
-@pytest.mark.parametrize("stale_artifact", ["normalized_transcript", "subtitle"])
-def test_create_recovers_existing_editable_job_from_audio(
-    audio: tuple[Path, str], stale_artifact: str
-) -> None:
+def seed_editable_job(audio: tuple[Path, str], stale_artifact: str) -> tuple[Path, Path, Path]:
     audio_path, audio_id = audio
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)
@@ -124,17 +128,69 @@ def test_create_recovers_existing_editable_job_from_audio(
     if stale_artifact == "normalized_transcript":
         corrected = {**baseline, "segments": [{**baseline["segments"][0], "text": "修正文本"}]}
         normalized_path.write_text(json.dumps(corrected, ensure_ascii=False), encoding="utf-8")
-    else:
+    elif stale_artifact == "subtitle":
         subtitle_path.write_bytes(b"damaged")
+    elif stale_artifact == "missing":
+        subtitle_path.unlink()
+    elif stale_artifact == "unfinalized":
+        job["artifacts"]["subtitle"] = None
+        job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+    return job_path, normalized_path, subtitle_path
+
+
+@pytest.mark.parametrize(
+    "stale_artifact", ["normalized_transcript", "subtitle", "missing", "valid", "unfinalized"]
+)
+def test_create_recovers_existing_editable_job_from_audio(
+    audio: tuple[Path, str], stale_artifact: str
+) -> None:
+    audio_path, _ = audio
+    job_path, normalized_path, subtitle_path = seed_editable_job(audio, stale_artifact)
+    original_job = job_path.read_bytes()
+    original_normalized = normalized_path.read_bytes()
+    original_subtitle = subtitle_path.read_bytes() if subtitle_path.exists() else None
 
     result = run_create(audio_path)
 
     assert result.returncode == 0
-    assert result.stdout == f"subtitle_job: {job_path}\n"
+    assert json.loads(result.stdout) == {
+        "status": "editable",
+        "subtitle_job": str(job_path),
+        "audio_path": str(audio_path.resolve()),
+        "normalized_transcript": str(normalized_path),
+        "subtitle": str(subtitle_path) if stale_artifact == "valid" else None,
+    }
+    assert len(result.stdout.splitlines()) == 1
+    assert job_path.read_bytes() == original_job
+    assert normalized_path.read_bytes() == original_normalized
+    assert (subtitle_path.read_bytes() if subtitle_path.exists() else None) == original_subtitle
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
     assert finalize_subtitle.finalize_subtitle(job_path) == subtitle_path
     normalized = subtitle_job.read_json_object(normalized_path, decimal_numbers=True)
     assert subtitle_path.read_bytes() == subtitle_job.expected_srt_bytes(normalized)
+
+
+@pytest.mark.parametrize("damage", ["timeline", "baseline"])
+def test_create_summary_rejects_invalid_editable_sources(audio, damage):
+    audio_path, _ = audio
+    job_path, _, _ = seed_editable_job(audio, "valid")
+    job = subtitle_job.read_json_object(job_path)
+    if damage == "timeline":
+        path = Path(job["artifacts"]["normalized_transcript"])
+        normalized = subtitle_job.read_json_object(path)
+        normalized["segments"][0]["end"] = 2
+        path.write_text(json.dumps(normalized), encoding="utf-8")
+    else:
+        Path(job["artifacts"]["before_correction"]).write_bytes(b"damaged")
+    original_job = job_path.read_bytes()
+
+    result = run_create(audio_path)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr
+    assert job_path.read_bytes() == original_job
 
 
 def test_create_rejects_invalid_existing_job_without_overwriting(
