@@ -14,6 +14,15 @@
 - 使用 Ruff 和 Pyright 做静态检查和格式化检查，Pytest 作为测试框架。
 - 使用 .bat 脚本调用 uv 完成 Windows 下的虚拟环境配置。
 
+## 测试执行环境
+
+在 Windows/Codex 环境运行本仓库的 Pytest 测试时，直接在沙箱外执行。已验证当前 `unelevated` 沙箱无法访问 Python/Pytest 通过 `mkdir(mode=0o700)` 创建的私有临时目录，会出现 `WinError 5`；不要把这类错误判断为项目业务代码的测试失败。
+
+- 使用工具的 `sandbox_permissions="require_escalated"` 执行测试；沙箱外运行不等同于 Windows 管理员提权，不修改全局沙箱配置。
+- 在对应 Skill 目录使用现有环境运行 `uv run --no-sync python -m pytest`，按需指定测试范围，不因运行测试自动同步依赖。
+- 每次在仓库 `.cache/test-runs/<run-id>/<skill>/` 下使用独立目录，通过 `--basetemp` 和 `-o cache_dir=...` 分别指定测试临时目录与缓存；uv 缓存也放在本次运行目录内，避免复用已有的权限失败目录。
+- 在同一沙箱外执行上下文中完成运行和清理，保留测试结果与必要日志。清理前确认目标的绝对路径位于本次运行目录内，且目标及路径不包含链接或 junction；不清理历史样本或无关文件。
+
 ## Skill 文档规则
 
 > 本章节内容是针对单个 Skill 文档的规则，文档路径均为相对于特定 Skill 根目录的路径
