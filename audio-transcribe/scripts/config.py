@@ -3,7 +3,6 @@ from pathlib import Path
 from scripts.model_identity import MODEL_REVISIONS
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-RESULTS_DIR = SKILL_ROOT / "results"
 MODELS_DIR = SKILL_ROOT / "models"
 DEFAULT_WHISPER_MODEL_DIR = MODELS_DIR / "faster-whisper-small"
 LANGUAGE_ID_MODEL_DIR = MODELS_DIR / "lang-id-voxlingua107-ecapa"

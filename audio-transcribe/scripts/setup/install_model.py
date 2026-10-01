@@ -19,7 +19,8 @@ from scripts.model_artifacts import (
     model_has_required_files,
 )
 from scripts.model_identity import MODEL_REVISIONS
-from scripts.process_logging import ProcessLogger, SetupError
+from scripts.process_logging import ProcessLogger, SetupError, filesystem_cli
+from scripts.runtime_paths import add_data_dir_argument
 from scripts.setup.download_models import download_model
 from scripts.setup.environment import (
     SetupPaths,
@@ -144,9 +145,11 @@ def install_qwen_models(
     )
 
 
-def run_model_setup(model: str, root: Path | None = None) -> Path:
+def run_model_setup(
+    model: str, root: Path | None = None, *, data_dir: Path | None = None
+) -> Path:
     root = root or Path(__file__).resolve().parents[2]
-    paths = SetupPaths.from_root(root)
+    paths = SetupPaths.from_root(root, data_dir)
     configure_environment(paths, os.environ)
     logger = ProcessLogger(create_log_path(paths))
     python = Path(sys.executable).resolve()
@@ -192,13 +195,15 @@ def parse_args() -> argparse.Namespace:
         choices=("faster-whisper", "qwen3-asr"),
         help="Model family to download.",
     )
+    add_data_dir_argument(parser)
     return parser.parse_args()
 
 
+@filesystem_cli
 def main() -> int:
     args = parse_args()
     try:
-        run_model_setup(args.model)
+        run_model_setup(args.model, data_dir=args.data_dir)
     except SetupError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

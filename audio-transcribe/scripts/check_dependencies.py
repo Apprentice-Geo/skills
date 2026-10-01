@@ -32,7 +32,13 @@ from scripts.model_artifacts import (
     WHISPER_WEIGHT_PATTERNS,
 )
 from scripts.model_identity import MODEL_REVISIONS, validate_installation
-from scripts.process_logging import LoggingSession, get_logger
+from scripts.process_logging import (
+    LoggingSession,
+    filesystem_cli,
+    get_logger,
+    publish_check_report,
+)
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 
 SKILL_NAME = "audio-transcribe"
 CPU_SYNC_COMMAND = "uv sync --python 3.12 --no-dev --extra cpu"
@@ -545,27 +551,23 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     }
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Read-only dependency check for audio-transcribe."
     )
     parser.add_argument("--root", type=Path, default=None)
+    add_data_dir_argument(parser)
     args = parser.parse_args(argv)
-    logs_dir = (
-        (args.root or Path(__file__).resolve().parents[1]).resolve() / ".cache" / "logs"
-    )
-    logs_dir.mkdir(parents=True, exist_ok=True)
+    paths = RuntimePaths.resolve(args.data_dir, root=args.root)
+    paths.configure_uv(os.environ)
+    logs_dir = paths.logs_dir
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     json_path = logs_dir / f"dependency-check-{stamp}.json"
     log_path = logs_dir / f"dependency-check-{stamp}.log"
     with LoggingSession(log_path):
         report = run_check(args.root)
-        report["logs"] = {"report": str(json_path), "log": str(log_path)}
-        temporary = json_path.with_suffix(".tmp")
-        temporary.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        os.replace(temporary, json_path)
+        publish_check_report(report, json_path, log_path)
         check_lines = [
             f"[{check['status'].upper()}] {check['id']}: {check['message']}"
             for check in report["checks"]

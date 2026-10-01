@@ -2,6 +2,10 @@
 
 `bili-audiosummary` 准备 Bilibili 资源，把原生字幕或外部转写结果转换为 job-local Markdown 输入，并验证最终 summary。本地 ASR 内部机制归 `audio-transcribe` 所有。
 
+## 运行目录边界
+
+`scripts/runtime_paths.py` 在命令启动时集中解析数据根目录，通过运行上下文传递日志、报告、uv cache 和结果目录。源码、模板、环境和模型路径独立。数据目录与结果存储位置不属于转写内容身份，不修改公共 schema 或持久化字段语义；详细配置与错误边界见 [运行目录与写入失败](ERROR-HANDLING.md#运行目录与写入失败)。
+
 ## 全局视图
 
 ```text
@@ -49,7 +53,7 @@ preparation 选择以下分支之一：
 
 `continue_summary` 通过 adapter 读取外部转写并核对 job 音频的 SHA-256，然后原子发布本地 transcript、prompt 和状态。已进入 `prompt_ready` 或 `complete` 的外部转写 job 只复用本地快照，不再读取传入的 manifest；需要使用新转写结果时，先通过公开删除入口移除单个 job，再重新运行 preparation 和 continue。
 
-`remove_summary_job` 不读取或修复 job 内容。它依据默认结果根目录、受支持的视频目录名和固定 job 文件名限制删除目标，然后删除整个 job 目录。删除入口不与其他 job 命令并发协调；调用方必须先确认同一 job 没有正在运行的 preparation、continue、completion 或删除操作。
+`remove_summary_job` 不读取或修复 job 内容。它依据当前配置的结果根目录、受支持的视频目录名和固定 job 文件名限制删除目标，然后删除整个 job 目录。删除入口不与其他 job 命令并发协调；调用方必须先确认同一 job 没有正在运行的 preparation、continue、completion 或删除操作。
 
 `complete_summary` 验证适用的 source 和最终 summary，然后原子发布 `complete`。prompt 发布尚未成功时，continue 失败会保留 `needs_transcription`；summary 失败会保留 `prompt_ready`。
 

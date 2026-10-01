@@ -9,16 +9,19 @@ from scripts.config import SKILL_ROOT
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
+    filesystem_cli,
     get_logger,
     result,
 )
 from scripts.run_pipeline import write_summary_prompt
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 from scripts.summary_job import (
     JobValidationError,
     job_lock,
     load_job,
     publish_job,
     relative_path,
+    require_configured_job_path,
     resolve_local_path,
 )
 from scripts.transcript_output import render_markdown
@@ -43,6 +46,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         help="Absolute path to an audio-transcribe manifest.json.",
     )
+    add_data_dir_argument(parser)
     return parser.parse_args(argv)
 
 
@@ -138,23 +142,32 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
     return updated
 
 
-def continue_summary(job_path: Path, manifest_path: Path) -> dict[str, Any]:
+def continue_summary(
+    job_path: Path, manifest_path: Path, *, results_dir: Path | None = None
+) -> dict[str, Any]:
     if not manifest_path.is_absolute():
         raise TranscriptionInputError(
             "--transcription-manifest must be an absolute path"
         )
+    require_configured_job_path(
+        job_path.absolute(), results_dir or RuntimePaths.resolve().results_dir
+    )
     job_path = job_path.resolve()
     with job_lock(job_path):
         return _continue_summary_unlocked(job_path, manifest_path)
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "continue")
+    paths = RuntimePaths.resolve(args.data_dir, root=SKILL_ROOT)
+    log_path = create_timestamped_log_path(paths.logs_dir, "continue")
     with LoggingSession(log_path) as session:
         try:
             resolved_job_path = args.job.resolve()
-            job = continue_summary(resolved_job_path, args.transcription_manifest)
+            job = continue_summary(
+                args.job, args.transcription_manifest, results_dir=paths.results_dir
+            )
             session.move_to(resolved_job_path.parent)
         except (OSError, ValueError) as exc:
             session.report_failure(exc)

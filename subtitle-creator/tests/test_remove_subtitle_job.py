@@ -4,15 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts import remove_subtitle_job, subtitle_job
+from scripts import remove_subtitle_job
 from scripts.subtitle_job import SubtitleJobError
 
 
 @pytest.fixture
 def results_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "results"
-    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", path)
-    monkeypatch.setattr(remove_subtitle_job, "RESULTS_DIR", path)
+    monkeypatch.setenv("SUBTITLE_CREATOR_DATA_DIR", str(path.parent))
     return path
 
 

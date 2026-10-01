@@ -10,15 +10,18 @@ from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     error,
+    filesystem_cli,
     get_logger,
     warning,
 )
 from scripts.process_logging import result as log_result
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 from scripts.summary_job import (
     JobValidationError,
     job_lock,
     load_job,
     publish_job,
+    require_configured_job_path,
     resolve_local_path,
 )
 from scripts.utils import read_json
@@ -32,6 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Validate and complete a Bilibili summary job."
     )
     parser.add_argument("job", type=Path, help="Path to summary_job.json.")
+    add_data_dir_argument(parser)
     return parser.parse_args(argv)
 
 
@@ -109,19 +113,26 @@ def _complete_summary_unlocked(
 
 def complete_summary(
     job_path: Path,
+    *,
+    results_dir: Path | None = None,
 ) -> tuple[dict[str, Any], ValidationResult]:
+    require_configured_job_path(
+        job_path.absolute(), results_dir or RuntimePaths.resolve().results_dir
+    )
     job_path = job_path.resolve()
     with job_lock(job_path):
         return _complete_summary_unlocked(job_path)
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "complete")
+    paths = RuntimePaths.resolve(args.data_dir, root=SKILL_ROOT)
+    log_path = create_timestamped_log_path(paths.logs_dir, "complete")
     with LoggingSession(log_path) as session:
         try:
             resolved_job_path = args.job.resolve()
-            job, validation = complete_summary(resolved_job_path)
+            job, validation = complete_summary(args.job, results_dir=paths.results_dir)
         except (OSError, ValueError) as exc:
             session.report_failure(exc)
             return 1

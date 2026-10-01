@@ -8,14 +8,15 @@ from scripts.config import (
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
     DEFAULT_SUBTITLE_LANGUAGE,
-    RESULTS_DIR,
 )
+from scripts.runtime_paths import RuntimePaths
 
 
 @dataclass
 class FetchOptions:
     url: str
-    output_dir: Path = RESULTS_DIR
+    output_dir: Path | None = None
+    paths: RuntimePaths = field(default_factory=RuntimePaths.resolve)
     cookies: Path | None = None
     playlist: bool = False
     skip_audio: bool = False
@@ -31,13 +32,18 @@ class FetchOptions:
     socket_timeout: int = 30
     quiet: bool = False
 
+    def __post_init__(self) -> None:
+        self.output_dir = (self.output_dir or self.paths.results_dir).resolve()
+
     @classmethod
     def from_args(cls, args: argparse.Namespace | FetchOptions) -> FetchOptions:
         if isinstance(args, cls):
             return args
+        paths = RuntimePaths.resolve(getattr(args, "data_dir", None))
         return cls(
             url=args.url,
-            output_dir=getattr(args, "output_dir", RESULTS_DIR),
+            output_dir=getattr(args, "output_dir", None) or paths.results_dir,
+            paths=paths,
             cookies=getattr(args, "cookies", None),
             playlist=getattr(args, "playlist", False),
             skip_audio=getattr(args, "skip_audio", False),
@@ -58,6 +64,7 @@ class FetchOptions:
 @dataclass
 class PipelineOptions:
     url: str
+    paths: RuntimePaths = field(default_factory=RuntimePaths.resolve)
     cookies: Path | None = None
     language: str = DEFAULT_SUBTITLE_LANGUAGE
     summary_language: str | None = None
@@ -69,6 +76,7 @@ class PipelineOptions:
             return args
         return cls(
             url=args.url,
+            paths=RuntimePaths.resolve(getattr(args, "data_dir", None)),
             cookies=getattr(args, "cookies", None),
             language=getattr(args, "language", DEFAULT_SUBTITLE_LANGUAGE),
             summary_language=getattr(args, "summary_language", None),

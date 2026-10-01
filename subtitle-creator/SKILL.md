@@ -18,7 +18,7 @@ metadata:
 在 Windows 上，使用 Python 3.12 和 `uv`，并从此 Skill 目录运行命令。
 
 1. 创建或恢复任务前，运行只读的 `scripts/check_dependencies.bat`。它会写入带时间戳的 JSON 报告和日志，但禁止安装、下载或修复依赖。
-2. 如果首次检查以非零状态退出，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。如果仍以非零状态退出，停止执行并报告失败的检查；不得重复运行 setup。
+2. 如果首次检查因日志或报告写入失败而退出，按[错误处理](references/ERROR-HANDLING.md#运行目录与写入失败)修复路径后重试，不运行 setup。其他首次检查以非零状态退出时，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。如果仍以非零状态退出，停止执行并报告失败的检查；不得重复运行 setup。
 3. 需要转写时，先单独安装并检查 `audio-transcribe` Skill，再调用它；此处的检查不会定位或配置该 Skill。
 4. 使用 `uv run --no-dev python -m ...` 运行 workflow 命令。
 
@@ -27,6 +27,17 @@ metadata:
 此 Skill 不安装 ASR 模型，也不下载音频。
 
 setup 在 `uv python install 3.12` 成功后启动 Python 日志会话，随后执行依赖同步和 contract 版本与公共 API 验证。Python 阶段的终端输出只是完整日志的筛选结果；`uv python install 3.12` 的原始输出及启动前检查不属于该日志。
+
+## 运行数据位置
+
+setup、依赖检查和所有 workflow CLI 支持 `--data-dir`，优先级为显式参数、`SUBTITLE_CREATOR_DATA_DIR`、Skill 根目录。启动时解析为绝对路径；日志、报告、内部缓存和结果使用该目录。详细布局、权限错误与恢复边界见 [运行目录与写入失败](references/ERROR-HANDLING.md#运行目录与写入失败)。跨多个命令时持续使用同一个环境变量，或重复传入相同参数；切换目录不自动搜索、搬迁或合并历史任务。
+
+```powershell
+$env:SUBTITLE_CREATOR_DATA_DIR = "D:\skill-data\subtitle-creator"
+$env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
+```
+
+直接用 `uv run` 启动 Python 时，uv 在 Python 解析 `--data-dir` 前已启动；需要缓存也位于数据目录时，先配置 `UV_CACHE_DIR`。`.bat` 启动器会在启动 uv 前解析数据目录，并保留显式 `UV_CACHE_DIR`。源码、模板、`.venv` 和模型位置独立；数据目录可写不保证依赖同步或模型安装目录可写。
 
 ## 核心规则
 
@@ -59,7 +70,7 @@ setup 在 `uv python install 3.12` 成功后启动 Python 日志会话，随后�
 
 从 `subtitle-creator` 目录运行以下三个 `subtitle-creator` 脚本命令。调用 `audio-transcribe` 时，遵循该 Skill 自身对工作目录和执行方式的要求。
 
-退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入单行错误及精确日志路径，并保留上一个成功状态。详细 traceback 只写入日志。日志位置和终端输出契约见 [错误处理](references/ERROR-HANDLING.md)。
+退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入简洁错误；日志已建立时附带精确日志路径，并保留上一个成功状态。详细 traceback 只写入日志。日志位置和终端输出契约见 [错误处理](references/ERROR-HANDLING.md)。
 
 ### 1. 从音频创建或恢复任务
 
@@ -118,6 +129,6 @@ subtitle: <absolute-path>
 uv run --no-dev python -m scripts.remove_subtitle_job "<absolute-job-path>"
 ```
 
-命令只接受默认 `results/<audio-sha256>/subtitle_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从创建步骤重新执行，并把目标 manifest 传给 `attach_transcription`。`audio-transcribe` 可能复用相同请求的有效结果；删除此任务不保证上游重新执行模型推理。
+命令只接受当前配置数据目录下 `results/<audio-sha256>/subtitle_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从创建步骤重新执行，并把目标 manifest 传给 `attach_transcription`。`audio-transcribe` 可能复用相同请求的有效结果；删除此任务不保证上游重新执行模型推理。
 
 正常的 transcript 文本修改或 SRT 损坏不使用删除命令，直接运行 finalize 恢复。

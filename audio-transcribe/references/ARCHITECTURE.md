@@ -2,6 +2,10 @@
 
 `audio-transcribe` 把一个本地音频文件转换为经过验证、可复用的公共结果。本文档面向维护者说明稳定边界；实现细节以模块和测试为准。
 
+## 运行目录边界
+
+`scripts/runtime_paths.py` 在命令启动时集中解析数据根目录，通过运行上下文传递日志、报告、uv cache 和结果目录。源码、模板、环境和模型路径独立。数据目录与结果存储位置不属于转写内容身份，不修改公共 schema 或持久化字段语义；详细配置与错误边界见 [运行目录与写入失败](ERROR-HANDLING.md#运行目录与写入失败)。
+
 ## 全局视图
 
 ```text
@@ -98,7 +102,7 @@ Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。
 results/<audio_id>/<provider>-<language>-<config_digest>/
 ├─ manifest.json
 ├─ transcript.json
-├─ transcribe.log
+├─ transcribe.log  # Python API 的默认结果日志；CLI 日志位于 data-dir/.cache/logs/
 └─ workspace/
    ├─ asr_plan.json
    ├─ vad_result.json

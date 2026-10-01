@@ -5,15 +5,17 @@ import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
+
 from .process_logging import (
     LoggingSession,
     create_workflow_log_path,
+    filesystem_cli,
     get_logger,
     result,
 )
 from .subtitle_job import (
     JOB_FILENAME,
-    RESULTS_DIR,
     SCHEMA_VERSION,
     SubtitleJobError,
     atomic_write_json,
@@ -28,19 +30,20 @@ class ArgumentParser(argparse.ArgumentParser):
         raise SubtitleJobError(message)
 
 
-def create_subtitle_job(audio_argument: str) -> Path:
+def create_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -> Path:
     audio_path = Path(audio_argument).resolve()
     if not audio_path.is_file():
         raise SubtitleJobError(f"audio path is not a regular file: {audio_path}")
 
     audio_id = sha256_file(audio_path)
-    job_path = (RESULTS_DIR / audio_id / JOB_FILENAME).resolve()
+    results_dir = results_dir or RuntimePaths.resolve().results_dir
+    job_path = (results_dir / audio_id / JOB_FILENAME).resolve()
     if job_path.exists():
         job = read_json_object(job_path)
         # Existing editable jobs may contain a legitimately edited transcript or a
         # damaged derived subtitle. Finalize validates the source artifacts and
         # rebuilds those derived values after the caller dispatches on job status.
-        validate_job(job_path, job, allow_stale_derived=True)
+        validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
         if job["audio"]["path"] != str(audio_path):
             job["audio"]["path"] = str(audio_path)
             atomic_write_json(job_path, job)
@@ -58,18 +61,21 @@ def create_subtitle_job(audio_argument: str) -> Path:
     return job_path
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Create or reuse a content-addressed subtitle job.")
     parser.add_argument("audio_path", help="Path to a local audio file.")
+    add_data_dir_argument(parser)
     try:
         arguments = parser.parse_args(argv)
     except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    session = LoggingSession(create_workflow_log_path("create-subtitle")).start()
+    paths = RuntimePaths.resolve(arguments.data_dir)
+    session = LoggingSession(create_workflow_log_path("create-subtitle", paths)).start()
     try:
         try:
-            job_path = create_subtitle_job(arguments.audio_path)
+            job_path = create_subtitle_job(arguments.audio_path, results_dir=paths.results_dir)
             session.move_to(job_path.parent)
             result(get_logger(__name__), "subtitle_job: %s", job_path)
             return 0

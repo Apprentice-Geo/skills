@@ -35,6 +35,17 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 
 模型安装在下载前验证语言识别与 Qwen 在同一进程连续导入成功，并验证 PyTorch 是 CUDA build 且 GPU runtime 可用。切回默认 CPU 环境时重新运行 `scripts/setup/setup_windows.bat`。extra 只描述本次依赖解析请求，不是持久化环境状态；以依赖检查报告中的 `pytorch:build` 和 Provider status 判断当前 readiness。
 
+## 运行数据位置
+
+setup、依赖检查和所有 workflow CLI 支持 `--data-dir`，优先级为显式参数、`AUDIO_TRANSCRIBE_DATA_DIR`、Skill 根目录。启动时解析为绝对路径；日志、报告、内部缓存和结果使用该目录。详细布局、权限错误与恢复边界见 [运行目录与写入失败](references/ERROR-HANDLING.md#运行目录与写入失败)。跨多个命令时持续使用同一个环境变量，或重复传入相同参数；切换目录不自动搜索、搬迁或合并历史任务。
+
+```powershell
+$env:AUDIO_TRANSCRIBE_DATA_DIR = "D:\skill-data\audio-transcribe"
+$env:UV_CACHE_DIR = "$env:AUDIO_TRANSCRIBE_DATA_DIR\.cache\uv"
+```
+
+直接用 `uv run` 启动 Python 时，uv 在 Python 解析 `--data-dir` 前已启动；需要缓存也位于数据目录时，先配置 `UV_CACHE_DIR`。`.bat` 启动器会在启动 uv 前解析数据目录，并保留显式 `UV_CACHE_DIR`。转写 CLI 另支持 `--results-dir`，仅覆盖结果及其 workspace 的默认 `<data-dir>/results/`，不改变日志和报告位置，也不参与内容身份 digest。源码、模板、`.venv` 和模型位置独立；数据目录可写不保证依赖同步或模型安装目录可写。
+
 ## 主要步骤
 
 1. 从此 Skill 目录运行只读依赖检查，并读取其终端摘要：

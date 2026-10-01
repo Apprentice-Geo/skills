@@ -36,8 +36,7 @@ def audio(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Pat
     path.write_bytes(content)
     audio_id = hashlib.sha256(content).hexdigest()
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", results_dir)
-    monkeypatch.setattr(create_subtitle, "RESULTS_DIR", results_dir)
+    monkeypatch.setenv("SUBTITLE_CREATOR_DATA_DIR", str(results_dir.parent))
     monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     yield path, audio_id
 

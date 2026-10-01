@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from scripts import finalize_subtitle, subtitle_job
+from scripts import finalize_subtitle
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -45,7 +45,7 @@ def correction_job(
     audio_path.write_bytes(audio_content)
     audio_id = hashlib.sha256(audio_content).hexdigest()
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", results_dir)
+    monkeypatch.setenv("SUBTITLE_CREATOR_DATA_DIR", str(results_dir.parent))
     monkeypatch.setitem(globals(), "RESULTS_DIR", results_dir)
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)

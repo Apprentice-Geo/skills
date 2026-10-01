@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -8,8 +9,9 @@ import sys
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
 
 LOGGER_NAME = "bili_audiosummary"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -86,7 +88,7 @@ class LoggingSession:
     _current: LoggingSession | None = None
 
     def __init__(self, log_path: Path) -> None:
-        self.log_path = Path(log_path)
+        self.log_path = Path(log_path).resolve()
         self._logger = get_logger()
         self._file_handler: logging.FileHandler | None = None
         self._stdout_handler: logging.StreamHandler | None = None
@@ -117,6 +119,13 @@ class LoggingSession:
                 f"another logging session is already active: {previous.log_path}"
             )
 
+        try:
+            file_handler = self._make_file_handler(self.log_path)
+        except OSError as exc:
+            raise FilesystemFailure(
+                "start log (log not created)", self.log_path, exc
+            ) from exc
+
         self._previous_logger_state = CapturedLoggerState(
             handlers=list(self._logger.handlers),
             level=self._logger.level,
@@ -125,27 +134,31 @@ class LoggingSession:
             forwarding_handler=ForwardingHandler(self._logger),
         )
         self._previous_logger_state.forwarding_handler.close()
-        self._logger.setLevel(logging.DEBUG)
-        self._logger.propagate = False
-        self._file_handler = self._make_file_handler(self.log_path)
-        self._stdout_handler = logging.StreamHandler(sys.stdout)
-        self._stdout_handler.setLevel(logging.DEBUG)
-        self._stdout_handler.setFormatter(logging.Formatter("%(message)s"))
-        self._stdout_handler.addFilter(ConsoleFilter("stdout"))
-        self._stderr_handler = logging.StreamHandler(sys.stderr)
-        self._stderr_handler.setLevel(logging.DEBUG)
-        self._stderr_handler.setFormatter(logging.Formatter("%(message)s"))
-        self._stderr_handler.addFilter(ConsoleFilter("stderr"))
-        self._logger.handlers[:] = [
-            self._file_handler,
-            self._stdout_handler,
-            self._stderr_handler,
-        ]
+        self._file_handler = file_handler
         self._started = True
-        LoggingSession._current = self
-        self.capture_logger("py.warnings")
-        self._previous_showwarning = warnings.showwarning
-        warnings.showwarning = self._showwarning
+        try:
+            self._logger.setLevel(logging.DEBUG)
+            self._logger.propagate = False
+            self._stdout_handler = logging.StreamHandler(sys.stdout)
+            self._stdout_handler.setLevel(logging.DEBUG)
+            self._stdout_handler.setFormatter(logging.Formatter("%(message)s"))
+            self._stdout_handler.addFilter(ConsoleFilter("stdout"))
+            self._stderr_handler = logging.StreamHandler(sys.stderr)
+            self._stderr_handler.setLevel(logging.DEBUG)
+            self._stderr_handler.setFormatter(logging.Formatter("%(message)s"))
+            self._stderr_handler.addFilter(ConsoleFilter("stderr"))
+            self._logger.handlers[:] = [
+                self._file_handler,
+                self._stdout_handler,
+                self._stderr_handler,
+            ]
+            LoggingSession._current = self
+            self.capture_logger("py.warnings")
+            self._previous_showwarning = warnings.showwarning
+            warnings.showwarning = self._showwarning
+        except BaseException:
+            self.close()
+            raise
         return self
 
     def capture_logger(self, name: str) -> None:
@@ -199,12 +212,18 @@ class LoggingSession:
             file_handler.close()
             # 把这个 FileHandler 从 logger 上移除。否则 logger 后续还会尝试往这个已经关闭的 handler 写日志。
             self._logger.removeHandler(file_handler)
+            self._file_handler = None
 
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source_path), str(target_path))
         except OSError:
-            self._file_handler = self._make_file_handler(source_path)
+            try:
+                self._file_handler = self._make_file_handler(source_path)
+            except OSError as exc:
+                raise FilesystemFailure(
+                    "reopen original log", source_path, exc
+                ) from exc
             self._logger.addHandler(self._file_handler)
             get_logger(__name__).warning(
                 "Unable to move log to %s; continuing with %s",
@@ -215,14 +234,19 @@ class LoggingSession:
             return source_path
 
         self.log_path = target_path
-        self._file_handler = self._make_file_handler(target_path)
+        try:
+            self._file_handler = self._make_file_handler(target_path)
+        except OSError as exc:
+            raise FilesystemFailure("reopen moved log", target_path, exc) from exc
         self._logger.addHandler(self._file_handler)
         return target_path
 
     def report_failure(self, exc: BaseException) -> None:
-        logger = get_logger(__name__)
-        logger.error("Process failed: %s", exc, exc_info=exc)
-        error(logger, "Error: %s\nFull log: %s", exc, self.log_path)
+        if self._file_handler is None or self._file_handler.stream is None:
+            print(f"Error: {exc}\nLog unavailable: {self.log_path}", file=sys.stderr)
+            return
+        get_logger(__name__).error("Process failed: %s", exc, exc_info=exc)
+        print(f"Error: {exc}\nFull log: {self.log_path}", file=sys.stderr)
 
     def close(self) -> None:
         if not self._started:
@@ -275,6 +299,8 @@ class LoggingSession:
         return self.start()
 
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        if _exc is not None and self._file_handler is not None:
+            get_logger(__name__).error("Process failed: %s", _exc, exc_info=_exc)
         self.close()
 
 
@@ -370,3 +396,54 @@ class ProcessLogger:
 
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
         self.close()
+
+
+class FilesystemFailure(OSError):
+    def __init__(self, operation: str, path: Path, cause: OSError) -> None:
+        super().__init__(
+            cause.errno,
+            f"{operation}: {type(cause).__name__}: {cause}",
+            str(path.resolve()),
+        )
+
+    def __str__(self) -> str:
+        return f"{self.strerror} (path: {self.filename})"
+
+
+def filesystem_cli(function: Callable[..., int]) -> Callable[..., int]:
+    @wraps(function)
+    def guarded(*args, **kwargs) -> int:
+        try:
+            return function(*args, **kwargs)
+        except ReportPublishError:
+            return 1
+        except OSError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
+    return guarded
+
+
+def publish_check_report(report: dict, path: Path, log_path: Path) -> None:
+    report["logs"] = {"report": str(path), "log": str(log_path)}
+    temporary = path.with_suffix(".tmp")
+    try:
+        temporary.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(temporary, path)
+    except OSError as exc:
+        session = LoggingSession.current()
+        failure = FilesystemFailure("publish check report", path, exc)
+        if session is not None:
+            session.report_failure(failure)
+        raise ReportPublishError(failure) from exc
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+class ReportPublishError(RuntimeError):
+    pass

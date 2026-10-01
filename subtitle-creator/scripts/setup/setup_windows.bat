@@ -1,9 +1,8 @@
 @echo off
 setlocal
 
-if not defined UV_CACHE_DIR (
-    for %%I in ("%~dp0..\..\.cache\uv") do set "UV_CACHE_DIR=%%~fI"
-)
+call "%~dp0..\runtime_paths.bat" %*
+if %ERRORLEVEL% NEQ 0 exit /b 1
 if not defined UV_INDEX_STRATEGY set "UV_INDEX_STRATEGY=first-index"
 
 where uv >nul 2>nul
@@ -18,7 +17,7 @@ pushd "%~dp0..\.." || exit /b 1
 call uv python install 3.12
 if %ERRORLEVEL% NEQ 0 goto setup_failed
 
-call uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap %*
+call uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap %* --data-dir "%SKILL_DATA_ROOT%"
 set "SETUP_RC=%ERRORLEVEL%"
 popd
 exit /b %SETUP_RC%

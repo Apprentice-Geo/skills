@@ -8,19 +8,19 @@ from urllib.parse import parse_qs, urlsplit
 
 from scripts import fetch_audio, subtitle_transcript
 from scripts.config import (
-    RESULTS_DIR,
-    SKILL_ROOT,
     SUMMARY_INSTRUCTIONS_PATH,
     SUMMARY_TEMPLATE_BY_LANGUAGE,
 )
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
+    filesystem_cli,
     get_logger,
     result,
     status,
 )
 from scripts.runtime_options import FetchOptions, PipelineOptions
+from scripts.runtime_paths import add_data_dir_argument
 from scripts.summary_job import (
     JOB_FILENAME,
     SCHEMA_VERSION,
@@ -55,7 +55,8 @@ def format_duration(seconds: float) -> str:
 def make_fetch_args(options: PipelineOptions) -> FetchOptions:
     return FetchOptions(
         url=options.url,
-        output_dir=RESULTS_DIR,
+        output_dir=options.paths.results_dir,
+        paths=options.paths,
         cookies=options.cookies,
         playlist=False,
         skip_audio=False,
@@ -243,10 +244,13 @@ def _video_id_from_normalized_url(normalized_url: str) -> str:
     return video_id
 
 
-def _preparing_job(options: PipelineOptions) -> tuple[Path, dict[str, Any]]:
+def _preparing_job(
+    options: argparse.Namespace | PipelineOptions,
+) -> tuple[Path, dict[str, Any]]:
+    options = PipelineOptions.from_args(options)
     normalized_url = normalize_bilibili_video_url(options.url)
     video_id = _video_id_from_normalized_url(normalized_url)
-    results_root = RESULTS_DIR.resolve()
+    results_root = options.paths.results_dir
     result_dir = (results_root / video_id).resolve()
     try:
         result_dir.relative_to(results_root)
@@ -320,6 +324,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip subtitle reuse/download and prepare a transcription job.",
     )
+    add_data_dir_argument(parser)
     return parser.parse_args()
 
 
@@ -474,10 +479,12 @@ def run_pipeline(args: argparse.Namespace | PipelineOptions) -> dict[str, Any]:
             raise
 
 
+@filesystem_cli
 def main() -> int:
     options = PipelineOptions.from_args(parse_args())
+    paths = options.paths
     log_path = create_timestamped_log_path(
-        SKILL_ROOT / ".cache" / "logs",
+        paths.logs_dir,
         "pipeline",
     )
     with LoggingSession(log_path) as session:

@@ -9,7 +9,7 @@ from scripts.utils import read_json, write_json, write_json_atomic
 
 @pytest.fixture(autouse=True)
 def use_test_results_dir(workspace_tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(run_pipeline, "RESULTS_DIR", workspace_tmp_path / "results")
+    monkeypatch.setenv("BILI_AUDIOSUMMARY_DATA_DIR", str(workspace_tmp_path))
 
 
 def make_args(
