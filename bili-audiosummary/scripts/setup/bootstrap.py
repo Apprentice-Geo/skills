@@ -45,6 +45,12 @@ def run_setup(root: Path | None = None) -> Path:
         assert_python_312(read_python_version(venv_python, logger), "Existing .venv")
 
         logger.step(3, 3, "Verify core imports and packaged ffmpeg")
+        logger.run(
+            [venv_python, "-m", "scripts.contract_check"],
+            "Verify transcription contract version and API",
+            env=os.environ,
+            cwd=paths.root,
+        )
         verify_core_imports(venv_python, logger, os.environ)
         ffmpeg, ffprobe = resolve_packaged_ffmpeg(
             venv_python,

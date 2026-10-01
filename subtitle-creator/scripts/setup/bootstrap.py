@@ -23,7 +23,7 @@ def run_setup(root: Path | None = None) -> Path:
             env=os.environ,
             cwd=root,
         )
-        logger.step(2, 2, "Verify transcription contract import")
+        logger.step(2, 2, "Verify transcription contract version and API")
         logger.run(
             [
                 "uv",
@@ -32,10 +32,10 @@ def run_setup(root: Path | None = None) -> Path:
                 "3.12",
                 "--no-sync",
                 "python",
-                "-c",
-                "import audio_transcribe_contract",
+                "-m",
+                "scripts.contract_check",
             ],
-            "Verify transcription contract import",
+            "Verify transcription contract version and API",
             env=os.environ,
             cwd=root,
         )

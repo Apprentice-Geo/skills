@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.contract_check import check_contract
+
 from .process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -137,11 +139,11 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             _item(
                 "uv-pip-check",
                 "pass" if code == 0 else "fail",
-                "dependencies match environment",
+                "installed packages are mutually consistent",
                 (stdout or stderr)[:300],
                 "uv pip check completed."
                 if code == 0
-                else "Declared dependencies are missing or inconsistent.",
+                else "Installed packages are missing or inconsistent; project requirements are checked separately.",
                 setup_command,
             )
         )
@@ -150,7 +152,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             _item(
                 "uv-pip-check",
                 "fail",
-                "dependencies match environment",
+                "installed packages are mutually consistent",
                 "not run",
                 "Cannot validate the environment.",
                 setup_command,
@@ -187,6 +189,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             r"Run audio-transcribe\scripts\check_dependencies.bat before transcription.",
         )
     )
+    checks.extend(check_contract(root))
     failed = [item for item in checks if item["status"] == "fail"]
     return {
         "skill": SKILL_NAME,

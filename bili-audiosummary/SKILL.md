@@ -39,6 +39,8 @@ setup 成功后再运行一次 `scripts/check_dependencies.bat` 复查。
 
 3. 需要转写时，单独安装并检查 `audio-transcribe` Skill。此 Skill 不安装 ASR 模型。
 
+检查器与 setup 均验证合同包满足 `pyproject.toml` 声明且提供当前公共 API；诊断规则见 [合同包检查](references/ERROR-HANDLING.md#合同包检查)。
+
 ## 主要步骤
 
 1. 按[环境](#环境)中的策略完成依赖检查以及必要的 setup 和复查。只有最终检查成功时才继续；如果需要转写，在调用 `audio-transcribe` Skill 前单独运行其检查器。

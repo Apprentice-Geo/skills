@@ -22,9 +22,11 @@ metadata:
 3. 需要转写时，先单独安装并检查 `audio-transcribe` Skill，再调用它；此处的检查不会定位或配置该 Skill。
 4. 使用 `uv run --no-dev python -m ...` 运行 workflow 命令。
 
+检查器与 setup 均验证合同包满足 `pyproject.toml` 声明且提供当前公共 API；诊断规则见 [合同包检查](references/ERROR-HANDLING.md#合同包检查)。
+
 此 Skill 不安装 ASR 模型，也不下载音频。
 
-setup 在 `uv python install 3.12` 成功后启动 Python 日志会话，随后执行依赖同步和 contract import 验证。Python 阶段的终端输出只是完整日志的筛选结果；`uv python install 3.12` 的原始输出及启动前检查不属于该日志。
+setup 在 `uv python install 3.12` 成功后启动 Python 日志会话，随后执行依赖同步和 contract 版本与公共 API 验证。Python 阶段的终端输出只是完整日志的筛选结果；`uv python install 3.12` 的原始输出及启动前检查不属于该日志。
 
 ## 核心规则
 

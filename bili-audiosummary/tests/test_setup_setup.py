@@ -45,7 +45,9 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
         original_run = logger.run
 
         def record_run(*args, **kwargs):
-            events.append("sync")
+            events.append(
+                "verify_contract" if "scripts.contract_check" in args[0] else "sync"
+            )
             return original_run(*args, **kwargs)
 
         logger.run = record_run
@@ -99,4 +101,4 @@ def test_run_setup_syncs_dependencies_before_verifying_runtime(
     assert checked_ffmpeg == [
         (workspace_tmp_path / "ffmpeg.exe", workspace_tmp_path / "ffprobe.exe")
     ]
-    assert events == ["sync", "verify_imports", "verify_ffmpeg"]
+    assert events == ["sync", "verify_contract", "verify_imports", "verify_ffmpeg"]

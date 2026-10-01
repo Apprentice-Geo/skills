@@ -29,6 +29,7 @@ from scripts.asr.alignment import (
 )
 from scripts.asr.pipeline_types import PipelineOutcome
 from scripts.asr.prepared_model import validate_prepared_model
+from scripts.import_compat import clear_optional_aliases, describe_import_error
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import validate_model
 from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
@@ -71,26 +72,15 @@ def _decode_audio(path: Path) -> Any:
 def _detect_language(samples: Any) -> str:
     model_dir = MODELS_DIR / "lang-id-voxlingua107-ecapa"
     validate_model("language-id", model_dir)
+    clear_optional_aliases()
     try:
         import torch
         from speechbrain.inference.classifiers import EncoderClassifier
     except ImportError as exc:
         raise RuntimeError(
-            "SpeechBrain language identification dependencies are missing."
+            describe_import_error("speechbrain.inference.classifiers", exc)
         ) from exc
-    # SpeechBrain 1.1 registers deprecated optional aliases as lazy modules.
-    # Removing those unused aliases prevents Python inspection from importing
-    # optional k2 while HyperPyYAML resolves this local ECAPA model.
-    for module_name in (
-        "speechbrain.pretrained",
-        "speechbrain.k2_integration",
-        "speechbrain.wordemb",
-        "speechbrain.lobes.models.huggingface_transformers",
-        "speechbrain.lobes.models.spacy",
-        "speechbrain.lobes.models.flair",
-        "speechbrain.nnet.loss.transducer_loss",
-    ):
-        sys.modules.pop(module_name, None)
+    clear_optional_aliases()
     classifier = EncoderClassifier.from_hparams(
         source=str(model_dir),
         overrides={"pretrained_path": str(model_dir)},

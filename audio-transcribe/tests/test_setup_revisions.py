@@ -280,3 +280,15 @@ def test_single_safetensors_model_does_not_require_shard_index(
     (model_dir / "model.safetensors").write_bytes(b"weights")
 
     assert model_has_weights(model_dir, ("model*.safetensors",))
+
+
+def test_qwen_import_failure_preserves_cause_without_claiming_missing_packages():
+    class Logger:
+        def run(self, *_args, **_kwargs):
+            raise SetupError("ImportError: lazy import conflict")
+
+    with pytest.raises(SetupError, match="import verification failed") as captured:
+        install_model.verify_qwen3_asr_environment(Path("python.exe"), Logger())
+    assert "lazy import conflict" in str(captured.value)
+    assert "dependencies are missing" not in str(captured.value)
+    assert isinstance(captured.value.__cause__, SetupError)

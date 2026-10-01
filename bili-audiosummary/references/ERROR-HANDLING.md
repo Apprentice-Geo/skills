@@ -148,3 +148,10 @@ summary 语言比例不足只产生 warning，命令仍以成功状态退出并�
 - 转写在生成完整公共 manifest 前失败。
 
 禁止通过手动编辑 job status 绕过停止条件。
+
+
+## 合同包检查
+
+检查器和 setup 复用本 Skill 的 `scripts/contract_check.py`：从 `pyproject.toml` 读取合同包要求，通过当前解释器的 `importlib.metadata` 读取 distribution 版本，检查 `load_result`、`TranscriptionResult`、`ResultValidationError` 和 `PUBLIC_SCHEMA_VERSION=3`。版本不符、包缺失、声明不可读或无效、API 不完整时返回失败，不能报告 ready。JSON 检查项包含 expected、actual 和同步建议。
+
+`uv pip check` 仅检查已安装包之间的一致性，不证明它们满足当前项目声明。按本 Skill 环境策略显式同步后，使用 `uv run --no-sync python -m scripts.check_dependencies` 复查，避免自动同步掩盖旧包问题。实际接入转写时仍通过 `load_result()` 验证完整公共 bundle；能力检查不能代替该验证。

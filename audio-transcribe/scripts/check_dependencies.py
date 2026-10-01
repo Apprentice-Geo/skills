@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import platform
 import shutil
@@ -24,12 +25,14 @@ from scripts.dependency_policy import (
     QWEN3_ASR_IMPORTS,
     parse_pytorch_probe,
 )
+from scripts.import_compat import probe_statement
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
     WHISPER_WEIGHT_PATTERNS,
 )
 from scripts.model_identity import MODEL_REVISIONS, validate_installation
+from scripts.process_logging import LoggingSession, get_logger
 
 SKILL_NAME = "audio-transcribe"
 CPU_SYNC_COMMAND = "uv sync --python 3.12 --no-dev --extra cpu"
@@ -65,18 +68,31 @@ def run_command(command: list[str]) -> tuple[int, str, str]:
             (result.stderr or "").strip(),
         )
     except OSError as exc:
-        return 1, "", str(exc)
+        return 1, "", f"{type(exc).__name__}: {exc}"
 
 
 def check_module_import(module: str) -> tuple[bool, str, str]:
     """Import one dependency in a clean interpreter process."""
-    statement = (
-        "import importlib; "
-        f"module = importlib.import_module({module!r}); "
-        "print(getattr(module, '__version__', 'importable'))"
-    )
-    code, stdout, stderr = run_command([sys.executable, "-c", statement])
-    return code == 0, (stdout or stderr)[:300], stderr[:300]
+    return check_import_sequence((module,))
+
+
+def check_import_sequence(modules: tuple[str, ...]) -> tuple[bool, str, str]:
+    code, stdout, stderr = run_command([sys.executable, "-c", probe_statement(modules)])
+    if stderr:
+        logging.getLogger("audio_transcribe.dependency_probe").debug("%s", stderr)
+    try:
+        payload = json.loads(stdout.splitlines()[-1])
+        if not isinstance(payload, dict):
+            raise ValueError("Import probe must return an object")
+        actual = payload.get("error", payload.get("result", "invalid probe output"))
+        if not isinstance(actual, str) or not (
+            "error" in payload or "result" in payload
+        ):
+            raise ValueError("Import probe must return a result or error string")
+    except (IndexError, ValueError):
+        actual = f"Probe process failed or returned invalid output: {stderr or stdout}"
+        return False, actual, actual
+    return code == 0, actual, "" if code == 0 else actual
 
 
 def check_pytorch_build() -> tuple[bool, dict[str, str | bool | None], str]:
@@ -448,7 +464,20 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
                     "uv sync --python 3.12 --no-dev --extra qwen3-asr",
                 )
             )
-    qwen_imports = all(qwen_optional_imports.values())
+    combined_ok, combined_actual, combined_error = check_import_sequence(
+        LANGUAGE_ID_IMPORTS + QWEN3_ASR_IMPORTS
+    )
+    checks.append(
+        item(
+            "provider:qwen3-asr:combined-imports",
+            "pass" if combined_ok else "warn",
+            "language identification then Qwen imports in one process",
+            combined_actual,
+            combined_error or "Combined imports succeeded.",
+            QWEN_SYNC_COMMAND,
+        )
+    )
+    qwen_imports = all(qwen_optional_imports.values()) and combined_ok
     pytorch_check_items, cuda_build, cuda_available = pytorch_checks(
         pytorch_ok, pytorch, pytorch_error
     )
@@ -458,10 +487,10 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             "provider:qwen3-asr:imports",
             "pass" if qwen_imports else "warn",
             "Qwen3-ASR optional imports",
-            "available" if qwen_imports else "missing",
+            "available" if qwen_imports else "failed",
             "Qwen3-ASR imports are available."
             if qwen_imports
-            else "Qwen3-ASR optional dependencies are not installed.",
+            else "Qwen3-ASR import verification failed; inspect individual and combined diagnostics.",
             "uv sync --python 3.12 --no-dev --extra qwen3-asr",
         )
     )
@@ -522,7 +551,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--root", type=Path, default=None)
     args = parser.parse_args(argv)
-    report = run_check(args.root)
     logs_dir = (
         (args.root or Path(__file__).resolve().parents[1]).resolve() / ".cache" / "logs"
     )
@@ -530,49 +558,47 @@ def main(argv: list[str] | None = None) -> int:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     json_path = logs_dir / f"dependency-check-{stamp}.json"
     log_path = logs_dir / f"dependency-check-{stamp}.log"
-    report["logs"] = {"report": str(json_path), "log": str(log_path)}
-    temporary = json_path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    os.replace(temporary, json_path)
-    check_lines = [
-        f"[{check['status'].upper()}] {check['id']}: {check['message']}"
-        for check in report["checks"]
-    ]
-    provider_lines = [
-        f"Provider {name}: {value['status']}"
-        for name, value in report["providers"].items()
-    ]
-    terminal_lines = [
-        f"Dependency check: {report['skill']}",
-        f"Overall: {report['overall_status']}",
-    ]
-    passed = sum(check["status"] == "pass" for check in report["checks"])
-    if passed:
-        terminal_lines.append(f"[PASS] Dependencies OK ({passed} checks passed)")
-    terminal_lines.extend(
-        line for line in check_lines if not line.startswith("[PASS] ")
-    )
-    terminal_lines.extend(provider_lines)
-    terminal_lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
-    log_temporary = log_path.with_suffix(".tmp")
-    log_temporary.write_text(
-        "\n".join(
-            [
-                f"Dependency check: {report['skill']}",
-                f"Overall: {report['overall_status']}",
-                *check_lines,
-                *provider_lines,
-                f"JSON report: {json_path}",
-                f"Log: {log_path}",
-            ]
+    with LoggingSession(log_path):
+        report = run_check(args.root)
+        report["logs"] = {"report": str(json_path), "log": str(log_path)}
+        temporary = json_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    os.replace(log_temporary, log_path)
-    print("\n".join(terminal_lines))
+        os.replace(temporary, json_path)
+        check_lines = [
+            f"[{check['status'].upper()}] {check['id']}: {check['message']}"
+            for check in report["checks"]
+        ]
+        provider_lines = [
+            f"Provider {name}: {value['status']}"
+            for name, value in report["providers"].items()
+        ]
+        terminal_lines = [
+            f"Dependency check: {report['skill']}",
+            f"Overall: {report['overall_status']}",
+        ]
+        passed = sum(check["status"] == "pass" for check in report["checks"])
+        if passed:
+            terminal_lines.append(f"[PASS] Dependencies OK ({passed} checks passed)")
+        terminal_lines.extend(
+            line for line in check_lines if not line.startswith("[PASS] ")
+        )
+        terminal_lines.extend(provider_lines)
+        terminal_lines.extend([f"JSON report: {json_path}", f"Log: {log_path}"])
+        get_logger(__name__).info(
+            "\n".join(
+                [
+                    f"Dependency check: {report['skill']}",
+                    f"Overall: {report['overall_status']}",
+                    *check_lines,
+                    *provider_lines,
+                    f"JSON report: {json_path}",
+                    f"Log: {log_path}",
+                ]
+            )
+        )
+        print("\n".join(terminal_lines))
     if any(
         check["id"] in {"platform", "pyproject.toml", "uv.lock", "uv"}
         and check["status"] == "fail"

@@ -26,6 +26,7 @@ Bilibili URL
 | `scripts/transcript_output.py` | 通用 segment 验证、合并和 Markdown 渲染 |
 | `scripts/complete_summary.py` 和 `validate_summary.py` | 最终 summary 和 source 验证 |
 | `scripts/remove_summary_job.py` | 受限删除单个 job 目录，以便显式重新准备 |
+| `scripts/contract_check.py` | 检查器与 setup 复用的项目合同包版本及公共 API 检查；不替代 bundle loader |
 | `scripts/process_logging.py` | 每次 Python 命令的文件、stdout、stderr 日志路由和进程输出捕获 |
 | `scripts/summary_job.py` | schema、状态不变量、受限路径、锁和原子 job 写入 |
 | `assets/` | summary 指令和模板 |

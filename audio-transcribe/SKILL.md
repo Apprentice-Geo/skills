@@ -33,7 +33,7 @@ uv sync --python 3.12 --no-dev --extra qwen3-asr
 uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
 
-模型安装在下载前验证 PyTorch 是 CUDA build 且 GPU runtime 可用。切回默认 CPU 环境时重新运行 `scripts/setup/setup_windows.bat`。extra 只描述本次依赖解析请求，不是持久化环境状态；以依赖检查报告中的 `pytorch:build` 和 Provider status 判断当前 readiness。
+模型安装在下载前验证语言识别与 Qwen 在同一进程连续导入成功，并验证 PyTorch 是 CUDA build 且 GPU runtime 可用。切回默认 CPU 环境时重新运行 `scripts/setup/setup_windows.bat`。extra 只描述本次依赖解析请求，不是持久化环境状态；以依赖检查报告中的 `pytorch:build` 和 Provider status 判断当前 readiness。
 
 ## 主要步骤
 

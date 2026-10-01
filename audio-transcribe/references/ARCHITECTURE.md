@@ -24,6 +24,7 @@ local audio
 | `scripts/asr/segmentation.py` | 对已经验证的 global alignment 进行句子分段 |
 | 其他 `scripts/asr/` 模块 | 音频准备、VAD、chunk 规划、Provider 执行、cache、合并和 workspace 输出 |
 | `scripts/artifacts.py` | manifest-last 发布、公共 artifact 恢复、锁和自验证 |
+| `scripts/import_compat.py` | 安装器、检查器和运行时复用的轻量导入兼容处理，不加载模型或 pipeline |
 | `scripts/model_artifacts.py` | 保守的本地模型 ready 检查，包括 indexed safetensors |
 | `scripts/setup/` | Windows 环境和固定 revision 的模型安装 |
 | `packages/audio-transcribe-contract/` | 面向 consumer，对公共 manifest 和 artifact 进行严格的只读验证 |
@@ -35,7 +36,7 @@ local audio
 
 `cpu` 与 `qwen3-asr` extra 分别从 PyTorch 官方 CPU 和 CUDA 12.6 explicit index 解析 `torch`、`torchaudio`，两者互斥。统一 `uv.lock` 同时记录两套互斥 resolution；extra 是解析选择，不作为持久化 profile 写入 checker schema、结果身份或 artifact。
 
-依赖检查通过独立 Python 子进程读取 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`，避免 checker 主进程加载 PyTorch。faster-whisper readiness 要求基础与语言识别 import、打包 ffmpeg、语言模型及 Whisper 模型；因此安装完整 Qwen 依赖的环境也可以运行 faster-whisper，但不应被描述为纯 CPU 环境。Qwen readiness 在这些共享条件之外，还要求 CUDA build、可用 GPU runtime、Qwen import、ASR 模型与 aligner 模型。
+依赖检查通过独立 Python 子进程读取 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`，避免 checker 主进程加载 PyTorch。faster-whisper readiness 要求基础与语言识别 import、打包 ffmpeg、语言模型及 Whisper 模型；因此安装完整 Qwen 依赖的环境也可以运行 faster-whisper，但不应被描述为纯 CPU 环境。Qwen readiness 在这些共享条件之外，还要求 CUDA build、可用 GPU runtime、Qwen 独立 import、语言识别后 Qwen 的同进程组合 import、ASR 模型与 aligner 模型。
 
 ## 系统边界
 

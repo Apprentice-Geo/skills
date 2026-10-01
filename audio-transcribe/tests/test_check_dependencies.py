@@ -376,3 +376,24 @@ def test_main_compresses_pass_lines_in_terminal_but_keeps_them_in_log(
     assert "[FAIL] torch: module failed" in output
     assert "Provider faster-whisper: not_ready" in output
     assert "[PASS] uv: uv is ready" in log
+
+
+def test_main_preserves_probe_tracebacks_in_published_log(monkeypatch, tmp_path):
+    diagnostic = "Traceback (most recent call last):\nImportError: original conflict"
+
+    def run_check(root):
+        import logging
+
+        logging.getLogger("audio_transcribe.dependency_probe").debug("%s", diagnostic)
+        return {
+            "skill": "audio-transcribe",
+            "overall_status": "not_ready",
+            "checks": [],
+            "providers": {},
+            "logs": {},
+        }
+
+    monkeypatch.setattr(check_dependencies, "run_check", run_check)
+    assert check_dependencies.main(["--root", str(tmp_path)]) == 1
+    log_path = next((tmp_path / ".cache" / "logs").glob("*.log"))
+    assert diagnostic in log_path.read_text(encoding="utf-8")

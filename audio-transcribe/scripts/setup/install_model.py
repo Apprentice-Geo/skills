@@ -11,6 +11,7 @@ from scripts.dependency_policy import (
     QWEN3_ASR_IMPORTS,
     parse_pytorch_probe,
 )
+from scripts.import_compat import probe_statement
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
@@ -66,13 +67,14 @@ def verify_qwen3_asr_environment(python: Path, logger: ProcessLogger) -> None:
     imports = LANGUAGE_ID_IMPORTS + QWEN3_ASR_IMPORTS
     try:
         logger.run(
-            [python, "-c", "; ".join(f"import {module}" for module in imports)],
+            [python, "-c", probe_statement(imports)],
             "Verify Qwen3-ASR imports",
             env=os.environ,
         )
     except SetupError as exc:
         raise SetupError(
-            "Qwen3-ASR dependencies are missing. Run "
+            f"Qwen3-ASR import verification failed: {exc}. Inspect the full log; "
+            "only repair missing required dependencies with "
             r"uv sync --python 3.12 --no-dev --extra qwen3-asr "
             "before installing Qwen3-ASR models."
         ) from exc
