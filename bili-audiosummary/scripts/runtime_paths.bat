@@ -19,7 +19,8 @@ set "SKILL_DATA_ARG=%~1"
 if /i "%SKILL_DATA_ARG:~0,11%"=="--data-dir=" (
     set "SKILL_DATA_ROOT=%SKILL_DATA_ARG:~11%"
 ) else (
-    set "SKILL_FORWARD_ARGS=%SKILL_FORWARD_ARGS% %1"
+    rem Keep each argument's own quotes protecting shell metacharacters.
+    set SKILL_FORWARD_ARGS=%SKILL_FORWARD_ARGS% %1
 )
 shift
 goto scan_data_args
