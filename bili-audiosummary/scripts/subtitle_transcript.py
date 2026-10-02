@@ -14,10 +14,12 @@ from scripts.manifest_io import (
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
+    filesystem_cli,
     get_logger,
     status,
     warning,
 )
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 from scripts.subtitle_utils import infer_subtitle_language
 from scripts.transcript_output import write_markdown_from_json
 from scripts.utils import ensure_dir, path_to_posix, write_json
@@ -177,13 +179,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir", type=Path, help="Result directory for transcript outputs."
     )
+    add_data_dir_argument(parser)
     return parser.parse_args()
 
 
+@filesystem_cli
 def main() -> int:
     args = parse_args()
+    paths = RuntimePaths.resolve(args.data_dir, root=SKILL_ROOT)
     log_path = create_timestamped_log_path(
-        SKILL_ROOT / ".cache" / "logs",
+        paths.logs_dir,
         "subtitle",
     )
     with LoggingSession(log_path) as session:

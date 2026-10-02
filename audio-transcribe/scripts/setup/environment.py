@@ -10,6 +10,7 @@ from scripts.process_logging import (
     SetupError,
     create_timestamped_log_path,
 )
+from scripts.runtime_paths import RuntimePaths
 
 PYTHON_VERSION = (3, 12)
 
@@ -30,16 +31,17 @@ class SetupPaths:
     venv_python: Path
 
     @classmethod
-    def from_root(cls, root: Path) -> "SetupPaths":
+    def from_root(cls, root: Path, data_dir: Path | None = None) -> "SetupPaths":
         root = root.resolve()
-        cache_dir = root / ".cache"
+        runtime = RuntimePaths.resolve(data_dir, root=root)
+        cache_dir = runtime.data_dir / ".cache"
         venv_dir = root / ".venv"
         return cls(
             root=root,
             cache_dir=cache_dir,
             logs_dir=cache_dir / "logs",
             uv_cache_dir=cache_dir / "uv",
-            results_dir=root / "results",
+            results_dir=runtime.results_dir,
             models_dir=root / "models",
             whisper_model_dir=root / "models" / "faster-whisper-small",
             language_id_model_dir=root / "models" / "lang-id-voxlingua107-ecapa",
@@ -54,15 +56,6 @@ def configure_environment(
     paths: SetupPaths,
     environ: MutableMapping[str, str],
 ) -> None:
-    for path in (
-        paths.cache_dir,
-        paths.logs_dir,
-        paths.uv_cache_dir,
-        paths.results_dir,
-        paths.models_dir,
-    ):
-        path.mkdir(parents=True, exist_ok=True)
-
     environ.setdefault("UV_CACHE_DIR", str(paths.uv_cache_dir))
 
 

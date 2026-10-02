@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -172,3 +173,21 @@ def load_job(job_path: Path) -> dict[str, Any]:
 def publish_job(job_path: Path, payload: dict[str, Any]) -> None:
     validate_job(job_path, payload)
     write_json_atomic(job_path, payload)
+
+
+def require_configured_job_path(job_path: Path, results_dir: Path) -> None:
+    if not job_path.is_absolute() or job_path.name != JOB_FILENAME:
+        raise JobValidationError(
+            "summary job must be an absolute summary_job.json path"
+        )
+    directory = job_path.parent
+    if directory.is_symlink() or directory.is_junction():
+        raise JobValidationError("summary job directory must not be a link or junction")
+    resolved = directory.resolve()
+    if (
+        resolved.parent != results_dir.resolve()
+        or re.fullmatch(r"BV[0-9A-Za-z]+(?:_p[1-9][0-9]*)?", resolved.name) is None
+    ):
+        raise JobValidationError(
+            "summary job is outside the currently configured results directory"
+        )

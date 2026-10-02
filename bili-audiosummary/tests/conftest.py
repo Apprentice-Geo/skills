@@ -15,6 +15,11 @@ def workspace_tmp_path(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def isolate_runtime_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BILI_AUDIOSUMMARY_DATA_DIR", str(tmp_path))
+
+
 @pytest.fixture
 def sample_srt_path(workspace_tmp_path: Path) -> Path:
     path = workspace_tmp_path / "BVTEST.zh-Hans.srt"

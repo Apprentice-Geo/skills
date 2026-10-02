@@ -11,6 +11,7 @@ from scripts.dependency_policy import (
     QWEN3_ASR_IMPORTS,
     parse_pytorch_probe,
 )
+from scripts.import_compat import probe_statement
 from scripts.model_artifacts import (
     LANGUAGE_ID_REQUIRED_FILES,
     QWEN3_ASR_WEIGHT_PATTERNS,
@@ -18,7 +19,8 @@ from scripts.model_artifacts import (
     model_has_required_files,
 )
 from scripts.model_identity import MODEL_REVISIONS
-from scripts.process_logging import ProcessLogger, SetupError
+from scripts.process_logging import ProcessLogger, SetupError, filesystem_cli
+from scripts.runtime_paths import add_data_dir_argument
 from scripts.setup.download_models import download_model
 from scripts.setup.environment import (
     SetupPaths,
@@ -66,13 +68,14 @@ def verify_qwen3_asr_environment(python: Path, logger: ProcessLogger) -> None:
     imports = LANGUAGE_ID_IMPORTS + QWEN3_ASR_IMPORTS
     try:
         logger.run(
-            [python, "-c", "; ".join(f"import {module}" for module in imports)],
+            [python, "-c", probe_statement(imports)],
             "Verify Qwen3-ASR imports",
             env=os.environ,
         )
     except SetupError as exc:
         raise SetupError(
-            "Qwen3-ASR dependencies are missing. Run "
+            f"Qwen3-ASR import verification failed: {exc}. Inspect the full log; "
+            "only repair missing required dependencies with "
             r"uv sync --python 3.12 --no-dev --extra qwen3-asr "
             "before installing Qwen3-ASR models."
         ) from exc
@@ -142,9 +145,11 @@ def install_qwen_models(
     )
 
 
-def run_model_setup(model: str, root: Path | None = None) -> Path:
+def run_model_setup(
+    model: str, root: Path | None = None, *, data_dir: Path | None = None
+) -> Path:
     root = root or Path(__file__).resolve().parents[2]
-    paths = SetupPaths.from_root(root)
+    paths = SetupPaths.from_root(root, data_dir)
     configure_environment(paths, os.environ)
     logger = ProcessLogger(create_log_path(paths))
     python = Path(sys.executable).resolve()
@@ -190,13 +195,15 @@ def parse_args() -> argparse.Namespace:
         choices=("faster-whisper", "qwen3-asr"),
         help="Model family to download.",
     )
+    add_data_dir_argument(parser)
     return parser.parse_args()
 
 
+@filesystem_cli
 def main() -> int:
     args = parse_args()
     try:
-        run_model_setup(args.model)
+        run_model_setup(args.model, data_dir=args.data_dir)
     except SetupError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

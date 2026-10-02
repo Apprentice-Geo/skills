@@ -22,7 +22,7 @@ def subtitle_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path
     audio_path.write_bytes(b"test audio content")
     audio_id = hashlib.sha256(audio_path.read_bytes()).hexdigest()
     results_dir = tmp_path / "results"
-    monkeypatch.setattr(subtitle_job, "RESULTS_DIR", results_dir)
+    monkeypatch.setenv("SUBTITLE_CREATOR_DATA_DIR", str(results_dir.parent))
     job_dir = results_dir / audio_id
     job_dir.mkdir(parents=True)
     job_path = job_dir / "subtitle_job.json"

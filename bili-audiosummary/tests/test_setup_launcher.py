@@ -35,6 +35,7 @@ def run_launcher(
     env["PATHEXT"] = ".COM;.EXE;.BAT;.CMD"
     env["SETUP_LAUNCH_LOG"] = str(log_path)
     env.pop("UV_CACHE_DIR", None)
+    env.pop("BILI_AUDIOSUMMARY_DATA_DIR", None)
     if uv_default_index is None:
         env.pop("UV_DEFAULT_INDEX", None)
     else:

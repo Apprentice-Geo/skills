@@ -9,13 +9,14 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
+from scripts.runtime_paths import RuntimePaths
+
 SCHEMA_VERSION = 2
 JOB_FILENAME = "subtitle_job.json"
 NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
 SUBTITLE_FILENAME = "subtitle.srt"
 SKILL_DIR = Path(__file__).resolve().parents[1]
-RESULTS_DIR = SKILL_DIR / "results"
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 JOB_KEYS = {
     "schema_version",
@@ -222,7 +223,17 @@ def expected_srt_bytes(normalized: dict[str, Any]) -> bytes:
     return ("\n\n".join(blocks) + "\n").encode("utf-8-sig")
 
 
-def validate_job(job_path: Path, job: dict[str, Any], *, allow_stale_derived: bool = False) -> None:
+def subtitle_matches_normalized(subtitle_path: Path, normalized: dict[str, Any]) -> bool:
+    return subtitle_path.is_file() and subtitle_path.read_bytes() == expected_srt_bytes(normalized)
+
+
+def validate_job(
+    job_path: Path,
+    job: dict[str, Any],
+    *,
+    results_dir: Path | None = None,
+    allow_stale_derived: bool = False,
+) -> None:
     if set(job) != JOB_KEYS:
         raise SubtitleJobError("subtitle job has an invalid top-level shape")
     if type(job.get("schema_version")) is not int or job["schema_version"] != SCHEMA_VERSION:
@@ -236,7 +247,8 @@ def validate_job(job_path: Path, job: dict[str, Any], *, allow_stale_derived: bo
         raise SubtitleJobError("audio.id must match job_id")
     require_absolute_path(audio.get("path"), "audio.path")
 
-    expected_path = (RESULTS_DIR / job_id / JOB_FILENAME).resolve()
+    results_dir = results_dir or RuntimePaths.resolve().results_dir
+    expected_path = (results_dir / job_id / JOB_FILENAME).resolve()
     if job_path.resolve() != expected_path:
         raise SubtitleJobError("job path does not match job_id")
 
@@ -296,7 +308,7 @@ def validate_job(job_path: Path, job: dict[str, Any], *, allow_stale_derived: bo
         raise SubtitleJobError("subtitle artifact is missing")
     if (
         subtitle_path.is_file()
-        and subtitle_path.read_bytes() != expected_srt_bytes(normalized)
+        and not subtitle_matches_normalized(subtitle_path, normalized)
         and not allow_stale_derived
     ):
         raise SubtitleJobError(

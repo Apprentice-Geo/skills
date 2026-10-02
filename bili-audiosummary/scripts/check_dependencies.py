@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import platform
 import shutil
@@ -11,16 +10,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from scripts.contract_check import check_contract
 from scripts.dependency_policy import CORE_IMPORTS
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
     detail,
     error,
+    filesystem_cli,
     get_logger,
+    publish_check_report,
     result,
     warning,
 )
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 
 SKILL_NAME = "bili-audiosummary"
 
@@ -185,11 +188,11 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             _item(
                 "uv-pip-check",
                 "pass" if code == 0 else "fail",
-                "dependencies match environment",
+                "installed packages are mutually consistent",
                 (out or err)[:300],
                 "uv pip check completed."
                 if code == 0
-                else "Declared dependencies are missing or inconsistent.",
+                else "Installed packages are missing or inconsistent; project requirements are checked separately.",
                 "uv sync --python 3.12",
             )
         )
@@ -198,7 +201,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             _item(
                 "uv-pip-check",
                 "fail",
-                "dependencies match environment",
+                "installed packages are mutually consistent",
                 "not run",
                 "Cannot validate the environment.",
                 "Restore uv, uv.lock and the .venv.",
@@ -239,6 +242,7 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
             "Run audio-transcribe\\scripts\\check_dependencies.bat before external transcription.",
         )
     )
+    items.extend(check_contract(root))
     failed = [item for item in items if item["status"] == "fail"]
     return {
         "skill": SKILL_NAME,
@@ -254,26 +258,24 @@ def run_check(root: Path | None = None) -> dict[str, Any]:
     }
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Read-only dependency check for bili-audiosummary."
     )
     parser.add_argument("--root", type=Path, default=None)
+    add_data_dir_argument(parser)
     args = parser.parse_args(argv)
     root = (args.root or Path(__file__).resolve().parents[1]).resolve()
-    logs_dir = root / ".cache" / "logs"
+    paths = RuntimePaths.resolve(args.data_dir, root=root)
+    paths.configure_uv(os.environ)
+    logs_dir = paths.logs_dir
     log_path = create_timestamped_log_path(logs_dir, "dependency-check")
     json_path = log_path.with_suffix(".json")
     logger = get_logger(__name__)
     with LoggingSession(log_path):
         report = run_check(root)
-        report["logs"] = {"report": str(json_path), "log": str(log_path)}
-        temporary = json_path.with_suffix(".tmp")
-        temporary.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        os.replace(temporary, json_path)
+        publish_check_report(report, json_path, log_path)
 
         result(logger, "Dependency check: %s", report["skill"])
         result(logger, "Overall: %s", report["overall_status"])

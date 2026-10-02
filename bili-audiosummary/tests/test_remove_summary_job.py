@@ -11,7 +11,7 @@ from scripts.summary_job import JobValidationError
 @pytest.fixture
 def results_dir(workspace_tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = workspace_tmp_path / "results"
-    monkeypatch.setattr(remove_summary_job, "RESULTS_DIR", path)
+    monkeypatch.setenv("BILI_AUDIOSUMMARY_DATA_DIR", str(path.parent))
     return path
 
 

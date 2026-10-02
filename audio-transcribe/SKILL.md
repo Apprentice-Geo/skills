@@ -20,20 +20,31 @@ metadata:
 在 Windows 上，使用 Python 3.12 和 `uv`，并从此 Skill 目录运行命令。
 
 1. 转写前运行只读的 `scripts/check_dependencies.bat`。
-2. 如果首次检查以非零状态退出，运行一次 `scripts/setup/setup_windows.bat`，然后再检查一次。默认 setup 使用 `cpu` extra，安装 CPU PyTorch、语言识别依赖和基础依赖。
-3. 如果 setup 后没有 Provider ready，使用 `uv run --no-sync python -m scripts.setup.install_model --model faster-whisper` 安装一个本地模型，然后再检查一次。Qwen3-ASR 必须显式切换到互斥的 `qwen3-asr` extra；不得同时启用 `cpu` 和 `qwen3-asr`，也不得使用 `--all-extras`。
-4. 适用的一次性修复完成后，如果检查仍以非零状态退出，停止执行并报告失败的检查。禁止自动重复运行 setup 或安装模型。
+2. 检查失败时先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 区分原因。已有环境配置授权时，仅对适用的依赖失败修复一次：Whisper 使用 `scripts/setup/setup_windows.bat --environment cpu`，Qwen 使用 `scripts/setup/setup_windows.bat --environment qwen3-asr`；随后复查。未指定 Provider 时，优先使用 ready 候选；没有 ready 候选且需要首次配置时采用默认 CPU 路径。
+3. 环境检查通过后，仅当所需本地模型缺失或安装校验无效时，运行 `uv run --no-sync python -m scripts.setup.install_model --model faster-whisper|qwen3-asr`，再复查。安装器复用安装文件和 revision 标记校验，跳过有效模型。不得为模型缺失重复同步环境。
+4. 适用修复最多一次，不重复 setup 或模型安装，不静默切换用户请求的 Provider。文件系统权限、项目缺失、GPU/驱动问题进入对应诊断，不自动重装依赖；复查后请求的 Provider 仍不可用时停止转写并报告。未获得环境配置授权时先报告所需修复。
 
 依赖检查器不会安装、下载或修复任何内容。选择 Provider 前，读取其终端摘要。
 
 需要 Qwen3-ASR 时，按顺序执行：
 
 ```powershell
-uv sync --python 3.12 --no-dev --extra qwen3-asr
+.\scripts\setup\setup_windows.bat --environment qwen3-asr
 uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 ```
 
-模型安装在下载前验证 PyTorch 是 CUDA build 且 GPU runtime 可用。切回默认 CPU 环境时重新运行 `scripts/setup/setup_windows.bat`。extra 只描述本次依赖解析请求，不是持久化环境状态；以依赖检查报告中的 `pytorch:build` 和 Provider status 判断当前 readiness。
+setup 默认 `--environment cpu`；Qwen setup 直接同步互斥的 `qwen3-asr` extra，不先同步 CPU，不使用 `--all-extras`。Qwen setup 与模型安装复用连续导入和 CUDA 检查，模型安装在下载前再次验证。上例的模型安装仅在检查确认模型缺失或无效时执行。切回默认 CPU 环境时重新运行 `scripts/setup/setup_windows.bat --environment cpu`。extra 只描述本次依赖解析请求，不是持久化环境状态；以依赖检查报告中的 `pytorch:build` 和 Provider status 判断当前 readiness。
+
+## 运行数据位置
+
+setup、依赖检查和所有 workflow CLI 支持 `--data-dir`，优先级为显式参数、`AUDIO_TRANSCRIBE_DATA_DIR`、Skill 根目录。启动时解析为绝对路径；日志、报告、内部缓存和结果使用该目录。详细布局、权限错误与恢复边界见 [运行目录与写入失败](references/ERROR-HANDLING.md#运行目录与写入失败)。跨多个命令时持续使用同一个环境变量，或重复传入相同参数；切换目录不自动搜索、搬迁或合并历史任务。
+
+```powershell
+$env:AUDIO_TRANSCRIBE_DATA_DIR = "D:\skill-data\audio-transcribe"
+$env:UV_CACHE_DIR = "$env:AUDIO_TRANSCRIBE_DATA_DIR\.cache\uv"
+```
+
+直接用 `uv run` 启动 Python 时，uv 在 Python 解析 `--data-dir` 前已启动；需要缓存也位于数据目录时，先配置 `UV_CACHE_DIR`。`.bat` 启动器会在启动 uv 前解析数据目录，并保留显式 `UV_CACHE_DIR`。转写 CLI 另支持 `--results-dir`，仅覆盖结果及其 workspace 的默认 `<data-dir>/results/`，不改变日志和报告位置，也不参与内容身份 digest。源码、模板、`.venv` 和模型位置独立；数据目录可写不保证依赖同步或模型安装目录可写。
 
 ## 主要步骤
 
@@ -43,7 +54,7 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 .\scripts\check_dependencies.bat
 ```
 
-它会写入带时间戳的 JSON 和日志文件，但禁止安装、下载或修复依赖或模型。根据报告中的 provider status 选择自动路径。如果用户明确要求不可用的 Provider，立即停止执行并报告失败的检查。
+它会写入带时间戳的 JSON 和日志文件，但禁止安装、下载或修复依赖或模型。根据报告中的 provider status 选择自动路径。用户明确请求的 Provider 未 ready 时不能转写；已有环境配置授权时按[环境](#环境)完成适用修复与复查，仍不可用才停止，不改用其他 Provider。
 2. 需要 setup 时读取 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖)，需要安装模型时读取[模型安装](references/ERROR-HANDLING.md#模型安装)；需要核对 CLI 选项时，运行 `uv run --no-sync python -m scripts.transcribe --help`。
 3. 从此 Skill 目录运行转写：
 

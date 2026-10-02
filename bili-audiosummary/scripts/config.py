@@ -2,7 +2,6 @@ from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 
-RESULTS_DIR = SKILL_ROOT / "results"
 ASSETS_DIR = SKILL_ROOT / "assets"
 SUMMARY_INSTRUCTIONS_PATH = ASSETS_DIR / "summary_instructions.md"
 

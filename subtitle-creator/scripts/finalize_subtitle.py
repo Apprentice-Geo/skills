@@ -7,9 +7,12 @@ import tempfile
 from pathlib import Path
 from typing import NoReturn
 
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
+
 from .process_logging import (
     LoggingSession,
     create_workflow_log_path,
+    filesystem_cli,
     get_logger,
     result,
 )
@@ -64,7 +67,7 @@ def _atomic_write(path: Path, content: bytes) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def finalize_subtitle(job_path: Path) -> Path:
+def finalize_subtitle(job_path: Path, *, results_dir: Path | None = None) -> Path:
     if not job_path.is_absolute():
         raise SubtitleJobError("subtitle job path must be absolute")
     job_path = job_path.resolve()
@@ -72,7 +75,7 @@ def finalize_subtitle(job_path: Path) -> Path:
         raise SubtitleJobError(f"subtitle job is not a regular file: {job_path}")
 
     job = read_json_object(job_path)
-    validate_job(job_path, job, allow_stale_derived=True)
+    validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
 
     artifacts = job["artifacts"]
     baseline = read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True)
@@ -94,23 +97,28 @@ def finalize_subtitle(job_path: Path) -> Path:
 
     job["changed_segment_ids"] = changed_ids
     artifacts["subtitle"] = str(subtitle_path)
-    validate_job(job_path, job)
+    validate_job(job_path, job, results_dir=results_dir)
     atomic_write_json(job_path, job)
     return subtitle_path
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Generate and publish an SRT subtitle.")
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
+    add_data_dir_argument(parser)
     try:
         arguments = parser.parse_args(argv)
     except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    session = LoggingSession(create_workflow_log_path("finalize-subtitle")).start()
+    paths = RuntimePaths.resolve(arguments.data_dir)
+    session = LoggingSession(create_workflow_log_path("finalize-subtitle", paths)).start()
     try:
         try:
-            subtitle_path = finalize_subtitle(Path(arguments.subtitle_job_path))
+            subtitle_path = finalize_subtitle(
+                Path(arguments.subtitle_job_path), results_dir=paths.results_dir
+            )
             session.move_to(subtitle_path.parent)
             result(get_logger(__name__), "subtitle: %s", subtitle_path)
             return 0

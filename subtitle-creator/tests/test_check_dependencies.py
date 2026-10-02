@@ -1,7 +1,53 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts import check_dependencies
+
+
+def test_missing_packaging_does_not_prevent_cli_report(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    code = """
+import builtins
+import sys
+
+original_import = builtins.__import__
+
+def without_packaging(name, *args, **kwargs):
+    if name == "packaging" or name.startswith("packaging."):
+        raise ModuleNotFoundError("No module named 'packaging'", name="packaging")
+    return original_import(name, *args, **kwargs)
+
+builtins.__import__ = without_packaging
+from scripts import check_dependencies
+
+check_dependencies._run = lambda command: (0, "available", "")
+if hasattr(check_dependencies, "_ffmpeg_checks"):
+    check_dependencies._ffmpeg_checks = lambda: []
+raise SystemExit(check_dependencies.main(["--data-dir", sys.argv[1]]))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert completed.returncode == 1, completed.stdout + completed.stderr
+    json_path = next((tmp_path / ".cache" / "logs").glob("dependency-check-*.json"))
+    report = json.loads(json_path.read_text(encoding="utf-8"))
+    assert report["overall_status"] == "not_ready"
+    checks = {item["id"]: item for item in report["checks"]}
+    version = checks["contract:version"]
+    assert version["status"] == "fail"
+    assert "packaging" in version["message"]
+    assert "uv sync" in version["fix"]
+    assert checks["contract:api"]["status"] == "pass"
+    assert "[FAIL] contract:version:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert json_path.with_suffix(".log").is_file()
 
 
 def test_report_has_stable_shape_and_external_skill_is_not_checked() -> None:

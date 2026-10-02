@@ -5,9 +5,12 @@ import sys
 from pathlib import Path
 from typing import Any, NoReturn
 
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
+
 from .process_logging import (
     LoggingSession,
     create_workflow_log_path,
+    filesystem_cli,
     get_logger,
     result,
 )
@@ -59,7 +62,9 @@ def _read_normalized_transcript(manifest_path: Path, audio_id: str) -> dict[str,
     }
 
 
-def attach_transcription(job_path: Path, manifest_path: Path) -> Path:
+def attach_transcription(
+    job_path: Path, manifest_path: Path, *, results_dir: Path | None = None
+) -> Path:
     if not job_path.is_absolute():
         raise SubtitleJobError("subtitle job path must be absolute")
     if not manifest_path.is_absolute():
@@ -70,7 +75,7 @@ def attach_transcription(job_path: Path, manifest_path: Path) -> Path:
         raise SubtitleJobError(f"subtitle job is not a regular file: {job_path}")
 
     job = read_json_object(job_path)
-    validate_job(job_path, job)
+    validate_job(job_path, job, results_dir=results_dir)
     if job["status"] == "editable":
         return Path(job["artifacts"]["normalized_transcript"])
     if not manifest_path.is_file():
@@ -96,11 +101,12 @@ def attach_transcription(job_path: Path, manifest_path: Path) -> Path:
         "before_correction_sha256": sha256_file(baseline_path),
         "subtitle": None,
     }
-    validate_job(job_path, job)
+    validate_job(job_path, job, results_dir=results_dir)
     atomic_write_json(job_path, job)
     return normalized_path
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Attach and normalize a completed transcription.")
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
@@ -109,16 +115,20 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Absolute path to a complete audio-transcribe manifest.json.",
     )
+    add_data_dir_argument(parser)
     try:
         arguments = parser.parse_args(argv)
     except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
-    session = LoggingSession(create_workflow_log_path("attach-transcription")).start()
+    paths = RuntimePaths.resolve(arguments.data_dir)
+    session = LoggingSession(create_workflow_log_path("attach-transcription", paths)).start()
     try:
         try:
             output_path = attach_transcription(
-                Path(arguments.subtitle_job_path), Path(arguments.transcription_manifest)
+                Path(arguments.subtitle_job_path),
+                Path(arguments.transcription_manifest),
+                results_dir=paths.results_dir,
             )
             session.move_to(output_path.parent)
             result(get_logger(__name__), "normalized_transcript: %s", output_path)

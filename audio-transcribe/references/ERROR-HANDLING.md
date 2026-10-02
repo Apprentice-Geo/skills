@@ -2,6 +2,18 @@
 
 本地音频转写、Provider 执行、cache 复用或公共 artifact 验证失败时，使用此 reference。
 
+## 运行目录与写入失败
+
+`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `AUDIO_TRANSCRIBE_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。活动日志确定可信 job 后仍可移入 job，删除日志保留在 cache 中。
+
+所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
+
+创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
+
+依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。日志移动失败时重新打开原日志并继续；原日志或移动后的日志无法重新打开时停止，报告真实路径和系统错误，不声称活动日志可用。检查器关键前置错误仍使用原有退出码。
+
+数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
+
 ## 快速索引
 
 - [Setup 与依赖](#setup-与依赖)
@@ -19,13 +31,21 @@
 
 ## Setup 与依赖
 
-- 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat` 执行 setup。
-- 使用 Python 3.12 和 `uv`；未经明确批准，不得修复或替换现有 `.venv`。
-- 默认 setup 执行 `uv sync --python 3.12 --no-dev --extra cpu`，并验证 `torch.version.cuda is None`。开发环境使用 `uv sync --python 3.12 --extra cpu`。
+- 修复顺序与次数遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。使用 Python 3.12 和 `uv`；已有环境配置授权可执行适用同步，不得据此删除或替换现有 `.venv`。
+- 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat --environment cpu|qwen3-asr`。默认 `cpu` 同步 CPU extra 并验证 `torch.version.cuda is None`；`qwen3-asr` 直接同步同名互斥 extra，复用模型安装器的连续导入与 CUDA 检查，不下载模型。Python bootstrap 接受相同 `--environment`。开发同步保留当前 Provider 的 extra 并安装开发依赖，禁止 `--all-extras`。
+- 必需依赖缺失、已安装包不一致或所请求 Qwen 使用 CPU build，适用对应环境同步；可选模块误触发或其他导入兼容异常保留原始原因，不盲目重装。CUDA build 已正确但 GPU runtime 不可用时诊断 GPU/driver，不进入依赖重装。项目文件缺失、Python 版本错误、子进程启动失败、权限或日志/报告写入失败分别诊断，不作为缺包处理。
 - `cpu` 与 `qwen3-asr` extra 互斥；切换环境时只指定目标 extra，禁止同时启用，也禁止使用 `--all-extras`。
 - 依赖安装完成后，使用 `uv run --no-sync python` 运行转写命令和 setup 子命令。
-- 依赖同步失败时，先检查 setup 日志、`pyproject.toml` 和 `uv.lock`，再重试。
-- 项目 setup 提供打包的 ffmpeg 支持。如果由于找不到 ffmpeg 或缺少 import 依赖而解码失败，应重新运行或修复 setup，不得依赖无关的系统安装。
+- 依赖同步失败时，检查 setup 日志、`pyproject.toml` 和 `uv.lock`，停止本轮自动修复，不重复 setup。
+- 项目 setup 提供打包的 ffmpeg 支持。打包依赖缺失时按上述一次修复策略处理；路径或执行权限失败诊断真实原因，不得依赖无关的系统安装。
+
+### 连续导入兼容
+
+安装器、检查器和运行时复用 `scripts/import_compat.py`，在依赖导入前后仅移除已知 SpeechBrain 可选旧路径的懒加载别名，保留真实模块和其他异常。自动语言检测在语言模型加载前处理别名；Qwen 加载入口同样处理，覆盖显式语言和自动检测路径。不得把安装可选 `k2` 当作通用修复。
+
+检查器保留各模块的独立子进程探测，并额外在同一进程按语言识别依赖、Qwen 依赖的顺序探测。组合失败时 Qwen 不能 ready，即使独立探测全部通过。探测失败保留正在导入的模块、异常类型、缺失模块名和原始异常链，完整 traceback 写入已建立的日志。
+
+必需依赖缺失、可选模块误触发或兼容异常分别诊断；不能把任意 ImportError 或子进程启动失败归为缺包。CUDA build 与 GPU runtime 由独立 PyTorch 检查项区分，驱动或 GPU 问题不会由安装可选模块解决。
 
 ## 模型安装
 
@@ -46,7 +66,7 @@ Qwen 模型安装会在下载语言识别模型、ASR 模型或 aligner 前验�
 
 安装校验要求 `.model_identity.json` 是无重复键且仅包含字符串 repo/revision 的 JSON 对象，并与固定配置完全匹配；必需文件与权重必须存在且非空，indexed safetensors 的索引和全部分片必须合法且位于模型目录内。setup 复用、依赖检查、自动 Provider 候选检查和运行时使用相同规则。模型加载仍负责识别文件内容是否可用。
 
-marker 缺失、损坏、不匹配或模型文件不完整时，重新安装所请求的模型。禁止推测 revision 或手工补写 marker。显式 Provider 失败时立即停止；自动选择排除不合格候选，解析完成后不再切换。模型加载前复核；完整 cache 不能绕过请求身份前的模型检查。Whisper 自定义路径同样必须匹配固定身份；Qwen 的 ASR 与 aligner 独立校验。
+marker 缺失、损坏、不匹配或模型文件不完整时，按环境策略安装所请求的模型，安装器跳过已有效的模型；不为模型问题重复 setup。禁止推测 revision 或手工补写 marker。显式 Provider 未 ready 时停止转写，但已有环境配置授权可执行适用修复与复查；解析完成后的加载或推理失败不切换 Provider。自动选择排除不合格候选。模型加载前复核；完整 cache 不能绕过请求身份前的模型检查。Whisper 自定义路径同样必须匹配固定身份；Qwen 的 ASR 与 aligner 独立校验。
 
 这只证明目录具有匹配安装记录及基本文件结构，不证明安装后每个模型字节未变。项目不计算全量/抽样权重摘要，不以 mtime 或文件大小指纹冒充内容身份。运行期间不得替换模型目录。consumer loader 只验证 bundle，不访问模型。
 
@@ -76,7 +96,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 - 如果 `--provider` 指定了不受支持的 Provider，停止执行。
 - 如果 `--provider qwen3-asr` 搭配不受支持的语言，停止执行并报告受支持的语言集合。
 - 如果未指定 Provider，仅从当前环境中 ready 的 Provider 里选择。
-- 如果没有 Provider ready，停止执行，并要求用户安装 Qwen3-ASR 或 faster-whisper。
+- 如果没有 Provider ready，停止转写；已有环境配置授权时按环境策略修复并复查，仍未 ready 则报告失败。
 - Provider 一旦解析完成，发生加载、推理、alignment 或 artifact 失败后，不得静默切换 Provider。
 
 ## Execution Policy
@@ -141,7 +161,7 @@ result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock �
 - 报告失败时，应包含精确命令、简洁错误、可用的结果或日志路径，以及是否存在完整 manifest。
 - 报告中不得包含 transcript 文本、其他 workflow 的 Cookie 内容、原始模型对象或不必要的敏感本地路径。
 - 可以使用精确的 logger/message-prefix filter 过滤已知的嘈杂第三方警告。不得抑制未知警告或异常。
-- Cache hit 不得改写首次成功的 `transcribe.log`。已有 manifest 的恢复尝试追加日志；日志缺失时可以重新创建，不影响公共结果合同。
+- CLI 每次调用在数据目录的 `.cache/logs/` 建立日志，包括解码和请求解析失败；`--results-dir` 不移动它。Python API 未指定日志路径时保留结果目录内的 `transcribe.log`：cache hit 不改写首次日志，已有 manifest 的恢复尝试追加，日志缺失时可重新创建。日志不属于公共结果合同。
 - 成功安装后才记录发布诊断：相同 digest 的精确恢复为 INFO；不同 digest 的重新发布为 WARNING，包含 `audio_id`、`config_digest` 和旧/新 digest；无有效原 manifest 的发布为 INFO。诊断不包含转写文本，失败不记录发布成功，不增加公共审计字段。
 
 ## 停止条件

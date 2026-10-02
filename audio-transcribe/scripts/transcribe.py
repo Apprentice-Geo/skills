@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import math
+import os
 import sys
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, Protocol
@@ -29,15 +31,22 @@ from scripts.asr.alignment import (
 )
 from scripts.asr.pipeline_types import PipelineOutcome
 from scripts.asr.prepared_model import validate_prepared_model
+from scripts.import_compat import clear_optional_aliases, describe_import_error
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import validate_model
-from scripts.process_logging import LoggingSession, filtered_log_messages, get_logger
+from scripts.process_logging import (
+    LoggingSession,
+    create_timestamped_log_path,
+    filesystem_cli,
+    filtered_log_messages,
+    get_logger,
+)
+from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 from scripts.text_normalization import TEXT_NORMALIZATION_POLICY
 
 # 采样率 16kHz
 SAMPLE_RATE = 16_000
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RESULTS_DIR = SKILL_ROOT / "results"
 MODELS_DIR = SKILL_ROOT / "models"
 SUPPORTED_PROVIDERS = ("faster-whisper", "qwen3-asr")
 QWEN3_ASR_LANGUAGES = frozenset(
@@ -71,26 +80,15 @@ def _decode_audio(path: Path) -> Any:
 def _detect_language(samples: Any) -> str:
     model_dir = MODELS_DIR / "lang-id-voxlingua107-ecapa"
     validate_model("language-id", model_dir)
+    clear_optional_aliases()
     try:
         import torch
         from speechbrain.inference.classifiers import EncoderClassifier
     except ImportError as exc:
         raise RuntimeError(
-            "SpeechBrain language identification dependencies are missing."
+            describe_import_error("speechbrain.inference.classifiers", exc)
         ) from exc
-    # SpeechBrain 1.1 registers deprecated optional aliases as lazy modules.
-    # Removing those unused aliases prevents Python inspection from importing
-    # optional k2 while HyperPyYAML resolves this local ECAPA model.
-    for module_name in (
-        "speechbrain.pretrained",
-        "speechbrain.k2_integration",
-        "speechbrain.wordemb",
-        "speechbrain.lobes.models.huggingface_transformers",
-        "speechbrain.lobes.models.spacy",
-        "speechbrain.lobes.models.flair",
-        "speechbrain.nnet.loss.transducer_loss",
-    ):
-        sys.modules.pop(module_name, None)
+    clear_optional_aliases()
     classifier = EncoderClassifier.from_hparams(
         source=str(model_dir),
         overrides={"pretrained_path": str(model_dir)},
@@ -198,13 +196,15 @@ def run_transcribe(
     compute_type: str = "float32",
     cpu_threads: int | None = None,
     num_workers: int | None = None,
-    results_dir: Path = DEFAULT_RESULTS_DIR,
+    results_dir: Path | None = None,
+    log_path: Path | None = None,
     decoder: Callable[[Path], Any] = _decode_audio,
     vad_detector: Callable[[Any], list[tuple[int, int]]] | None = None,
     language_detector: Callable[[Any], str] = _detect_language,
     engine: Engine | None = None,
     prepared_model: Any | None = None,
 ) -> TranscribeOutcome:
+    results_dir = (results_dir or RuntimePaths.resolve().results_dir).resolve()
     audio_path = audio_path.resolve()
     if not audio_path.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
@@ -299,8 +299,16 @@ def run_transcribe(
             else:
                 return TranscribeOutcome(manifest_path.resolve(), None)
 
-        log_path = result_dir / "transcribe.log"
-        with LoggingSession(log_path, mode="a" if manifest_path.exists() else "w"):
+        current_session = LoggingSession.current()
+        session_context = (
+            nullcontext(current_session)
+            if current_session is not None and log_path == current_session.log_path
+            else LoggingSession(
+                log_path or result_dir / "transcribe.log",
+                mode="a" if log_path is not None or manifest_path.exists() else "w",
+            )
+        )
+        with session_context:
             logger.info(
                 "Transcription invocation: input=%s audio_id=%s config_digest=%s",
                 audio_path,
@@ -406,6 +414,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--compute-type", default="float32")
     parser.add_argument("--cpu-threads", type=int)
     parser.add_argument("--num-workers", type=int)
+    add_data_dir_argument(parser)
+    parser.add_argument("--results-dir", type=Path)
     return parser.parse_args(argv)
 
 
@@ -419,11 +429,16 @@ def _format_elapsed(seconds: float) -> str:
     return f"{seconds:.2f}s"
 
 
+@filesystem_cli
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    paths = RuntimePaths.resolve(args.data_dir)
+    paths.configure_uv(os.environ)
+    startup_path = create_timestamped_log_path(paths.logs_dir, "transcribe")
     started = time.perf_counter()
+    session = LoggingSession(startup_path).start()
     try:
-        with filtered_log_messages():
+        with session, filtered_log_messages():
             outcome = run_transcribe(
                 args.audio_path,
                 language=args.language,
@@ -432,10 +447,13 @@ def main(argv: list[str] | None = None) -> int:
                 compute_type=args.compute_type,
                 cpu_threads=args.cpu_threads,
                 num_workers=args.num_workers,
+                results_dir=(args.results_dir or paths.results_dir).resolve(),
+                log_path=startup_path,
             )
     except Exception as exc:
-        logger.exception("Transcription failed.")
         print(f"Transcription failed: {exc}", file=sys.stderr)
+        if startup_path.is_file():
+            print(f"Full log: {startup_path}", file=sys.stderr)
         return 1
     elapsed = time.perf_counter() - started
     print(f"[Stage] Transcribe completed in {_format_elapsed(elapsed)}")

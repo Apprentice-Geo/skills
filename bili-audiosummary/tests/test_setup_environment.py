@@ -23,8 +23,8 @@ def test_configure_environment_uses_project_local_caches(
     configure_environment(paths, environ)
 
     assert environ["UV_CACHE_DIR"] == str(paths.uv_cache_dir)
-    assert paths.logs_dir.is_dir()
-    assert paths.results_dir.is_dir()
+    assert not paths.logs_dir.exists()
+    assert not paths.results_dir.exists()
 
 
 def test_configure_environment_preserves_explicit_uv_cache(

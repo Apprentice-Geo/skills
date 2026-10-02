@@ -61,10 +61,10 @@ def test_bootstrap_syncs_and_verifies_contract(monkeypatch, tmp_path: Path) -> N
                 "3.12",
                 "--no-sync",
                 "python",
-                "-c",
-                "import audio_transcribe_contract",
+                "-m",
+                "scripts.contract_check",
             ],
-            "Verify transcription contract import",
+            "Verify transcription contract version and API",
         ),
     ]
     assert all(entry[2] == tmp_path.resolve() for entry in logger.commands)
@@ -72,7 +72,7 @@ def test_bootstrap_syncs_and_verifies_contract(monkeypatch, tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize(
-    "description", ["Sync runtime dependencies", "Verify transcription contract import"]
+    "description", ["Sync runtime dependencies", "Verify transcription contract version and API"]
 )
 def test_bootstrap_reports_sync_and_import_failures(
     monkeypatch, tmp_path: Path, description: str

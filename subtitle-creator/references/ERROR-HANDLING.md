@@ -1,5 +1,17 @@
 # 错误处理
 
+## 运行目录与写入失败
+
+`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `SUBTITLE_CREATOR_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。活动日志确定可信 job 后仍可移入 job，删除日志保留在 cache 中。
+
+所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
+
+创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
+
+依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。日志移动失败时重新打开原日志并继续；原日志或移动后的日志无法重新打开时停止，报告真实路径和系统错误，不声称活动日志可用。检查器关键前置错误仍使用原有退出码。
+
+数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
+
 ## 日志与终端输出
 
 每次 setup、dependency checker 和 workflow CLI 调用使用独立日志。Python 日志会话把同一条业务记录同时写入文件和指定终端：状态与结果写入 stdout，显式 warning 和 error 写入 stderr，调试明细、第三方 logger、Python warnings 及完整 traceback 仅写入文件。不得记录 transcript 正文、用户提供的源文本或上游模型对象。
@@ -14,14 +26,30 @@ dependency checker 将 JSON 原子发布到 `.cache/logs/`，并从同一份 rep
 
 `remove_subtitle_job` 的日志始终保留在 `.cache/logs/`，避免日志随 job 目录删除或产生打开句柄冲突。任何 workflow 在获得可信 job 路径前失败时，日志也留在 cache。
 
-成功时 stdout 只包含原有的一行结果：
+`create_subtitle` 成功时 stdout 为单行 JSON，字段为 `status`、`subtitle_job`、`audio_path`、`normalized_transcript`、`subtitle`；格式与恢复决策见 [创建或恢复任务](../SKILL.md#1-从音频创建或恢复任务)。摘要不修改 job、不执行 finalize。其他命令保持原有的一行结果：
 
 ```text
-subtitle_job: <absolute-path>
 normalized_transcript: <absolute-path>
 subtitle: <absolute-path>
 removed_subtitle_job: <absolute-path>
 subtitle_job_absent: <absolute-path>
 ```
 
-失败时 stdout 为空，stderr 只包含简洁错误和 `Full log` 路径。根据日志修复输入或环境后，从上一个成功状态重试；不得根据未发布的临时文件推断成功。
+失败时 stdout 为空，stderr 包含简洁错误；日志可用时附带 `Full log` 路径。根据日志修复输入或环境后，从上一个成功状态重试；不得根据未发布的临时文件推断成功。
+
+
+## 环境修复分类
+
+- 必需依赖缺失、已安装包不一致、合同包版本不符或公共 API 不完整：显式运行一次 setup 同步当前项目声明，再以 `--no-sync` 复查；仍失败时停止，不重复 setup。
+- 日志或报告写入失败、数据或 `.venv` 路径权限错误：按真实失败路径诊断，运行数据问题可显式指定可写数据目录；不以 setup 修复文件系统权限。
+- 项目文件缺失、声明不可读或无效：定位并修复项目文件，不把这些错误当作合同包缺失。
+- uv 不可用、Python 版本不符、子进程无法启动：诊断工具与解释器；不自动删除或替换现有 `.venv`。
+- baseline 损坏、normalized transcript 缺失、非法时间轴属于任务输入错误，停止恢复并报告；不运行 setup、不改写源 artifact 来绕过校验。合法文本编辑和陈旧 SRT 保持可恢复，创建输出 `subtitle: null`，通过 finalize 重建。
+
+## 合同包检查
+
+检查器和 setup 复用本 Skill 的 `scripts/contract_check.py`：从 `pyproject.toml` 读取合同包要求，通过当前解释器的 `importlib.metadata` 读取 distribution 版本，检查 `load_result`、`TranscriptionResult`、`ResultValidationError` 和 `PUBLIC_SCHEMA_VERSION=3`。版本不符、包缺失、声明不可读或无效、API 不完整时返回失败，不能报告 ready。JSON 检查项包含 expected、actual 和同步建议。
+
+缺少 `packaging` 时，检查器仍输出日志与 JSON 报告；`contract:version` 标记失败并给出依赖同步建议，公共 API 和其他检查继续执行。
+
+`uv pip check` 仅检查已安装包之间的一致性，不证明它们满足当前项目声明。按本 Skill 环境策略显式同步后，使用 `uv run --no-sync python -m scripts.check_dependencies` 复查，避免自动同步掩盖旧包问题。实际接入转写时仍通过 `load_result()` 验证完整公共 bundle；能力检查不能代替该验证。

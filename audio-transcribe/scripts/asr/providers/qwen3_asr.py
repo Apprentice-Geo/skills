@@ -18,6 +18,7 @@ from scripts.config import (
     QWEN3_ASR_MAX_NEW_TOKENS,
     QWEN3_ASR_MODEL_DIR,
 )
+from scripts.import_compat import clear_optional_aliases, describe_import_error
 from scripts.model_identity import validate_model
 from scripts.process_logging import get_logger
 from scripts.utils import path_to_posix
@@ -83,6 +84,7 @@ class Qwen3AsrProvider:
 
     def prepare(self, execution_identity: dict[str, Any]) -> Any:
         verified_request = self.request_identity()
+        clear_optional_aliases()
         try:
             import torch
             from qwen_asr import Qwen3ASRModel  # pyright: ignore[reportMissingImports]
@@ -90,11 +92,7 @@ class Qwen3AsrProvider:
                 GenerationConfig,
             )
         except ImportError as exc:
-            raise RuntimeError(
-                "Qwen3-ASR dependencies are not installed. Run "
-                r"uv sync --python 3.12 --no-dev --extra qwen3-asr, then "
-                r"uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr."
-            ) from exc
+            raise RuntimeError(describe_import_error("qwen_asr", exc)) from exc
         if not torch.cuda.is_available():
             raise RuntimeError(
                 "Qwen3-ASR requires an available CUDA GPU. Use the default whisper provider on CPU."

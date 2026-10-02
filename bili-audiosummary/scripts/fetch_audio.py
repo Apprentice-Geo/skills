@@ -11,7 +11,6 @@ from scripts.config import (
     DEFAULT_AUDIO_CODEC,
     DEFAULT_AUDIO_SELECTOR,
     DEFAULT_SUBTITLE_LANGUAGE,
-    RESULTS_DIR,
     SKILL_ROOT,
     SUBTITLE_LANGUAGE_PRIORITY,
 )
@@ -19,11 +18,13 @@ from scripts.process_logging import (
     LoggingSession,
     YtDlpLogger,
     create_timestamped_log_path,
+    filesystem_cli,
     get_logger,
     result,
     status,
 )
 from scripts.runtime_options import FetchOptions
+from scripts.runtime_paths import add_data_dir_argument
 from scripts.subtitle_utils import infer_subtitle_language
 from scripts.utils import (
     ensure_dir,
@@ -412,7 +413,7 @@ def parse_args() -> argparse.Namespace:
         description="Fetch Bilibili video metadata, subtitles, and audio with yt-dlp."
     )
     parser.add_argument("url", help="Bilibili video URL or BV URL accepted by yt-dlp.")
-    parser.add_argument("--output-dir", type=Path, default=RESULTS_DIR)
+    parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument(
         "--cookies", type=Path, help="Path to a Netscape-format cookies.txt file."
     )
@@ -452,12 +453,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retries", type=int, default=10)
     parser.add_argument("--socket-timeout", type=int, default=30)
     parser.add_argument("--quiet", action="store_true")
+    add_data_dir_argument(parser)
     return parser.parse_args()
 
 
+@filesystem_cli
 def main() -> int:
     options = FetchOptions.from_args(parse_args())
-    log_path = create_timestamped_log_path(SKILL_ROOT / ".cache" / "logs", "fetch")
+    paths = options.paths
+    log_path = create_timestamped_log_path(paths.logs_dir, "fetch")
     with LoggingSession(log_path) as session:
         try:
             run_fetch(options)
@@ -469,6 +473,7 @@ def main() -> int:
 
 def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     options = FetchOptions.from_args(args)
+    assert options.output_dir is not None
     ensure_dir(options.output_dir)
     normalized_url = normalize_bilibili_video_url(options.url)
     status(logger, "[Stage] Fetch metadata, subtitles, and audio")

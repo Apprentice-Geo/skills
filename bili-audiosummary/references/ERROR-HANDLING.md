@@ -2,6 +2,18 @@
 
 仅在 Bilibili 资源准备、job continue 或 summary completion 失败时使用此 reference。转写模型和 cache 失败归独立的 `audio-transcribe` Skill 处理。
 
+## 运行目录与写入失败
+
+`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `BILI_AUDIOSUMMARY_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。活动日志确定可信 job 后仍可移入 job，删除日志保留在 cache 中。
+
+所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
+
+创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
+
+依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。日志移动失败时重新打开原日志并继续；原日志或移动后的日志无法重新打开时停止，报告真实路径和系统错误，不声称活动日志可用。检查器关键前置错误仍使用原有退出码，Bilibili CookieRequired 的专用退出码仍只用于 Cookie 错误。
+
+数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
+
 ## 快速索引
 
 - [错误处理](#错误处理)
@@ -19,6 +31,9 @@
 ## Setup 与依赖
 
 - 依赖检查、setup 和复查的执行顺序与次数统一遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。
+- 必需依赖缺失、已安装包不一致、合同包版本不符或公共 API 不完整适用依赖同步。每轮复查重新分类，只有修复仍适用且符合授权规则才继续下一轮，最多三轮。
+- 日志/报告写入失败、数据或 `.venv` 权限错误不进入 setup，按真实路径诊断。项目文件缺失、合同声明不可读或无效先修复项目；工具不可用、Python 版本错误或子进程无法启动先诊断工具与解释器，不当作缺包处理。
+- Bilibili 网络、Cookie、输入文件和 job/artifact 错误按各自章节恢复，不反复 setup。此 Skill 不配置 ASR Provider、不安装模型；外部转写遵循 `audio-transcribe` 自身修复策略。
 - 如果 `uv` 不可用，从 <https://docs.astral.sh/uv/> 安装，再返回环境策略规定的后续步骤。
 - 如果现有 `.venv` 未使用 Python 3.12，停止执行。不得自动删除或替换它。
 - 如果 `.venv` 不完整，仅在用户明确批准后移除或修复它。
@@ -148,3 +163,12 @@ summary 语言比例不足只产生 warning，命令仍以成功状态退出并�
 - 转写在生成完整公共 manifest 前失败。
 
 禁止通过手动编辑 job status 绕过停止条件。
+
+
+## 合同包检查
+
+检查器和 setup 复用本 Skill 的 `scripts/contract_check.py`：从 `pyproject.toml` 读取合同包要求，通过当前解释器的 `importlib.metadata` 读取 distribution 版本，检查 `load_result`、`TranscriptionResult`、`ResultValidationError` 和 `PUBLIC_SCHEMA_VERSION=3`。版本不符、包缺失、声明不可读或无效、API 不完整时返回失败，不能报告 ready。JSON 检查项包含 expected、actual 和同步建议。
+
+缺少 `packaging` 时，检查器仍输出日志与 JSON 报告；`contract:version` 标记失败并给出依赖同步建议，公共 API 和其他检查继续执行。
+
+`uv pip check` 仅检查已安装包之间的一致性，不证明它们满足当前项目声明。按本 Skill 环境策略显式同步后，使用 `uv run --no-sync python -m scripts.check_dependencies` 复查，避免自动同步掩盖旧包问题。实际接入转写时仍通过 `load_result()` 验证完整公共 bundle；能力检查不能代替该验证。

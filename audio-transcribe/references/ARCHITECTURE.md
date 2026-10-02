@@ -2,7 +2,13 @@
 
 `audio-transcribe` 把一个本地音频文件转换为经过验证、可复用的公共结果。本文档面向维护者说明稳定边界；实现细节以模块和测试为准。
 
+## 运行目录边界
+
+`scripts/runtime_paths.py` 在命令启动时集中解析数据根目录，通过运行上下文传递日志、报告、uv cache 和结果目录。源码、模板、环境和模型路径独立。数据目录与结果存储位置不属于转写内容身份，不修改公共 schema 或持久化字段语义；详细配置与错误边界见 [运行目录与写入失败](ERROR-HANDLING.md#运行目录与写入失败)。
+
 ## 全局视图
+
+Agent 先检查失败原因，按所请求 Provider 执行获准且适用的一次环境修复并复查，再仅安装缺失或无效模型、复查后转写。setup 的 `--environment` 默认 `cpu`，Qwen 直接选择 `qwen3-asr`，两者互斥；Qwen setup 与模型安装复用连续导入和 CUDA 验证。检查器保持只读，不承担修复。权限、项目文件和 GPU/driver 问题分别诊断，不进入自动重装；详细条件见 [Setup 与依赖](ERROR-HANDLING.md#setup-与依赖)。
 
 ```text
 local audio
@@ -24,6 +30,7 @@ local audio
 | `scripts/asr/segmentation.py` | 对已经验证的 global alignment 进行句子分段 |
 | 其他 `scripts/asr/` 模块 | 音频准备、VAD、chunk 规划、Provider 执行、cache、合并和 workspace 输出 |
 | `scripts/artifacts.py` | manifest-last 发布、公共 artifact 恢复、锁和自验证 |
+| `scripts/import_compat.py` | 安装器、检查器和运行时复用的轻量导入兼容处理，不加载模型或 pipeline |
 | `scripts/model_artifacts.py` | 保守的本地模型 ready 检查，包括 indexed safetensors |
 | `scripts/setup/` | Windows 环境和固定 revision 的模型安装 |
 | `packages/audio-transcribe-contract/` | 面向 consumer，对公共 manifest 和 artifact 进行严格的只读验证 |
@@ -35,7 +42,7 @@ local audio
 
 `cpu` 与 `qwen3-asr` extra 分别从 PyTorch 官方 CPU 和 CUDA 12.6 explicit index 解析 `torch`、`torchaudio`，两者互斥。统一 `uv.lock` 同时记录两套互斥 resolution；extra 是解析选择，不作为持久化 profile 写入 checker schema、结果身份或 artifact。
 
-依赖检查通过独立 Python 子进程读取 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`，避免 checker 主进程加载 PyTorch。faster-whisper readiness 要求基础与语言识别 import、打包 ffmpeg、语言模型及 Whisper 模型；因此安装完整 Qwen 依赖的环境也可以运行 faster-whisper，但不应被描述为纯 CPU 环境。Qwen readiness 在这些共享条件之外，还要求 CUDA build、可用 GPU runtime、Qwen import、ASR 模型与 aligner 模型。
+依赖检查通过独立 Python 子进程读取 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`，避免 checker 主进程加载 PyTorch。faster-whisper readiness 要求基础与语言识别 import、打包 ffmpeg、语言模型及 Whisper 模型；因此安装完整 Qwen 依赖的环境也可以运行 faster-whisper，但不应被描述为纯 CPU 环境。Qwen readiness 在这些共享条件之外，还要求 CUDA build、可用 GPU runtime、Qwen 独立 import、语言识别后 Qwen 的同进程组合 import、ASR 模型与 aligner 模型。
 
 ## 系统边界
 
@@ -97,7 +104,7 @@ Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。
 results/<audio_id>/<provider>-<language>-<config_digest>/
 ├─ manifest.json
 ├─ transcript.json
-├─ transcribe.log
+├─ transcribe.log  # Python API 的默认结果日志；CLI 日志位于 data-dir/.cache/logs/
 └─ workspace/
    ├─ asr_plan.json
    ├─ vad_result.json

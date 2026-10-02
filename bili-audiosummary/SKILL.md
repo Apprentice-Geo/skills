@@ -28,16 +28,29 @@ metadata:
 检查器会写入带时间戳的 JSON 报告和日志，且不安装、下载或修复任何内容。首次检查成功时直接继续，不得运行 setup。
 终端中的 PASS 聚合与报告路径写入 stdout，WARN/FAIL 写入 stderr；逐项 PASS 明细只写入日志。
 
-2. 首次检查以非零状态退出时，先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 诊断；完成必要且获准的前置处理后，开始第一轮 setup：
+2. 首次检查以非零状态退出时，先按 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖) 诊断；日志或报告写入失败时先按[运行目录与写入失败](references/ERROR-HANDLING.md#运行目录与写入失败)修复路径并重试，不进入 setup。其他适用失败完成必要且获准的前置处理后，开始第一轮 setup：
 
 ```powershell
 .\scripts\setup\setup_windows.bat
 ```
 
 setup 成功后再运行一次 `scripts/check_dependencies.bat` 复查。
-一次任务中至多运行三轮 setup 和复查，第三轮运行仍以非零状态退出时，停止执行并报告失败的检查及相关日志；未获得用户许可时，不得再次运行 setup 或依赖检查。
+每次复查失败后重新按失败原因判断；只有下一轮修复仍适用且符合授权规则时才继续。一次任务中至多运行三轮 setup 和复查，第三轮运行仍以非零状态退出时，停止执行并报告失败的检查及相关日志；未获得用户许可时，不得再次运行 setup 或依赖检查。
 
 3. 需要转写时，单独安装并检查 `audio-transcribe` Skill。此 Skill 不安装 ASR 模型。
+
+检查器与 setup 均验证合同包满足 `pyproject.toml` 声明且提供当前公共 API；诊断规则见 [合同包检查](references/ERROR-HANDLING.md#合同包检查)。
+
+## 运行数据位置
+
+setup、依赖检查和所有 workflow CLI 支持 `--data-dir`，优先级为显式参数、`BILI_AUDIOSUMMARY_DATA_DIR`、Skill 根目录。启动时解析为绝对路径；日志、报告、内部缓存和结果使用该目录。详细布局、权限错误与恢复边界见 [运行目录与写入失败](references/ERROR-HANDLING.md#运行目录与写入失败)。跨多个命令时持续使用同一个环境变量，或重复传入相同参数；切换目录不自动搜索、搬迁或合并历史任务。
+
+```powershell
+$env:BILI_AUDIOSUMMARY_DATA_DIR = "D:\skill-data\bili-audiosummary"
+$env:UV_CACHE_DIR = "$env:BILI_AUDIOSUMMARY_DATA_DIR\.cache\uv"
+```
+
+直接用 `uv run` 启动 Python 时，uv 在 Python 解析 `--data-dir` 前已启动；需要缓存也位于数据目录时，先配置 `UV_CACHE_DIR`。`.bat` 启动器会在启动 uv 前解析数据目录，并保留显式 `UV_CACHE_DIR`。`fetch_audio --output-dir` 只控制直接下载产物，不能替代 pipeline 的数据目录设置。源码、模板、`.venv` 和模型位置独立；数据目录可写不保证依赖同步或模型安装目录可写。
 
 ## 主要步骤
 
@@ -106,6 +119,6 @@ Python 命令成功时，原有结果行写入 stdout；warning 和 error 写入
 uv run --no-sync python -m scripts.remove_summary_job "<absolute-summary-job-path>"
 ```
 
-命令只接受默认 `results/<BVID[_pN]>/summary_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从准备步骤重新执行。删除 summary job 不删除 `audio-transcribe` 的结果，也不保证上游重新执行模型推理。
+命令只接受当前配置数据目录下 `results/<BVID[_pN]>/summary_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从准备步骤重新执行。删除 summary job 不删除 `audio-transcribe` 的结果，也不保证上游重新执行模型推理。
 
 summary 文件或其他可恢复派生产物需要修复时，不删除 job，继续使用对应恢复或完成命令。
