@@ -20,7 +20,7 @@ echo.
 call uv python install 3.12
 if %ERRORLEVEL% NEQ 0 goto setup_failed
 
-call uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap %* --data-dir "%SKILL_DATA_ROOT%"
+call uv run --python 3.12 --no-sync python -m scripts.setup.bootstrap %SKILL_FORWARD_ARGS% --data-dir "%SKILL_DATA_ROOT_ARG%"
 set "SETUP_RC=%ERRORLEVEL%"
 popd
 exit /b %SETUP_RC%

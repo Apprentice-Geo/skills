@@ -9,7 +9,7 @@ if not exist "%ROOT%\.venv\Scripts\python.exe" exit /b 2
 call "%~dp0runtime_paths.bat" %*
 if %ERRORLEVEL% NEQ 0 exit /b 1
 pushd "%ROOT%" || exit /b 2
-call "%ROOT%\.venv\Scripts\python.exe" -m scripts.check_dependencies %* --data-dir "%SKILL_DATA_ROOT%"
+call "%ROOT%\.venv\Scripts\python.exe" -m scripts.check_dependencies %SKILL_FORWARD_ARGS% --data-dir "%SKILL_DATA_ROOT_ARG%"
 set "RC=%ERRORLEVEL%"
 popd
 exit /b %RC%
