@@ -15,15 +15,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.mark.parametrize("launcher", ["check", "setup"])
 @pytest.mark.parametrize("source", ["environment", "option", "equals"])
-@pytest.mark.parametrize("forwarded_arg", ["value with spaces", r"D:\A&B", r"D:\A&B (copy)!"])
 @pytest.mark.parametrize(
-    "data_dir", ["D:\\", "D:\\\\", "D:\\data with spaces\\", "\\\\server\\share\\"]
+    "forwarded_arg", ["value with spaces", r"D:\A&B", r"D:\A&B (copy)^!", r"D:\A^^B"]
+)
+@pytest.mark.parametrize(
+    "data_dir",
+    ["D:\\", "D:\\\\", "D:\\data with spaces\\", "\\\\server\\share\\", r"D:\data^& (copy)!"],
 )
 def test_launcher_forwards_data_dir_to_python(
     tmp_path: Path, launcher: str, source: str, data_dir: str, forwarded_arg: str
 ):
     # 使用真实启动器与 Python 参数解析；隔离业务入口，不安装依赖或写入数据根目录。
-    project = tmp_path / "skill"
+    project = tmp_path / "skill^& (copy)"
     scripts = project / "scripts"
     (scripts / "setup").mkdir(parents=True)
     for relative in (
