@@ -9,7 +9,7 @@ from typing import Any, Final
 
 PUNCTUATION: Final = frozenset("，,；;。.!！？?")
 ALIGNMENT_POLICY: Final = {
-    "timestamp_resolution_ms": 1,
+    "timestamp_resolution_ms": 0,
     "zero_duration": "drop_item_and_owned_text",
     "ordering": "strict",
 }
@@ -42,13 +42,6 @@ class CleanupReport:
 
 # Transitional aliases for pipeline callers. There is only one item definition.
 TranscriptWord = AlignmentItem
-
-
-def quantize_timestamp(value: Any) -> float:
-    return round(float(value), 3)
-
-
-_to_float = quantize_timestamp
 
 
 def _is_skippable_source_character(char: str) -> bool:
@@ -294,38 +287,31 @@ def accept_provider_transcript(
     chunk_index: int | str,
     language: str,
 ) -> tuple[AlignedTranscript, CleanupReport]:
-    """Quantize, clean recoverable zero-duration items, and validate a Provider result."""
+    """Preserve Provider times, remove zero-duration items, and validate the result."""
     _validate_provider_candidate(
         candidate,
         duration=duration,
         chunk_index=chunk_index,
         language=language,
     )
-    quantized = quantize_alignment(candidate)
-    _validate_provider_candidate(
-        quantized,
-        duration=duration,
-        chunk_index=chunk_index,
-        language=language,
-    )
     owners = source_character_owners(
-        quantized,
+        candidate,
         chunk_index=chunk_index,
         language=language,
     )
     dropped_indexes = {
-        index for index, item in enumerate(quantized.items) if item.start == item.end
+        index for index, item in enumerate(candidate.items) if item.start == item.end
     }
-    dropped_items = [quantized.items[index] for index in sorted(dropped_indexes)]
+    dropped_items = [candidate.items[index] for index in sorted(dropped_indexes)]
     cleaned = AlignedTranscript(
         "".join(
             char
-            for char, owner in zip(quantized.text, owners, strict=True)
+            for char, owner in zip(candidate.text, owners, strict=True)
             if owner not in dropped_indexes
         ),
         tuple(
             item
-            for index, item in enumerate(quantized.items)
+            for index, item in enumerate(candidate.items)
             if index not in dropped_indexes
         ),
     )
@@ -347,29 +333,17 @@ def accept_provider_transcript(
     return cleaned, report
 
 
-def quantize_alignment(alignment: AlignedTranscript) -> AlignedTranscript:
+def offset_alignment(
+    alignment: AlignedTranscript, offset: float, *, end: float
+) -> AlignedTranscript:
+    """Translate accepted local times within the exact global sample boundary."""
     return AlignedTranscript(
         alignment.text,
         tuple(
             AlignmentItem(
                 item.text,
-                quantize_timestamp(item.start),
-                quantize_timestamp(item.end),
-                item.probability,
-            )
-            for item in alignment.items
-        ),
-    )
-
-
-def offset_alignment(alignment: AlignedTranscript, offset: float) -> AlignedTranscript:
-    return AlignedTranscript(
-        alignment.text,
-        tuple(
-            AlignmentItem(
-                item.text,
-                quantize_timestamp(offset + item.start),
-                quantize_timestamp(offset + item.end),
+                min(offset + item.start, end),
+                min(offset + item.end, end),
                 item.probability,
             )
             for item in alignment.items

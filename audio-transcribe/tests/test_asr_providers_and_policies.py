@@ -10,6 +10,7 @@ from types import ModuleType, SimpleNamespace
 import numpy as np
 import pytest
 
+from scripts.asr.alignment import CleanupReport, accept_provider_transcript
 from scripts.asr.chunking import ChunkLayout, NormalizedAudio
 from scripts.asr.execution import Qwen3AsrCudaPolicy, WhisperCpuPolicy
 from scripts.asr.providers import Qwen3AsrProvider, WhisperProvider
@@ -217,6 +218,27 @@ def test_qwen_provider_clips_small_last_word_end_overrun() -> None:
     )
 
     assert transcript.words[-1].end == 1.0
+
+
+def test_qwen_sample_precision_end_survives_acceptance_and_segmentation() -> None:
+    from scripts.asr.segmentation import build_sentence_segments
+
+    duration = 102377 / 16000
+    result = SimpleNamespace(
+        text="么",
+        time_stamps=SimpleNamespace(
+            items=[SimpleNamespace(text="么", start_time=6.08, end_time=6.4)]
+        ),
+    )
+    transcript = Qwen3AsrProvider("zh").parse_result(
+        result, ChunkLayout(0, 0, 102377, "audio_end", 1), 0.2
+    )
+    accepted, report = accept_provider_transcript(
+        transcript.alignment, duration=duration, chunk_index=0, language="zh"
+    )
+    assert accepted.items[0].end == duration
+    assert report == CleanupReport()
+    assert build_sentence_segments(accepted)[0]["end"] == duration
 
 
 def test_qwen_provider_preserves_large_last_word_end_overrun_for_acceptance() -> None:

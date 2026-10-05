@@ -117,7 +117,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 ## Alignment 与空结果
 
 - 完整转写必须包含非空文本和 timestamp item。
-- 在执行可恢复的 zero-duration cleanup 前，把 Provider candidate 量化到毫秒。量化产生的 zero-duration item 连同且仅连同归其所有的字符文本一起移除；没有 owner 的标点和空白应予以保留，除非 accepted chunk 因此只剩这些内容而变为空。
+- 保留 Provider candidate 的原始时间精度。原本 zero-duration 的 item 连同且仅连同归其所有的字符文本一起移除；正时长的亚毫秒 item 保留。没有 owner 的标点和空白应予以保留，除非 accepted chunk 因此只剩这些内容而变为空。
 - 单个 accepted chunk 可以为空，并在合并时忽略。如果所有 chunk 合并后得到空 transcript，停止执行。
 - 拒绝包含负数、非有限、重叠、递减、反向或超出 duration 时间的 timestamp。accepted item 和公共 item 必须满足 `0 <= start < end <= duration` 和 `start >= previous_end`。
 - 拒绝文本为空的 timestamp item。
@@ -126,7 +126,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 - 保留由标点驱动的分段行为。如果句子输出看起来有误，检查 alignment item 和 segmentation 规则，不得手动编辑已发布的 `transcript.json`。
 - alignment 验证失败时，不得发布 `manifest.json`。
 - 如果文本规范化失败，或规范化后的文本与 item 不再对齐，停止执行，不得回退到未规范化的公共文本。
-- 不得把超出范围的 end time 裁剪到 duration，也不得把格式错误的 workspace/公共字段强制转换为字符串或浮点数。
+- 除[架构说明](ARCHITECTURE.md#alignment-与验证流程)定义的 Qwen adapter 尾部误差处理和合法时间的浮点偏移边界处理外，不得裁剪超出范围的 end time；不得把格式错误的 workspace/公共字段强制转换为字符串或浮点数。
 
 ## 公共 Artifact 验证
 

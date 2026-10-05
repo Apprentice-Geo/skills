@@ -4,7 +4,6 @@ from typing import Any
 
 from scripts.asr.alignment import (
     AlignedTranscript,
-    quantize_timestamp,
     sentence_boundaries,
 )
 
@@ -33,10 +32,8 @@ def build_sentence_segments(
             segments.append(
                 {
                     "id": len(segments),
-                    "start": quantize_timestamp(
-                        alignment.items[sentence_start_item].start
-                    ),
-                    "end": quantize_timestamp(alignment.items[end_item - 1].end),
+                    "start": alignment.items[sentence_start_item].start,
+                    "end": alignment.items[end_item - 1].end,
                     "text": sentence_text,
                 }
             )
@@ -55,8 +52,8 @@ def build_sentence_segments(
         segments.append(
             {
                 "id": len(segments),
-                "start": quantize_timestamp(alignment.items[sentence_start_item].start),
-                "end": quantize_timestamp(alignment.items[-1].end),
+                "start": alignment.items[sentence_start_item].start,
+                "end": alignment.items[-1].end,
                 "text": sentence_text,
             }
         )

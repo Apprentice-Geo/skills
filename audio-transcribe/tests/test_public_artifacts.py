@@ -314,7 +314,7 @@ def test_content_identity_reuses_result_after_input_rename(
         "zh_conversion": "OpenCC t2s",
     }
     assert manifest["request"]["alignment_policy"] == {
-        "timestamp_resolution_ms": 1,
+        "timestamp_resolution_ms": 0,
         "zero_duration": "drop_item_and_owned_text",
         "ordering": "strict",
     }
@@ -337,7 +337,7 @@ def test_content_identity_reuses_result_after_input_rename(
     }
     changed_policy["alignment_policy"] = {
         **request["alignment_policy"],
-        "timestamp_resolution_ms": 2,
+        "timestamp_resolution_ms": 1,
     }
     assert canonical_sha256(changed_policy) != request["config_digest"]
 
@@ -653,12 +653,12 @@ def test_valid_manifest_for_other_identity_is_not_republished(
     assert (path.parent / "transcript.json").read_bytes() == body_before
 
 
-def test_quantized_segment_end_recovers_identically(
+def test_sample_precision_segment_end_recovers_identically(
     workspace_tmp_path: Path,
 ) -> None:
     result_dir = workspace_tmp_path / "result"
     workspace_path = result_dir / "workspace" / "result.json"
-    duration = 1.0004
+    duration = 102377 / 16000
     audio_id = "a" * 64
     canonical_request = resolved_request()
     config_digest = canonical_sha256(canonical_request)
@@ -667,7 +667,7 @@ def test_quantized_segment_end_recovers_identically(
         audio_id=audio_id,
         config_digest=config_digest,
         text="末",
-        items=[AlignmentItem("末", 0.0, 1.0, None)],
+        items=[AlignmentItem("末", 6.08, duration, None)],
         duration=duration,
         provider="faster-whisper",
         language="zh",
@@ -679,8 +679,8 @@ def test_quantized_segment_end_recovers_identically(
         audio={
             "id": audio_id,
             "size": 10,
-            "sample_count": 10_004,
-            "sample_rate": 10_000,
+            "sample_count": 102377,
+            "sample_rate": 16000,
             "duration": duration,
         },
         request={"config_digest": config_digest, **canonical_request},
@@ -690,8 +690,8 @@ def test_quantized_segment_end_recovers_identically(
     original_transcript = transcript_path.read_bytes()
     manifest = read_json(manifest_path)
 
-    assert read_json(transcript_path)["segments"][0]["end"] == 1.0
-    assert read_json(result_dir / "transcript.json")["items"][0]["end"] == 1.0
+    assert load_result(manifest_path).transcript["segments"][0]["end"] == duration
+    assert load_result(manifest_path).transcript["items"][0]["end"] == duration
 
     transcript_path.unlink()
     publish_result(
@@ -1031,7 +1031,7 @@ def test_fake_engine_uses_provider_acceptance_boundary(
         engine=lambda *_args: AlignedTranscript(
             "echo echo",
             (
-                AlignmentItem("echo", 0.1001, 0.1004, 0.9),
+                AlignmentItem("echo", 0.1004, 0.1004, 0.9),
                 AlignmentItem("echo", 0.1004, 0.5, 0.8),
             ),
         ),

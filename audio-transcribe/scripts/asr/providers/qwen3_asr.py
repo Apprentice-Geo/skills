@@ -153,8 +153,8 @@ class Qwen3AsrProvider:
                 # Qwen3-ASR 强制对齐时间戳粒度是 80ms 会产生误差
                 # 这里仅裁剪末词 0.1 秒内的切片尾部越界
                 logger.warning(
-                    "Clipped Qwen3-ASR final word end from %.3fs to %.3fs "
-                    "for chunk_%03d (overrun %.3fs).",
+                    "Clipped Qwen3-ASR final word end from %.9fs to %.9fs "
+                    "for chunk_%03d (overrun %.9fs).",
                     last_word.end,
                     duration,
                     layout.index,

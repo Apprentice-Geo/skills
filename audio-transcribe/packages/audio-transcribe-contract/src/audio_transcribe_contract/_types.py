@@ -19,7 +19,7 @@ class _Audio(TypedDict):
 
 
 class _AlignmentPolicy(TypedDict):
-    timestamp_resolution_ms: Literal[1]
+    timestamp_resolution_ms: Literal[0, 1]
     zero_duration: Literal["drop_item_and_owned_text"]
     ordering: Literal["strict"]
 

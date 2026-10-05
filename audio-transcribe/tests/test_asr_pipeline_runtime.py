@@ -93,7 +93,7 @@ class ZeroDurationProvider(FakeProvider):
             layout.end_sample,
             "echo echo",
             (
-                TranscriptWord("echo", 0.1001, 0.1004, 0.9),
+                TranscriptWord("echo", 0.1004, 0.1004, 0.9),
                 TranscriptWord("echo", 0.1004, 0.5, 0.8),
             ),
             {"provider": "fake"},

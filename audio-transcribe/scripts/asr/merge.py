@@ -26,7 +26,12 @@ def merge_chunk_transcripts(
             continue
         text_parts.append(transcript.text)
         offset = layout.start_sample / SAMPLE_RATE
-        items.extend(offset_alignment(transcript.alignment, offset).items)
+        transcript.validate(language=str(plan.provider_request["language"]))
+        items.extend(
+            offset_alignment(
+                transcript.alignment, offset, end=layout.end_sample / SAMPLE_RATE
+            ).items
+        )
     text = " ".join(text_parts)
     alignment = AlignedTranscript(text, tuple(items))
     validate_alignment(

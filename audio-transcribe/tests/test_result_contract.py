@@ -451,6 +451,12 @@ def test_manifest_schema_and_identity_are_strict(
     "mutate",
     [
         lambda request: request["alignment_policy"].__setitem__(
+            "timestamp_resolution_ms", 2
+        ),
+        lambda request: request["alignment_policy"].__setitem__(
+            "timestamp_resolution_ms", False
+        ),
+        lambda request: request["alignment_policy"].__setitem__(
             "zero_duration", "keep"
         ),
     ],
@@ -466,6 +472,31 @@ def test_alignment_policy_is_required_and_exact(
 
     with pytest.raises(ResultValidationError, match="alignment_policy"):
         load_result(manifest_path)
+
+
+@pytest.mark.parametrize("resolution", [0, 1])
+def test_loader_accepts_current_and_legacy_timestamp_policies(
+    workspace_tmp_path: Path, resolution: int
+) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    request = manifest["request"]
+    request["alignment_policy"]["timestamp_resolution_ms"] = resolution
+    request["config_digest"] = _canonical_sha256(
+        {key: value for key, value in request.items() if key != "config_digest"}
+    )
+    _write_json(path, manifest)
+    _rewrite_artifact(
+        path,
+        "transcript",
+        lambda transcript: transcript.update(config_digest=request["config_digest"]),
+    )
+    assert (
+        load_result(path).manifest["request"]["alignment_policy"][
+            "timestamp_resolution_ms"
+        ]
+        == resolution
+    )
 
 
 @pytest.mark.parametrize("name", ["transcript"])

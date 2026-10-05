@@ -55,7 +55,7 @@ local audio
 
 - `audio_id` 是音频字节的 SHA-256，与其路径无关。
 - `config_digest` 是排除该字段后的 canonical request JSON SHA-256，标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior；不包含音频身份，也不是单次调用编号。canonical request 包含模型 revision、执行策略、VAD、规划、文本规范化和固定 `alignment_policy` 的实际字段。`audio_id + config_digest` 共同定位结果。
-- `ALIGNMENT_POLICY` 记录 1 ms timestamp resolution、`drop_item_and_owned_text` zero-duration 处理和严格排序。policy 实际字段变化会生成新的 `config_digest` 和 ASR plan identity。
+- `ALIGNMENT_POLICY` 的 `timestamp_resolution_ms=0` 表示不额外量化时间码；其余字段记录 `drop_item_and_owned_text` zero-duration 处理和严格排序。policy 实际字段变化会生成新的 `config_digest` 和 ASR plan identity，旧的 1 ms 策略缓存不会复用。
 - 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `config_digest`。
 - 完整 manifest 最后发布，并且是唯一的成功标记。
 - 公共 artifact 路径必须位于结果目录内；indexed model shard 路径必须位于模型目录内。
@@ -78,17 +78,16 @@ Provider prepare 返回绑定加载配置摘要的 prepared model。生产入口
 
 ## Alignment 与验证流程
 
-Provider adapter 仅把第三方字段映射为 `AlignedTranscript` candidate。随后，每个 candidate 都必须经过同一个 `accept_provider_transcript` 边界：
+Provider adapter 把第三方字段映射为 `AlignedTranscript` candidate。Qwen adapter 仅允许末词在起点未越界且结束时间越界不超过 0.1 秒时，将结束时间收回精确 chunk sample 边界；这是模型尾部误差的专用处理，其他越界仍由通用边界拒绝。随后，每个 candidate 都必须经过同一个 `accept_provider_transcript` 边界：
 
 1. 拒绝负数、非有限、反向、重叠、超出范围或 probability 无效的值；
-2. 把 timestamp 量化到小数点后三位（1 ms）；
-3. 按 source 顺序把源字符映射给 alignment-item owner，允许没有 owner 的标点和空白，不使用全局文本替换；
-4. 仅移除量化后 `start == end` 的 item，以及恰好归这些 item 所有的源字符；
-5. 严格重新验证字符 alignment、`0 <= start < end <= duration`、不重叠和 probability。
+2. 保留原始时间精度，按 source 顺序把源字符映射给 alignment-item owner，允许没有 owner 的标点和空白，不使用全局文本替换；
+3. 仅移除原本 `start == end` 的 item，以及恰好归这些 item 所有的源字符；正时长的亚毫秒 item 不移除；
+4. 严格重新验证字符 alignment、`0 <= start < end <= duration`、不重叠和 probability。
 
 如果只剩可移除 item 和没有 owner 的标点或空白，一个 accepted chunk 可能变为空。合并时忽略空 chunk，但合并结果完全为空的转写必须失败。
 
-合并流程只生成一个 global `AlignedTranscript`：应用每个 chunk offset，组合非空的 accepted chunk，并验证全局结果。写入 `workspace/result.json` 前，通过 item ownership 反向投影文本规范化结果，并再次进行严格验证。发布流程严格读取并重新验证 workspace shape 和 alignment；既不强制转换字段类型，也不把 timestamp 裁剪到音频 duration。句子分段仅在公共转换期间运行一次，并使用已经验证的 global alignment。
+合并流程只生成一个 global `AlignedTranscript`：复验 accepted chunk，应用 sample 起点对应的 offset，组合非空 chunk，并验证全局结果。偏移运算不取整；浮点加法可能使合法局部端点在全局尾部超过精确 sample 边界一个舍入单位，因此平移结果以该 chunk 的精确全局尾部为上界。这不接受原本越界的 Provider 或 cache 时间码。写入 `workspace/result.json` 前，通过 item ownership 反向投影文本规范化结果，并再次进行严格验证。发布流程严格读取并重新验证 workspace shape 和 alignment；既不强制转换字段类型，也不裁剪无效时间码。句子分段仅在公共转换期间运行一次，直接使用已验证 item 的首尾时间，不再次量化。
 
 对于 Qwen3-ASR，alignment-item probability 保持 `null`。其他被接受的 probability 必须是有限值，并位于 `[0, 1]` 内。
 
@@ -128,7 +127,7 @@ pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗
 
 ## 公共 contract 与发布
 
-`audio-transcribe-contract` 0.3.0 只接受公共 schema v3，独立于内部 alignment 模块。v3 使用顶层公共 schema 作为唯一格式版本；resolved request、alignment policy 和 text-normalization policy 只记录实际生效字段，不再包含嵌套版本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。所有公共对象递归使用精确字段集合；完整 resolved 配置全部必需。Provider identity、model 和 execution policy 按 Provider 分别定义结构，校验类型、必要的值约束及 Provider/language 一致性。TypedDict 是字段结构的唯一实现来源，validator 从其解析字段；consumer 不 import 生产代码，不检查本地模型，也不限制 revision 必须等于当前生产 pin。新增任何层级字段或改变合同语义需要评估并升级公共 schema；包版本独立发布，非格式修复无需机械升级 schema。
+`audio-transcribe-contract` 0.3.1 只接受公共 schema v3；时间精度字段新增允许值 `0`（不额外量化），仍接受原有值 `1`（1 ms），保留已有字段的语义。新增值不修改公共结构，旧版 loader 需升级才能读取新策略结果，独立于内部 alignment 模块。v3 使用顶层公共 schema 作为唯一格式版本；resolved request、alignment policy 和 text-normalization policy 只记录实际生效字段，不再包含嵌套版本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。所有公共对象递归使用精确字段集合；完整 resolved 配置全部必需。Provider identity、model 和 execution policy 按 Provider 分别定义结构，校验类型、必要的值约束及 Provider/language 一致性。TypedDict 是字段结构的唯一实现来源，validator 从其解析字段；consumer 不 import 生产代码，不检查本地模型，也不限制 revision 必须等于当前生产 pin。新增任何层级字段或改变合同语义需要评估并升级公共 schema；包版本独立发布，非格式修复无需机械升级 schema。
 
 `load_result(path)` 完整验证后返回 `TranscriptionResult(manifest_path, transcript_path, manifest, transcript)`，路径均为绝对路径。正文 snapshot 同时提供 `segments` 和 `items`。外层 dataclass 冻结，内层 TypedDict/list 是普通可变内存对象，修改不写回文件。不再导出 `RawTimestamps` 类型或返回独立 timestamp 路径/snapshot。
 

@@ -52,7 +52,7 @@ def resolved_request(
         "provider_identity": identity,
         "execution_policy": execution,
         "alignment_policy": {
-            "timestamp_resolution_ms": 1,
+            "timestamp_resolution_ms": 0,
             "zero_duration": "drop_item_and_owned_text",
             "ordering": "strict",
         },

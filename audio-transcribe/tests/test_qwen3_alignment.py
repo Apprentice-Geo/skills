@@ -267,12 +267,12 @@ def test_source_character_owners_locate_repeated_text_in_order() -> None:
     )
 
 
-def test_acceptance_drops_only_quantized_zero_item_and_its_repeated_text() -> None:
+def test_acceptance_drops_only_zero_item_and_its_repeated_text() -> None:
     candidate = AlignedTranscript(
         "echo, echo echo",
         (
             AlignmentItem("echo", 0.0, 0.4996, 0.9),
-            AlignmentItem("echo", 0.5001, 0.5004, 0.8),
+            AlignmentItem("echo", 0.5004, 0.5004, 0.8),
             AlignmentItem("echo", 0.5004, 1.0, 0.7),
         ),
     )
@@ -287,18 +287,18 @@ def test_acceptance_drops_only_quantized_zero_item_and_its_repeated_text() -> No
     assert accepted == AlignedTranscript(
         "echo,  echo",
         (
-            AlignmentItem("echo", 0.0, 0.5, 0.9),
-            AlignmentItem("echo", 0.5, 1.0, 0.7),
+            AlignmentItem("echo", 0.0, 0.4996, 0.9),
+            AlignmentItem("echo", 0.5004, 1.0, 0.7),
         ),
     )
     assert report.dropped_zero_duration_items == 1
-    assert report.first_start == 0.5
-    assert report.last_end == 0.5
+    assert report.first_start == 0.5004
+    assert report.last_end == 0.5004
 
 
 def test_acceptance_normalizes_punctuation_only_remainder_to_empty_chunk() -> None:
     accepted, report = accept_provider_transcript(
-        AlignedTranscript(" word!? ", (AlignmentItem("word", 0.1, 0.1004),)),
+        AlignedTranscript(" word!? ", (AlignmentItem("word", 0.1004, 0.1004),)),
         duration=1.0,
         chunk_index=0,
         language="en",
@@ -306,6 +306,15 @@ def test_acceptance_normalizes_punctuation_only_remainder_to_empty_chunk() -> No
 
     assert accepted == AlignedTranscript("", ())
     assert report.dropped_zero_duration_items == 1
+
+
+def test_acceptance_preserves_positive_submillisecond_item() -> None:
+    candidate = AlignedTranscript("词", (AlignmentItem("词", 0.1001, 0.1004),))
+    accepted, report = accept_provider_transcript(
+        candidate, duration=1.0, chunk_index=0, language="zh"
+    )
+    assert accepted == candidate
+    assert report == CleanupReport()
 
 
 def test_acceptance_aggregates_many_zero_duration_items_without_text_in_report() -> (
