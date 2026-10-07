@@ -6,7 +6,6 @@ import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Generator
 
 from audio_transcribe_contract import (
@@ -28,6 +27,7 @@ from scripts.asr.segmentation import build_sentence_segments
 from scripts.io_utils import (
     pretty_json_bytes,
     read_json,
+    staging_directory,
     write_bytes_atomic,
     write_json_atomic,
 )
@@ -356,8 +356,7 @@ def publish_result(
     transcript_path = _resolve_artifact_path(manifest_path, transcript_relative)
     # Stage both files under their final relative names so the public loader
     # validates exactly the bytes and paths that will be published.
-    with TemporaryDirectory(prefix=".publication-", dir=result_dir) as temporary:
-        staging = Path(temporary)
+    with staging_directory(result_dir, prefix=".publication-") as staging:
         staged_transcript = _resolve_artifact_path(
             staging / "manifest.json", transcript_relative
         )

@@ -1,6 +1,4 @@
 import json
-import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -62,12 +60,5 @@ def installed_models(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def workspace_tmp_path(request: pytest.FixtureRequest) -> Path:
-    root = REPO_ROOT / "tmp" / "workspace"
-    root.mkdir(parents=True, exist_ok=True)
-    name = re.sub(r"[^0-9A-Za-z_.-]+", "_", request.node.name)
-    path = root / name
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir()
-    return path
+def workspace_tmp_path(tmp_path: Path) -> Path:
+    return tmp_path

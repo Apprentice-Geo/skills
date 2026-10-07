@@ -88,6 +88,25 @@ def _change_workspace_text(result_dir: Path) -> None:
     write_json_atomic(path, workspace)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows sandbox directory permissions")
+def test_publication_uses_accessible_staging_and_cleans_up(
+    workspace_tmp_path, monkeypatch
+):
+    result_dir = workspace_tmp_path / "result"
+    audio, request = _publication_inputs(result_dir)
+    original_mkdir = os.mkdir
+
+    def deny_private_directory(path, mode=0o777, *, dir_fd=None):
+        if mode == 0o700:
+            raise PermissionError("private directory ACL excludes sandbox identity")
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", deny_private_directory)
+    manifest_path = publish_result(result_dir, audio=audio, request=request)
+    load_result(manifest_path)
+    assert not list(result_dir.glob(".publication-*"))
+
+
 @pytest.mark.parametrize("changed_result", [True, False])
 def test_repair_preserves_custom_manifest_metadata_and_logs_after_install(
     workspace_tmp_path: Path,

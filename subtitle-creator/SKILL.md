@@ -43,9 +43,9 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 | 场景 | 正确行为 | 禁止行为 |
 | --- | --- | --- |
-| 转写完成 | 仅把已完成的 `manifest.json` 绝对路径传给 `attach_transcription`；成功后使用本地 normalized transcript。 | 直接读取、修改或长期绑定上游内容。 |
+| 转写完成 | 仅把已完成的 `manifest.json` 绝对路径传给 `bind_transcription`；成功后使用本地 normalized transcript。 | 直接读取、修改或长期绑定上游内容。 |
 | 存在源文本 | 仅把它作为证据；只编辑 `normalized_transcript.json` 中每个分段的 `text`。 | 更改分段数量、ID、时间戳、源 metadata 或任何其他字段。 |
-| 采用不同转写 | 显式删除单个 job，再从创建步骤重新执行并导入目标 manifest。 | 手动删除 artifact、清空整个 `results/`，或声称删除 job 会强制上游重新推理。 |
+| 重做校正或采用不同转写 | 用 `reset_transcript` 恢复当前本地基准；用 `bind_transcription` 导入目标 manifest。两者都会丢弃当前校正并使旧字幕失效。 | 为换转写删除整个任务，或声称重新绑定会强制上游重新推理。 |
 | 命令失败 | 保留上一个成功状态，报告 stderr 错误，并在解决原因后从该状态恢复。 | 跳过阶段、根据残留文件推断状态，或交付尚未发布的字幕。 |
 
 无法确定如何校正时，保持转写文本不变。
@@ -68,67 +68,75 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 ## 工作流
 
-从 `subtitle-creator` 目录运行以下三个 `subtitle-creator` 脚本命令。调用 `audio-transcribe` 时，遵循该 Skill 自身对工作目录和执行方式的要求。
+从 `subtitle-creator` 目录运行以下命令。调用 `audio-transcribe` 时，遵循该 Skill 自身对工作目录和执行方式的要求。同一任务的打开、绑定、reset、生成和删除命令不得并发执行。
 
-退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入简洁错误；日志已建立时附带精确日志路径，并保留上一个成功状态。详细 traceback 只写入日志。日志位置和终端输出契约见 [错误处理](references/ERROR-HANDLING.md)。
+退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入简洁错误；日志已建立时附带精确日志路径。详细 traceback 只写入日志。日志位置和恢复边界见 [错误处理](references/ERROR-HANDLING.md)。
 
-### 1. 从音频创建或恢复任务
+### 1. 从音频打开任务
 
-无论是新任务还是恢复已有任务，都从音频入口开始；不要要求用户提供 job 路径。命令按音频内容定位已有 job，并允许合法文本编辑或 SRT 损坏造成的派生产物不一致，以便后续根据 `status` 恢复。baseline 损坏、normalized transcript 缺失、时间戳被修改等非法输入仍会使命令失败。
+新任务和恢复已有任务都从音频入口开始；不要要求用户提供 job 路径。命令按音频内容定位已有 job，允许合法文本编辑或 SRT 损坏造成的派生产物不一致。baseline 损坏、工作副本缺失或时间轴被修改仍会报错；此时根据错误中已定位的任务路径 reset 或重新绑定，见[任务恢复](references/ERROR-HANDLING.md#任务恢复)。
 
 ```powershell
-uv run --no-sync python -m scripts.create_subtitle "<audio-path>"
+uv run --no-sync python -m scripts.open_subtitle_job "<audio-path>"
 ```
 
 成功时 stdout 为单行 JSON，例如：
 
 ```json
-{"status":"needs_transcription","subtitle_job":"D:\\skill-data\\subtitle-creator\\results\\<audio-id>\\subtitle_job.json","audio_path":"D:\\audio\\sample.wav","normalized_transcript":null,"subtitle":null}
+{"status":"transcription_unbound","subtitle_job":"D:\\skill-data\\subtitle-creator\\results\\<audio-id>\\subtitle_job.json","audio_path":"D:\\audio\\sample.wav","normalized_transcript":null,"subtitle":null}
 ```
 
-路径均为绝对路径，不可用的 artifact 为 `null`。输出来自已验证的 job，不隐式执行 finalize；仅当 SRT 与当前合法 normalized transcript 一致时 `subtitle` 才是路径。根据 JSON 的 `status` 直接继续，无需为判断状态先读取 job：
+路径均为绝对路径，不可用的 artifact 为 `null`。输出来自已验证的 job，不隐式生成字幕；仅当 SRT 与当前合法工作副本的预期 SRT 字节一致时，`subtitle` 才是路径。
 
-- 对于 `needs_transcription`，使用输出的 `audio_path` 调用已安装的 `audio-transcribe` Skill，并等待其已完成的 `manifest.json` 绝对路径。
-- 对于 `editable`，不得再次关联 transcription。读取输出的 `normalized_transcript`，按需编辑分段 `text`，然后直接运行 finalize；该步骤会复用有效 SRT，或从合法文本修改、SRT 损坏及 SRT 缺失中恢复。`subtitle` 为 `null` 时不能声称已有可交付字幕。
+- `transcription_unbound`：尚未绑定转写。使用已有的已完成 manifest，或用输出的 `audio_path` 调用 `audio-transcribe` 并等待其已完成 manifest，再执行绑定。
+- `transcription_bound`：已有本地转写。读取输出的 `normalized_transcript`，按需校正分段 `text`，然后生成 SRT。仅在需要丢弃当前校正或更换转写时，才执行 reset 或重新绑定。`subtitle` 为 `null` 时不能声称已有可交付字幕。
 
-### 2. 关联转写结果
+### 2. 绑定或更换转写
 
 ```powershell
-uv run --no-sync python -m scripts.attach_transcription "<absolute-job-path>" --transcription-manifest "<absolute-manifest-path>"
+uv run --no-sync python -m scripts.bind_transcription "<absolute-job-path>" --transcription-manifest "<absolute-manifest-path>"
 ```
 
-成功导入后输出：
+每次显式调用都读取并验证 manifest，确认属于同一音频后导入新的本地基准和工作副本。绑定同一个 manifest 也会重新导入，不复用旧工作副本。成功后清空校正记录，使旧字幕失效，任务为 `transcription_bound`；不删除 job，也不触发上游重新推理。
+
+stdout：
 
 ```text
 normalized_transcript: <absolute-path>
 ```
 
-如果用户提供了源文本，仅编辑返回的 normalized JSON 中各分段的 `text` 值。否则直接继续。
+使用本次返回的路径编辑工作副本；如果有源文本，仅校正各分段 `text`。绑定会丢弃此前校正；需要保留时先备份。除显式重新绑定外，后续 reset 和生成均不读取上游转写。
 
-### 3. 完成字幕
+### 3. 生成 SRT
 
 ```powershell
-uv run --no-sync python -m scripts.finalize_subtitle "<absolute-job-path>"
+uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>"
 ```
 
-交付：
+每次从当前本地工作副本校验并重新生成 SRT，原子覆盖字幕文件，更新校正记录，不复用已有 SRT。生成不会重新绑定或覆盖文本校正。任务保持 `transcription_bound`。
+
+交付 stdout 中的路径：
 
 ```text
 subtitle: <absolute-path>
 ```
 
-任务保持 `editable`。导入后的任务不再读取上游转写结果。重复运行 finalize 时，如果有效 SRT 未发生变化则安全复用；如果 transcript 已编辑或 SRT 已损坏则重新生成。
+### 4. 恢复到当前绑定的转写
 
-### 4. 删除并重建任务
+```powershell
+uv run --no-sync python -m scripts.reset_transcript "<absolute-job-path>"
+```
 
-仅当需要采用不同或重新发布的 transcription manifest，或者 job、baseline 等非派生产物无法恢复时，才删除单个任务。删除会同时移除本地文本校正、normalized transcript 和已发布字幕；需要保留时先要求用户自行备份。
+将当前本地基准复制为新的工作副本，丢弃全部文本校正、清空校正记录，使旧字幕失效。stdout 与绑定命令相同；后续使用返回的新路径编辑并生成字幕。reset 不回到未绑定状态，不读取上游，不要求音频仍存在。
 
-确认没有 `create_subtitle`、`attach_transcription`、`finalize_subtitle` 或其他删除命令正在操作同一任务，然后运行：
+工作副本缺失、JSON 损坏或时间轴被误改时，只要基准可信就可以 reset。基准损坏时不得 reset；应重新绑定有效 manifest。此操作仅针对已经绑定的任务，需要保留校正时先备份。
+
+### 5. 删除任务
+
+仅在明确删除任务或 job 身份、结构无法恢复时删除单个任务。删除会移除全部本地文本校正、转写快照和字幕；需要保留时先备份。
 
 ```powershell
 uv run --no-sync python -m scripts.remove_subtitle_job "<absolute-job-path>"
 ```
 
-命令只接受当前配置数据目录下 `results/<audio-sha256>/subtitle_job.json` 中的绝对路径，删除整个 job 目录。目标已不存在时也成功。随后从创建步骤重新执行，并把目标 manifest 传给 `attach_transcription`。`audio-transcribe` 可能复用相同请求的有效结果；删除此任务不保证上游重新执行模型推理。
-
-正常的 transcript 文本修改或 SRT 损坏不使用删除命令，直接运行 finalize 恢复。
+命令只接受当前配置数据目录下 `results/<audio-sha256>/subtitle_job.json` 的绝对路径，删除整个 job 目录。目标已不存在时也成功。需要重建时，从打开任务步骤重新执行。普通文本校正、reset、更换转写或修复 SRT 均不使用删除命令。

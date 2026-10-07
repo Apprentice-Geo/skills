@@ -4,10 +4,11 @@ from pathlib import Path
 import pytest
 
 from scripts import (
-    attach_transcription,
-    create_subtitle,
-    finalize_subtitle,
+    bind_transcription,
+    generate_srt,
+    open_subtitle_job,
     remove_subtitle_job,
+    reset_transcript,
 )
 
 CliMain = Callable[[list[str] | None], int]
@@ -16,10 +17,11 @@ CliMain = Callable[[list[str] | None], int]
 @pytest.mark.parametrize(
     "main",
     [
-        create_subtitle.main,
-        attach_transcription.main,
-        finalize_subtitle.main,
+        open_subtitle_job.main,
+        bind_transcription.main,
+        generate_srt.main,
         remove_subtitle_job.main,
+        reset_transcript.main,
     ],
 )
 def test_help_does_not_start_logging_session(
@@ -38,10 +40,11 @@ def test_help_does_not_start_logging_session(
 @pytest.mark.parametrize(
     "main",
     [
-        create_subtitle.main,
-        attach_transcription.main,
-        finalize_subtitle.main,
+        open_subtitle_job.main,
+        bind_transcription.main,
+        generate_srt.main,
         remove_subtitle_job.main,
+        reset_transcript.main,
     ],
 )
 def test_parse_error_stays_outside_logging_session(

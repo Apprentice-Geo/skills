@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from scripts import finalize_subtitle
+from scripts import generate_srt
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -22,11 +22,11 @@ def json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
 
 
-def run_finalize(job_path: Path | str) -> subprocess.CompletedProcess[str]:
+def run_generate(job_path: Path | str) -> subprocess.CompletedProcess[str]:
     stdout = io.StringIO()
     stderr = io.StringIO()
     with redirect_stdout(stdout), redirect_stderr(stderr):
-        returncode = finalize_subtitle.main([str(job_path)])
+        returncode = generate_srt.main([str(job_path)])
     return subprocess.CompletedProcess(
         args=[str(job_path)],
         returncode=returncode,
@@ -75,9 +75,9 @@ def correction_job(
     normalized_path.write_bytes(json_bytes(baseline))
     job_path = job_dir / "subtitle_job.json"
     job = {
-        "schema_version": 2,
+        "schema_version": 3,
         "job_id": audio_id,
-        "status": "editable",
+        "status": "transcription_bound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
         "artifacts": {
             "normalized_transcript": str(normalized_path.resolve()),
@@ -92,7 +92,7 @@ def correction_job(
     shutil.rmtree(job_dir, ignore_errors=True)
 
 
-def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
+def test_generate_publishes_corrected_srt_and_keeps_transcription_bound_job(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
 ) -> None:
     job_path, normalized_path, baseline_path, _manifest_path, _manifest = correction_job
@@ -101,13 +101,13 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
     normalized["segments"][1]["text"] = " Second\t line --> x "
     normalized_path.write_bytes(json_bytes(normalized))
 
-    result = run_finalize(job_path.resolve())
+    result = run_generate(job_path.resolve())
 
     subtitle_path = job_path.parent / "subtitle.srt"
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
     assert result.stderr == ""
-    logs = list(job_path.parent.glob("finalize-subtitle-*.log"))
+    logs = list(job_path.parent.glob("generate-srt-*.log"))
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert (
@@ -122,7 +122,7 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
         ).encode()
     )
     job = json.loads(job_path.read_text(encoding="utf-8"))
-    assert job["status"] == "editable"
+    assert job["status"] == "transcription_bound"
     assert job["changed_segment_ids"] == [0, 1]
     assert (
         job["artifacts"]["before_correction_sha256"]
@@ -131,18 +131,28 @@ def test_finalize_publishes_corrected_srt_and_keeps_editable_job(
     assert job["artifacts"]["subtitle"] == str(subtitle_path.resolve())
 
 
-def test_finalize_reuses_unchanged_valid_srt_without_audio_or_rewriting(
+def test_generate_always_rewrites_unchanged_srt_without_audio(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
-    assert run_finalize(job_path.resolve()).returncode == 0
+    assert run_generate(job_path.resolve()).returncode == 0
     job = json.loads(job_path.read_text(encoding="utf-8"))
     Path(job["audio"]["path"]).unlink()
     job_bytes = job_path.read_bytes()
     subtitle_path = Path(job["artifacts"]["subtitle"])
     subtitle_bytes = subtitle_path.read_bytes()
 
-    reused = run_finalize(job_path.resolve())
+    writes = []
+    original_write = generate_srt._atomic_write
+
+    def record_write(path, content):
+        writes.append(path)
+        original_write(path, content)
+
+    monkeypatch.setattr(generate_srt, "_atomic_write", record_write)
+    reused = run_generate(job_path.resolve())
+    assert writes == [subtitle_path]
 
     assert reused.returncode == 0
     assert reused.stdout == f"subtitle: {subtitle_path}\n"
@@ -150,23 +160,23 @@ def test_finalize_reuses_unchanged_valid_srt_without_audio_or_rewriting(
     assert subtitle_path.read_bytes() == subtitle_bytes
 
 
-def test_finalize_rebuilds_after_editing_finalized_transcript(
+def test_generate_rebuilds_after_editing_finalized_transcript(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
 ) -> None:
     job_path, normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
-    assert run_finalize(job_path.resolve()).returncode == 0
+    assert run_generate(job_path.resolve()).returncode == 0
     first_subtitle = (job_path.parent / "subtitle.srt").read_bytes()
 
     normalized = json.loads(normalized_path.read_text(encoding="utf-8"))
     normalized["segments"][0]["text"] = "final correction"
     normalized_path.write_bytes(json_bytes(normalized))
 
-    rebuilt = run_finalize(job_path.resolve())
+    rebuilt = run_generate(job_path.resolve())
 
     assert rebuilt.returncode == 0
     assert b"final correction" in (job_path.parent / "subtitle.srt").read_bytes()
     job = json.loads(job_path.read_text(encoding="utf-8"))
-    assert job["status"] == "editable"
+    assert job["status"] == "transcription_bound"
     assert job["changed_segment_ids"] == [0]
     assert (job_path.parent / "subtitle.srt").read_bytes() != first_subtitle
 
@@ -180,7 +190,7 @@ def test_finalize_rebuilds_after_editing_finalized_transcript(
         ("start", 0.1),
     ],
 )
-def test_finalize_rejects_changes_outside_segment_text(
+def test_generate_rejects_changes_outside_segment_text(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     target: str,
     value: object,
@@ -197,11 +207,11 @@ def test_finalize_rejects_changes_outside_segment_text(
         normalized["segments"][0]["start"] = value
     normalized_path.write_bytes(json_bytes(normalized))
 
-    result = run_finalize(job_path.resolve())
+    result = run_generate(job_path.resolve())
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
     assert not (job_path.parent / "subtitle.srt").exists()
 
 
@@ -215,7 +225,7 @@ def test_finalize_rejects_changes_outside_segment_text(
         (0, 1, " \t\n"),
     ],
 )
-def test_finalize_rejects_invalid_srt_segment(
+def test_generate_rejects_invalid_srt_segment(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     start: object,
     end: object,
@@ -234,14 +244,14 @@ def test_finalize_rejects_invalid_srt_segment(
     ).hexdigest()
     job_path.write_bytes(json_bytes(job))
 
-    result = run_finalize(job_path.resolve())
+    result = run_generate(job_path.resolve())
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
 
 
-def test_finalize_rejects_overlap_created_by_millisecond_rounding(
+def test_generate_rejects_overlap_created_by_millisecond_rounding(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
 ) -> None:
     job_path, normalized_path, baseline_path, _manifest_path, _manifest = correction_job
@@ -257,63 +267,63 @@ def test_finalize_rejects_overlap_created_by_millisecond_rounding(
     ).hexdigest()
     job_path.write_bytes(json_bytes(job))
 
-    result = run_finalize(job_path.resolve())
+    result = run_generate(job_path.resolve())
 
     assert result.returncode == 1
     assert result.stdout == ""
-    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
 
 
-def test_finalize_rejects_baseline_digest_mismatch(
+def test_generate_rejects_baseline_digest_mismatch(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
 ) -> None:
     job_path, _normalized_path, baseline_path, _manifest_path, _manifest = correction_job
     baseline_path.write_text("changed", encoding="utf-8")
 
-    result = run_finalize(job_path.resolve())
+    result = run_generate(job_path.resolve())
 
     assert result.returncode == 1
     assert result.stdout == ""
     assert result.stderr.startswith("Error: ")
     assert "Full log:" in result.stderr
-    logs = list((job_path.parents[2] / ".cache" / "logs").glob("finalize-subtitle-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-srt-*.log"))
     assert len(logs) == 1
     assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")
-    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
 
 
-def test_finalize_rebuilds_damaged_srt(
+def test_generate_rebuilds_damaged_srt(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
 ) -> None:
     job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
-    assert run_finalize(job_path.resolve()).returncode == 0
+    assert run_generate(job_path.resolve()).returncode == 0
     job = json.loads(job_path.read_text(encoding="utf-8"))
     subtitle_path = Path(job["artifacts"]["subtitle"])
     subtitle_path.write_bytes(b"tampered")
-    result = run_finalize(job_path.resolve())
+    result = run_generate(job_path.resolve())
 
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
     assert subtitle_path.read_bytes() != b"tampered"
     job = json.loads(job_path.read_text(encoding="utf-8"))
-    assert job["status"] == "editable"
+    assert job["status"] == "transcription_bound"
 
 
-def test_finalize_publishes_job_last(
+def test_generate_publishes_job_last(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
-    original_write = finalize_subtitle.atomic_write_json
+    original_write = generate_srt.atomic_write_json
 
     def fail_job_write(path: Path, value: dict[str, Any]) -> None:
         if path == job_path:
             raise OSError("fail publish")
         original_write(path, value)
 
-    monkeypatch.setattr(finalize_subtitle, "atomic_write_json", fail_job_write)
+    monkeypatch.setattr(generate_srt, "atomic_write_json", fail_job_write)
     with pytest.raises(OSError, match="fail publish"):
-        finalize_subtitle.finalize_subtitle(job_path.resolve())
+        generate_srt.generate_srt(job_path.resolve())
 
-    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
     assert (job_path.parent / "subtitle.srt").exists()

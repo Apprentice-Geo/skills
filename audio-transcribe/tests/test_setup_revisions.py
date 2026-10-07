@@ -1,4 +1,5 @@
 import json
+import os
 import tomllib
 from pathlib import Path
 
@@ -193,6 +194,50 @@ def test_failed_download_keeps_previous_model(workspace_tmp_path: Path) -> None:
     else:
         raise AssertionError("download should fail")
     assert (model_dir / "model.bin").read_bytes() == b"old"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows sandbox directory permissions")
+def test_download_uses_accessible_staging_and_cleans_failed_attempt(
+    workspace_tmp_path, monkeypatch
+):
+    model_dir = workspace_tmp_path / "models" / "model"
+    original_mkdir = os.mkdir
+
+    def deny_private_directory(path, mode=0o777, *, dir_fd=None):
+        if mode == 0o700:
+            raise PermissionError("private directory ACL excludes sandbox identity")
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", deny_private_directory)
+
+    class Logger:
+        fail = False
+
+        def run(self, command, _description, *, env):
+            del env
+            (Path(command[-1]) / "model.bin").write_bytes(b"weights")
+            if self.fail:
+                raise RuntimeError("download failed")
+
+    logger = Logger()
+    assert download_model(
+        Path("python.exe"), "owner/model", "a", model_dir, ("model.bin",), logger, {}
+    )
+    old_marker = (model_dir / ".model_identity.json").read_bytes()
+    logger.fail = True
+    with pytest.raises(RuntimeError, match="download failed"):
+        download_model(
+            Path("python.exe"),
+            "owner/model",
+            "b",
+            model_dir,
+            ("model.bin",),
+            logger,
+            {},
+        )
+    assert (model_dir / "model.bin").read_bytes() == b"weights"
+    assert (model_dir / ".model_identity.json").read_bytes() == old_marker
+    assert list(model_dir.parent.iterdir()) == [model_dir]
 
 
 def test_sharded_model_requires_index_and_all_shards(workspace_tmp_path: Path) -> None:

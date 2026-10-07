@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any, NoReturn
@@ -15,14 +16,12 @@ from .process_logging import (
     result,
 )
 from .subtitle_job import (
-    BEFORE_CORRECTION_FILENAME,
-    NORMALIZED_FILENAME,
     SCHEMA_VERSION,
     SubtitleJobError,
-    atomic_write_json,
-    read_json_object,
+    load_job,
+    publish_transcript,
     sha256_file,
-    validate_job,
+    validate_job_identity,
 )
 from .transcription_input import load_transcription
 
@@ -62,7 +61,7 @@ def _read_normalized_transcript(manifest_path: Path, audio_id: str) -> dict[str,
     }
 
 
-def attach_transcription(
+def bind_transcription(
     job_path: Path, manifest_path: Path, *, results_dir: Path | None = None
 ) -> Path:
     if not job_path.is_absolute():
@@ -74,10 +73,8 @@ def attach_transcription(
     if not job_path.is_file():
         raise SubtitleJobError(f"subtitle job is not a regular file: {job_path}")
 
-    job = read_json_object(job_path)
-    validate_job(job_path, job, results_dir=results_dir)
-    if job["status"] == "editable":
-        return Path(job["artifacts"]["normalized_transcript"])
+    job = load_job(job_path)
+    validate_job_identity(job_path, job, results_dir=results_dir)
     if not manifest_path.is_file():
         raise SubtitleJobError(f"transcription manifest is not a regular file: {manifest_path}")
     audio_path = Path(job["audio"]["path"])
@@ -88,27 +85,17 @@ def attach_transcription(
 
     normalized = _read_normalized_transcript(manifest_path, job["audio"]["id"])
 
-    job_dir = job_path.parent
-    baseline_path = (job_dir / BEFORE_CORRECTION_FILENAME).resolve()
-    normalized_path = (job_dir / NORMALIZED_FILENAME).resolve()
-    atomic_write_json(baseline_path, normalized)
-    atomic_write_json(normalized_path, normalized)
-
-    job["status"] = "editable"
-    job["artifacts"] = {
-        "normalized_transcript": str(normalized_path),
-        "before_correction": str(baseline_path),
-        "before_correction_sha256": sha256_file(baseline_path),
-        "subtitle": None,
-    }
-    validate_job(job_path, job, results_dir=results_dir)
-    atomic_write_json(job_path, job)
-    return normalized_path
+    baseline_bytes = (
+        json.dumps(normalized, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    return publish_transcript(job_path, job, baseline_bytes, results_dir=results_dir)
 
 
 @filesystem_cli
 def main(argv: list[str] | None = None) -> int:
-    parser = ArgumentParser(description="Attach and normalize a completed transcription.")
+    parser = ArgumentParser(
+        description="Bind a completed transcription, replacing local corrections."
+    )
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
     parser.add_argument(
         "--transcription-manifest",
@@ -122,15 +109,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     paths = RuntimePaths.resolve(arguments.data_dir)
-    session = LoggingSession(create_workflow_log_path("attach-transcription", paths)).start()
+    session = LoggingSession(create_workflow_log_path("bind-transcription", paths)).start()
     try:
         try:
-            output_path = attach_transcription(
+            output_path = bind_transcription(
                 Path(arguments.subtitle_job_path),
                 Path(arguments.transcription_manifest),
                 results_dir=paths.results_dir,
             )
-            session.move_to(output_path.parent)
+            session.move_to(Path(arguments.subtitle_job_path).resolve().parent)
             result(get_logger(__name__), "normalized_transcript: %s", output_path)
             return 0
         except (OSError, SubtitleJobError, TypeError, ValueError) as error:
