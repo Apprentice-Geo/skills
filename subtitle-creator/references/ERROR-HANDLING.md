@@ -12,6 +12,8 @@
 
 数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
 
+Windows 下的本地快照、发布和下载暂存目录使用随机名称加独占 `mkdir` 创建，继承父目录 ACL；不得使用 `mkdtemp`、`TemporaryDirectory` 或 `mkdir(mode=0o700)` 创建这类业务目录，否则可能排除沙箱身份并导致创建后写入失败。该规则不改变 Pytest 的沙箱外执行要求。已有目录访问失败时仍按真实路径诊断，不通过更改全局 ACL 或反复重试绕过。
+
 ## 日志与终端输出
 
 每次 setup、dependency checker 和 workflow CLI 调用使用独立日志。Python 日志会话把同一条业务记录同时写入文件和指定终端：状态与结果写入 stdout，显式 warning 和 error 写入 stderr，调试明细、第三方 logger、Python warnings 及完整 traceback 仅写入文件。不得记录 transcript 正文、用户提供的源文本或上游模型对象。
@@ -22,11 +24,11 @@ dependency checker 将 JSON 原子发布到 `.cache/logs/`，并从同一份 rep
 
 ## Workflow 日志位置
 
-`create_subtitle`、`attach_transcription` 和 `finalize_subtitle` 先在 `.cache/logs/` 创建日志。只有在命令成功获得并验证可信 job 路径后，才把活动日志移动到对应的 `results/<audio-id>/`；最终结果记录在移动后写入。移动失败时继续使用 cache 中的原日志，并在日志内记录 traceback，不改变命令结果。
+`open_subtitle_job`、`bind_transcription`、`transcript` 和 `generate_srt` 先在 `.cache/logs/` 创建日志。只有在命令成功获得并验证可信 job 路径后，才把活动日志移动到对应的 `results/<audio-id>/`；最终结果记录在移动后写入。移动失败时继续使用 cache 中的原日志，并在日志内记录 traceback，不改变命令结果。
 
 `remove_subtitle_job` 的日志始终保留在 `.cache/logs/`，避免日志随 job 目录删除或产生打开句柄冲突。任何 workflow 在获得可信 job 路径前失败时，日志也留在 cache。
 
-`create_subtitle` 成功时 stdout 为单行 JSON，字段为 `status`、`subtitle_job`、`audio_path`、`normalized_transcript`、`subtitle`；格式与恢复决策见 [创建或恢复任务](../SKILL.md#1-从音频创建或恢复任务)。摘要不修改 job、不执行 finalize。其他命令保持原有的一行结果：
+`open_subtitle_job` 成功时 stdout 为单行 JSON，字段为 `status`、`subtitle_job`、`audio_path`、`normalized_transcript`、`subtitle`；格式与恢复决策见 [打开任务](../SKILL.md#1-从音频打开任务)。摘要不修改 job、不生成字幕。`transcript show` 的正文 JSON 仅写 stdout，日志仅记录操作与分段数量，不记录正文；字段和参数见[分段命令](../SKILL.md#4-查看编辑与恢复分段)。编辑和 reset 不自动生成 SRT。其他命令保持一行结果：
 
 ```text
 normalized_transcript: <absolute-path>
@@ -38,13 +40,24 @@ subtitle_job_absent: <absolute-path>
 失败时 stdout 为空，stderr 包含简洁错误；日志可用时附带 `Full log` 路径。根据日志修复输入或环境后，从上一个成功状态重试；不得根据未发布的临时文件推断成功。
 
 
+## 任务恢复
+
+- ID 或 context 格式错误、ID 不存在、`all` 与 context 组合、编辑空白文本：修正参数后重试；不得猜测 ID 或直接修改 JSON。单段 reset 和查看/编辑不能修复非法工作副本，需全部 reset。
+
+- 工作副本缺失、JSON 损坏或分段、时间轴被误改：若任务声明与基准可信，运行 `transcript reset --id all`，再使用其返回路径继续校正和生成。
+- 基准缺失或 digest 不匹配：reset 拒绝恢复；用 `bind_transcription` 重新导入有效且属于同一音频的 manifest。绑定仍要求本地音频存在且内容身份未改变。
+- job 身份、结构或产物路径越界：停止；不能通过 reset 或绑定绕过声明校验。明确需要重建时才删除单个任务。
+- 绑定、编辑或 reset 写入失败：job 切换前旧绑定和校正保持不变；忽略未提交快照，修复原因后重试。旧快照与未提交目录随整个任务删除，不能据此推断当前绑定。
+- 生成 SRT 失败：job 不发布新声明；SRT 可能已写入，不能仅根据文件存在交付，修复原因后重新运行生成。每次生成都会覆盖文件，不复用已有字幕。
+- 旧 job schema `2` 可直接读取并保留校正；成功写入时使用 schema `3`，转写 JSON 格式不变。兼容边界见[架构](ARCHITECTURE.md#持久化兼容)。
+
 ## 环境修复分类
 
 - 必需依赖缺失、已安装包不一致、合同包版本不符或公共 API 不完整：显式运行一次 setup 同步当前项目声明，再以 `--no-sync` 复查；仍失败时停止，不重复 setup。
 - 日志或报告写入失败、数据或 `.venv` 路径权限错误：按真实失败路径诊断，运行数据问题可显式指定可写数据目录；不以 setup 修复文件系统权限。
 - 项目文件缺失、声明不可读或无效：定位并修复项目文件，不把这些错误当作合同包缺失。
 - uv 不可用、Python 版本不符、子进程无法启动：诊断工具与解释器；不自动删除或替换现有 `.venv`。
-- baseline 损坏、normalized transcript 缺失、非法时间轴属于任务输入错误，停止恢复并报告；不运行 setup、不改写源 artifact 来绕过校验。合法文本编辑和陈旧 SRT 保持可恢复，创建输出 `subtitle: null`，通过 finalize 重建。
+- baseline 损坏、工作副本缺失、非法时间轴属于任务输入错误；按[任务恢复](#任务恢复)选择 reset 或重新绑定，不运行 setup。合法文本编辑和陈旧 SRT 保持可恢复，打开输出 `subtitle: null`，通过 `generate_srt` 重建。
 
 ## 合同包检查
 

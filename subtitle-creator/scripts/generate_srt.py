@@ -22,6 +22,7 @@ from .subtitle_job import (
     atomic_write_json,
     compare_normalized_correction,
     expected_srt_bytes,
+    load_job,
     read_json_object,
     validate_job,
 )
@@ -67,15 +68,17 @@ def _atomic_write(path: Path, content: bytes) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def finalize_subtitle(job_path: Path, *, results_dir: Path | None = None) -> Path:
+def generate_srt(job_path: Path, *, results_dir: Path | None = None) -> Path:
     if not job_path.is_absolute():
         raise SubtitleJobError("subtitle job path must be absolute")
     job_path = job_path.resolve()
     if not job_path.is_file():
         raise SubtitleJobError(f"subtitle job is not a regular file: {job_path}")
 
-    job = read_json_object(job_path)
+    job = load_job(job_path)
     validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
+    if job["status"] != "transcription_bound":
+        raise SubtitleJobError("subtitle job has no bound transcription")
 
     artifacts = job["artifacts"]
     baseline = read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True)
@@ -83,16 +86,7 @@ def finalize_subtitle(job_path: Path, *, results_dir: Path | None = None) -> Pat
     normalized = read_json_object(normalized_path, decimal_numbers=True)
     changed_ids = compare_normalized_correction(baseline, normalized)
     subtitle_path = (job_path.parent / SUBTITLE_FILENAME).resolve()
-    recorded_subtitle = artifacts["subtitle"]
     expected_subtitle = expected_srt_bytes(normalized)
-    if (
-        recorded_subtitle == str(subtitle_path)
-        and subtitle_path.is_file()
-        and subtitle_path.read_bytes() == expected_subtitle
-        and job["changed_segment_ids"] == changed_ids
-    ):
-        return subtitle_path
-
     _atomic_write(subtitle_path, expected_subtitle)
 
     job["changed_segment_ids"] = changed_ids
@@ -113,10 +107,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     paths = RuntimePaths.resolve(arguments.data_dir)
-    session = LoggingSession(create_workflow_log_path("finalize-subtitle", paths)).start()
+    session = LoggingSession(create_workflow_log_path("generate-srt", paths)).start()
     try:
         try:
-            subtitle_path = finalize_subtitle(
+            subtitle_path = generate_srt(
                 Path(arguments.subtitle_job_path), results_dir=paths.results_dir
             )
             session.move_to(subtitle_path.parent)

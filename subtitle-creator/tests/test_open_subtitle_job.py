@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import create_subtitle, finalize_subtitle, subtitle_job
+from scripts import generate_srt, open_subtitle_job, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -20,7 +20,7 @@ def run_create(audio_path: Path) -> subprocess.CompletedProcess[str]:
     stdout = io.StringIO()
     stderr = io.StringIO()
     with redirect_stdout(stdout), redirect_stderr(stderr):
-        returncode = create_subtitle.main([str(audio_path)])
+        returncode = open_subtitle_job.main([str(audio_path)])
     return subprocess.CompletedProcess(
         args=[str(audio_path)],
         returncode=returncode,
@@ -49,7 +49,7 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     job_path = (RESULTS_DIR / audio_id / "subtitle_job.json").resolve()
     assert result.returncode == 0
     assert json.loads(result.stdout) == {
-        "status": "needs_transcription",
+        "status": "transcription_unbound",
         "subtitle_job": str(job_path),
         "audio_path": str(audio_path.resolve()),
         "normalized_transcript": None,
@@ -57,13 +57,13 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     }
     assert len(result.stdout.splitlines()) == 1
     assert result.stderr == ""
-    logs = list(job_path.parent.glob("create-subtitle-*.log"))
+    logs = list(job_path.parent.glob("open-subtitle-job-*.log"))
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8")) == {
-        "schema_version": 2,
+        "schema_version": 3,
         "job_id": audio_id,
-        "status": "needs_transcription",
+        "status": "transcription_unbound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
         "artifacts": None,
         "changed_segment_ids": [],
@@ -92,7 +92,9 @@ def test_create_reuses_job_and_rebinds_same_content_to_new_path(
     )
 
 
-def seed_editable_job(audio: tuple[Path, str], stale_artifact: str) -> tuple[Path, Path, Path]:
+def seed_transcription_bound_job(
+    audio: tuple[Path, str], stale_artifact: str
+) -> tuple[Path, Path, Path]:
     audio_path, audio_id = audio
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)
@@ -112,9 +114,9 @@ def seed_editable_job(audio: tuple[Path, str], stale_artifact: str) -> tuple[Pat
     subtitle_path.write_bytes(subtitle_job.expected_srt_bytes(baseline))
     job_path = (job_dir / "subtitle_job.json").resolve()
     job = {
-        "schema_version": 2,
+        "schema_version": 3,
         "job_id": audio_id,
-        "status": "editable",
+        "status": "transcription_bound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
         "artifacts": {
             "normalized_transcript": str(normalized_path),
@@ -142,11 +144,11 @@ def seed_editable_job(audio: tuple[Path, str], stale_artifact: str) -> tuple[Pat
 @pytest.mark.parametrize(
     "stale_artifact", ["normalized_transcript", "subtitle", "missing", "valid", "unfinalized"]
 )
-def test_create_recovers_existing_editable_job_from_audio(
+def test_create_recovers_existing_transcription_bound_job_from_audio(
     audio: tuple[Path, str], stale_artifact: str
 ) -> None:
     audio_path, _ = audio
-    job_path, normalized_path, subtitle_path = seed_editable_job(audio, stale_artifact)
+    job_path, normalized_path, subtitle_path = seed_transcription_bound_job(audio, stale_artifact)
     original_job = job_path.read_bytes()
     original_normalized = normalized_path.read_bytes()
     original_subtitle = subtitle_path.read_bytes() if subtitle_path.exists() else None
@@ -155,7 +157,7 @@ def test_create_recovers_existing_editable_job_from_audio(
 
     assert result.returncode == 0
     assert json.loads(result.stdout) == {
-        "status": "editable",
+        "status": "transcription_bound",
         "subtitle_job": str(job_path),
         "audio_path": str(audio_path.resolve()),
         "normalized_transcript": str(normalized_path),
@@ -165,16 +167,16 @@ def test_create_recovers_existing_editable_job_from_audio(
     assert job_path.read_bytes() == original_job
     assert normalized_path.read_bytes() == original_normalized
     assert (subtitle_path.read_bytes() if subtitle_path.exists() else None) == original_subtitle
-    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "editable"
-    assert finalize_subtitle.finalize_subtitle(job_path) == subtitle_path
+    assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
+    assert generate_srt.generate_srt(job_path) == subtitle_path
     normalized = subtitle_job.read_json_object(normalized_path, decimal_numbers=True)
     assert subtitle_path.read_bytes() == subtitle_job.expected_srt_bytes(normalized)
 
 
 @pytest.mark.parametrize("damage", ["timeline", "baseline"])
-def test_create_summary_rejects_invalid_editable_sources(audio, damage):
+def test_create_summary_rejects_invalid_transcription_bound_sources(audio, damage):
     audio_path, _ = audio
-    job_path, _, _ = seed_editable_job(audio, "valid")
+    job_path, _, _ = seed_transcription_bound_job(audio, "valid")
     job = subtitle_job.read_json_object(job_path)
     if damage == "timeline":
         path = Path(job["artifacts"]["normalized_transcript"])
@@ -222,7 +224,7 @@ def test_create_rejects_non_file_audio(tmp_path: Path, kind: str) -> None:
     assert result.stdout == ""
     assert result.stderr.startswith("Error: ")
     assert "Full log:" in result.stderr
-    logs = list((tmp_path / ".cache" / "logs").glob("create-subtitle-*.log"))
+    logs = list((tmp_path / ".cache" / "logs").glob("open-subtitle-job-*.log"))
     assert len(logs) == 1
     assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")
 
@@ -237,10 +239,46 @@ def test_create_keeps_job_unpublished_when_atomic_replace_fails(
 
     monkeypatch.setattr(subtitle_job.os, "replace", fail_replace)
 
-    assert create_subtitle.main([str(audio_path)]) == 1
+    assert open_subtitle_job.main([str(audio_path)]) == 1
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err
     job_dir = RESULTS_DIR / audio_id
     assert not (job_dir / "subtitle_job.json").exists()
     assert list(job_dir.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_open_reads_legacy_job_without_rewriting_or_losing_corrections(audio, bound):
+    audio_path, audio_id = audio
+    normalized_path = None
+    original_text = None
+    if bound:
+        job_path, normalized_path, _subtitle_path = seed_transcription_bound_job(
+            audio, "normalized_transcript"
+        )
+        original_text = normalized_path.read_bytes()
+    else:
+        job_path = open_subtitle_job.open_subtitle_job(str(audio_path))
+    job = subtitle_job.read_json_object(job_path)
+    job["schema_version"] = 2
+    job["status"] = "editable" if bound else "needs_transcription"
+    subtitle_job.atomic_write_json(job_path, job)
+    original_job = job_path.read_bytes()
+
+    result = run_create(audio_path)
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["status"] == (
+        "transcription_bound" if bound else "transcription_unbound"
+    )
+    assert job_path.read_bytes() == original_job
+    assert subtitle_job.load_job(job_path)["job_id"] == audio_id
+    if bound:
+        assert normalized_path is not None
+        assert normalized_path.read_bytes() == original_text
+        generate_srt.generate_srt(job_path)
+        upgraded = subtitle_job.read_json_object(job_path)
+        assert upgraded["schema_version"] == 3
+        assert upgraded["changed_segment_ids"] == [0]
+        assert normalized_path.read_bytes() == original_text

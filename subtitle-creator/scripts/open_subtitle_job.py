@@ -17,9 +17,10 @@ from .process_logging import (
 )
 from .subtitle_job import (
     JOB_FILENAME,
-    SCHEMA_VERSION,
+    JOB_SCHEMA_VERSION,
     SubtitleJobError,
     atomic_write_json,
+    load_job,
     read_json_object,
     sha256_file,
     subtitle_matches_normalized,
@@ -32,7 +33,7 @@ class ArgumentParser(argparse.ArgumentParser):
         raise SubtitleJobError(message)
 
 
-def create_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -> Path:
+def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -> Path:
     audio_path = Path(audio_argument).resolve()
     if not audio_path.is_file():
         raise SubtitleJobError(f"audio path is not a regular file: {audio_path}")
@@ -41,20 +42,23 @@ def create_subtitle_job(audio_argument: str, *, results_dir: Path | None = None)
     results_dir = results_dir or RuntimePaths.resolve().results_dir
     job_path = (results_dir / audio_id / JOB_FILENAME).resolve()
     if job_path.exists():
-        job = read_json_object(job_path)
-        # Existing editable jobs may contain a legitimately edited transcript or a
-        # damaged derived subtitle. Finalize validates the source artifacts and
+        job = load_job(job_path)
+        # Existing bound jobs may contain a legitimately edited transcript or a
+        # damaged derived subtitle. Generation validates the source artifacts and
         # rebuilds those derived values after the caller dispatches on job status.
-        validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
+        try:
+            validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
+        except SubtitleJobError as error:
+            raise SubtitleJobError(f"invalid subtitle job {job_path}: {error}") from error
         if job["audio"]["path"] != str(audio_path):
             job["audio"]["path"] = str(audio_path)
             atomic_write_json(job_path, job)
         return job_path
 
     job: dict[str, Any] = {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": JOB_SCHEMA_VERSION,
         "job_id": audio_id,
-        "status": "needs_transcription",
+        "status": "transcription_unbound",
         "audio": {"path": str(audio_path), "id": audio_id},
         "artifacts": None,
         "changed_segment_ids": [],
@@ -74,11 +78,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     paths = RuntimePaths.resolve(arguments.data_dir)
-    session = LoggingSession(create_workflow_log_path("create-subtitle", paths)).start()
+    session = LoggingSession(create_workflow_log_path("open-subtitle-job", paths)).start()
     try:
         try:
-            job_path = create_subtitle_job(arguments.audio_path, results_dir=paths.results_dir)
-            job = read_json_object(job_path)
+            job_path = open_subtitle_job(arguments.audio_path, results_dir=paths.results_dir)
+            job = load_job(job_path)
             validate_job(job_path, job, results_dir=paths.results_dir, allow_stale_derived=True)
             artifacts = job["artifacts"]
             normalized_path = artifacts["normalized_transcript"] if artifacts else None

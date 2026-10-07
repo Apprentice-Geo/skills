@@ -228,9 +228,9 @@ def test_setup_launcher_resolves_data_before_uv_and_cwd(tmp_path, cli_override):
 
 def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkeypatch):
     from scripts import (
-        attach_transcription,
-        create_subtitle,
-        finalize_subtitle,
+        bind_transcription,
+        generate_srt,
+        open_subtitle_job,
         remove_subtitle_job,
     )
     from scripts.subtitle_job import SubtitleJobError, read_json_object, sha256_file
@@ -250,21 +250,19 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
         duration=2.0,
         segments=[{"id": 0, "start": 0.0, "end": 1.0, "text": "hello"}],
     )
-    monkeypatch.setattr(attach_transcription, "load_transcription", lambda _path: snapshot)
+    monkeypatch.setattr(bind_transcription, "load_transcription", lambda _path: snapshot)
     common = ["--data-dir", str(data)]
-    assert create_subtitle.main([str(audio), *common]) == 0
+    assert open_subtitle_job.main([str(audio), *common]) == 0
     job_path = data / "results" / audio_id / "subtitle_job.json"
-    assert create_subtitle.main([str(audio), *common]) == 0
+    assert open_subtitle_job.main([str(audio), *common]) == 0
     assert (
-        attach_transcription.main(
-            [str(job_path), "--transcription-manifest", str(upstream), *common]
-        )
+        bind_transcription.main([str(job_path), "--transcription-manifest", str(upstream), *common])
         == 0
     )
     upstream.unlink()
-    assert finalize_subtitle.main([str(job_path), *common]) == 0
-    assert finalize_subtitle.main([str(job_path), *common]) == 0
-    assert read_json_object(job_path)["status"] == "editable"
+    assert generate_srt.main([str(job_path), *common]) == 0
+    assert generate_srt.main([str(job_path), *common]) == 0
+    assert read_json_object(job_path)["status"] == "transcription_bound"
     # 切换目录不能误删另一根目录的任务。
     with pytest.raises(SubtitleJobError):
         remove_subtitle_job.remove_subtitle_job(
@@ -278,10 +276,11 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
 @pytest.mark.parametrize(
     "module_name,arguments",
     [
-        ("create_subtitle", ["audio.wav"]),
-        ("attach_transcription", ["job.json", "--transcription-manifest", "manifest.json"]),
-        ("finalize_subtitle", ["job.json"]),
+        ("open_subtitle_job", ["audio.wav"]),
+        ("bind_transcription", ["job.json", "--transcription-manifest", "manifest.json"]),
+        ("generate_srt", ["job.json"]),
         ("remove_subtitle_job", ["job.json"]),
+        ("transcript", ["reset", "job.json", "--id", "all"]),
     ],
 )
 def test_subtitle_workflow_start_failure_stops_before_job(

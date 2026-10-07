@@ -2,16 +2,26 @@
 
 ## 模块边界
 
-- `scripts/runtime_paths.py` 在命令启动时解析数据目录；创建、校验、关联、完成和删除使用同一个结果根目录。
-- `scripts/create_subtitle.py` 按音频 SHA-256 创建或恢复任务；`scripts/subtitle_job.py` 维护 job 和 artifact 的合法性、文本校正边界及 SRT 有效性。
-- `scripts/transcription_input.py` 通过公共 `load_result()` 只读接入转写；`scripts/attach_transcription.py` 发布本地 normalized transcript 与 baseline。
-- `scripts/finalize_subtitle.py` 从合法 normalized transcript 发布或恢复 SRT；`scripts/remove_subtitle_job.py` 仅删除当前配置根目录下单个合法任务，拒绝 symlink、junction 和越界。
+- `scripts/runtime_paths.py` 在命令启动时解析数据目录；所有工作流命令使用同一个结果根目录。
+- `scripts/open_subtitle_job.py` 按音频 SHA-256 创建或恢复任务，输出状态与当前可用产物。
+- `scripts/subtitle_job.py` 维护任务身份、产物合法性、文本校正边界、SRT 有效性和本地转写快照的发布。
+- `scripts/transcription_input.py` 通过公共 `load_result()` 只读接入上游转写；`scripts/bind_transcription.py` 每次显式调用均导入新的本地基准和工作副本。
+- `scripts/transcript.py` 查看分段、替换单段文本或从当前本地基准恢复单段/全部工作副本；`scripts/generate_srt.py` 从合法工作副本重新生成并覆盖 SRT。
+- `scripts/remove_subtitle_job.py` 仅删除当前配置根目录下单个任务，拒绝 symlink、junction 和越界。
 - `scripts/process_logging.py` 负责会话状态、文件与终端路由、子进程日志和失败边界；setup 与检查器各自复用合同包检查。
 
 ## 控制流与数据边界
 
-命令先解析参数与绝对运行路径，再建立日志；启动日志失败时停止，不执行依赖安装或 job 操作。创建后任务为 `needs_transcription`，导入经过公共合同验证的转写后为 `editable`。后续校正只改本地分段 `text`，不改时间轴；finalize 校验 baseline 和当前文本，发布字幕与任务声明。合法文本编辑和陈旧 SRT 可通过既有恢复入口继续。
+命令先解析参数与绝对运行路径，再建立日志；启动日志失败时停止业务。新任务为 `transcription_unbound`，绑定经过公共合同验证的转写后为 `transcription_bound`。校正只修改本地工作副本的分段 `text`；生成每次验证基准和当前文本、重新写入 SRT 与校正记录，任务保持已绑定。
 
-创建命令从已验证的 job 输出单行 JSON 摘要，直接提供状态与可用 artifact 的绝对路径；未就绪、缺失、损坏或与当前文本不一致的 SRT 输出 `null`。摘要与 job 校验复用同一 SRT 有效性规则，不修改任务或隐式执行 finalize，不新增持久化字段或状态。Agent 按摘要选择转写或编辑/finalize，非法时间轴与损坏 baseline 仍停止。
+绑定清空校正记录；编辑和 reset 重新计算全部文本差异 ID，即使没有字幕也保留校正记录，严格校验时必须与实际差异一致。两者均把字幕声明设为 `null`。它们先在 `results/<audio-id>/transcript-<random>/` 写好分别提供的完整基准和工作副本（绑定时相同，编辑/reset 保留基准原始字节），再原子切换 job 引用；提交前失败或进程中断不会覆盖旧绑定。旧快照和未提交目录不作为恢复依据，不提供历史切换功能，随整个任务删除。编辑路径以当前命令输出或 job 声明为准，不拼接固定根目录路径。旧 SRT 文件可以残留，但失效后不再作为已发布字幕交付。
 
-日志、报告、内部缓存和结果使用当前数据目录；源码、`.venv`、模板及外部转写目录独立。默认布局与历史任务继续可用；切换目录不搜索、迁移或合并旧任务。job 内绝对 artifact 路径保持原 schema 语义。详细配置、日志移动和写入失败处理见 [错误处理](ERROR-HANDLING.md#运行目录与写入失败)。
+打开任务严格验证源产物，但容许合法校正及陈旧 SRT。摘要不修改 job 或生成字幕，仅当 SRT 与当前工作副本的预期字节一致时返回字幕路径。全部 reset 只要求任务声明和本地基准可信，允许工作副本损坏或缺失；查看、编辑、单段 reset 还验证工作副本结构与时间轴，允许 SRT 陈旧或缺失；重新绑定只要求任务声明可信和新转写有效，允许旧产物损坏。所有同一任务命令串行执行。
+
+## 持久化兼容
+
+job schema 为 `3`，转写 JSON schema 仍为 `2`，两者分别校验。读取旧 job schema `2` 时，将 `needs_transcription` 和 `editable` 分别映射为新状态，保留校正、基准及绝对产物路径；兼容读取本身不改写旧文件；打开时若音频路径变化，仍会更新路径。下一次成功写入 job 时保存为 schema `3`，新工具读取两种格式，旧工具不能读取新 job。不接受其他历史或未知版本，也不迁移可再生的缓存。
+
+日志、报告、内部缓存和结果使用当前数据目录；源码、`.venv` 及外部转写目录独立。切换目录不搜索、搬迁或合并旧任务。详细布局与失败恢复见 [错误处理](ERROR-HANDLING.md)。
+
+已验证 transcript 使用递归 JSON 序列化：有限 `Decimal` 直接写为 JSON 数字，不转为 `float`，其他基本类型使用标准编码。快照与查看共用它，保留时间戳和 duration 精度。Agent 默认通过分段脚本操作，不直接读写整份 JSON。

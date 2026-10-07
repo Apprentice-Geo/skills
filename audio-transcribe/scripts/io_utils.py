@@ -3,9 +3,34 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+
+def create_staging_directory(parent: Path, *, prefix: str) -> Path:
+    for _ in range(10):
+        path = parent / f"{prefix}{uuid4().hex}"
+        try:
+            # Windows 继承父目录 ACL，避免 0o700 排除沙箱身份；POSIX 保持私有权限。
+            path.mkdir(mode=0o777 if os.name == "nt" else 0o700)
+        except FileExistsError:
+            continue
+        return path
+    raise FileExistsError(f"cannot create a unique staging directory under {parent}")
+
+
+@contextmanager
+def staging_directory(parent: Path, *, prefix: str) -> Iterator[Path]:
+    path = create_staging_directory(parent, prefix=prefix)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
 
 
 def canonical_json_bytes(value: Any) -> bytes:

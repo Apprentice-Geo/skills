@@ -1,8 +1,29 @@
+import os
 import sys
 import types
 from pathlib import Path
 
+import pytest
+
 import scripts.utils as utils
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows sandbox directory permissions")
+def test_atomic_writes_create_accessible_directories(workspace_tmp_path, monkeypatch):
+    original_mkdir = os.mkdir
+
+    def deny_private_directory(path, mode=0o777, *, dir_fd=None):
+        if mode == 0o700:
+            raise PermissionError("private directory ACL excludes sandbox identity")
+        return original_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "mkdir", deny_private_directory)
+    directory = workspace_tmp_path / "nested" / "job"
+    utils.write_json_atomic(directory / "job.json", {"status": "ready"})
+    utils.write_text_atomic(directory / "summary.md", "summary")
+    assert utils.read_json(directory / "job.json") == {"status": "ready"}
+    assert (directory / "summary.md").read_text() == "summary"
+    assert not list(directory.glob("*.tmp"))
 
 
 def test_normalize_bilibili_watchlater_url_returns_canonical_video_url() -> None:

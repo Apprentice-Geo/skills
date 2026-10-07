@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import shutil
-import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from scripts.io_utils import write_json_atomic
+from scripts.io_utils import create_staging_directory, write_json_atomic
 from scripts.model_artifacts import model_has_required_files, model_has_weights
 from scripts.model_identity import IDENTITY_MARKER, installed_revision_matches
 from scripts.process_logging import ProcessLogger, SetupError
@@ -35,8 +34,8 @@ def download_model(
         return False
 
     model_dir.parent.mkdir(parents=True, exist_ok=True)
-    temporary_dir = Path(
-        tempfile.mkdtemp(prefix=f".{model_dir.name}.", dir=model_dir.parent)
+    temporary_dir = create_staging_directory(
+        model_dir.parent, prefix=f".{model_dir.name}."
     )
     backup_dir = model_dir.with_name(f".{model_dir.name}.old")
     try:

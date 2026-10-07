@@ -8,10 +8,12 @@ import tempfile
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from scripts.runtime_paths import RuntimePaths
 
 SCHEMA_VERSION = 2
+JOB_SCHEMA_VERSION = 3
 JOB_FILENAME = "subtitle_job.json"
 NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
@@ -66,6 +68,21 @@ def read_json_object(path: Path, *, decimal_numbers: bool = False) -> dict[str, 
     return value
 
 
+def load_job(path: Path) -> dict[str, Any]:
+    job = read_json_object(path)
+    if type(job.get("schema_version")) is int and job["schema_version"] == 2:
+        old_status = job.get("status")
+        statuses = {
+            "needs_transcription": "transcription_unbound",
+            "editable": "transcription_bound",
+        }
+        if not isinstance(old_status, str) or old_status not in statuses:
+            raise SubtitleJobError(f"unsupported legacy job status: {old_status}")
+        job["schema_version"] = JOB_SCHEMA_VERSION
+        job["status"] = statuses[old_status]
+    return job
+
+
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path: Path | None = None
@@ -96,6 +113,26 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
+
+
+def transcript_json(value: Any) -> str:
+    """序列化已验证的 JSON，保留 Decimal 的数值精度。"""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise SubtitleJobError("JSON numbers must be finite")
+        return str(value)
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ",".join(
+                json.dumps(key, ensure_ascii=False) + ":" + transcript_json(item)
+                for key, item in value.items()
+            )
+            + "}"
+        )
+    if isinstance(value, list):
+        return "[" + ",".join(transcript_json(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
 def require_sha256(value: object, field: str) -> str:
@@ -227,16 +264,15 @@ def subtitle_matches_normalized(subtitle_path: Path, normalized: dict[str, Any])
     return subtitle_path.is_file() and subtitle_path.read_bytes() == expected_srt_bytes(normalized)
 
 
-def validate_job(
+def validate_job_identity(
     job_path: Path,
     job: dict[str, Any],
     *,
     results_dir: Path | None = None,
-    allow_stale_derived: bool = False,
 ) -> None:
     if set(job) != JOB_KEYS:
         raise SubtitleJobError("subtitle job has an invalid top-level shape")
-    if type(job.get("schema_version")) is not int or job["schema_version"] != SCHEMA_VERSION:
+    if type(job.get("schema_version")) is not int or job["schema_version"] != JOB_SCHEMA_VERSION:
         raise SubtitleJobError("unsupported job schema_version")
 
     job_id = require_sha256(job.get("job_id"), "job_id")
@@ -261,13 +297,13 @@ def validate_job(
         raise SubtitleJobError("changed_segment_ids must contain unique non-negative integers")
 
     status = job.get("status")
-    if status == "needs_transcription":
+    if status == "transcription_unbound":
         if job.get("artifacts") is not None:
-            raise SubtitleJobError("needs_transcription job must not have artifacts")
+            raise SubtitleJobError("transcription_unbound job must not have artifacts")
         if changed_ids:
-            raise SubtitleJobError("needs_transcription job must not have changed segments")
+            raise SubtitleJobError("transcription_unbound job must not have changed segments")
         return
-    if status != "editable":
+    if status != "transcription_bound":
         raise SubtitleJobError(f"unsupported job status: {status}")
 
     artifacts = job.get("artifacts")
@@ -280,6 +316,25 @@ def validate_job(
         "subtitle",
     }:
         raise SubtitleJobError(f"{status} artifacts have invalid fields")
+    for field in ("normalized_transcript", "before_correction"):
+        require_job_artifact_path(artifacts[field], f"artifacts.{field}", job_path.parent)
+    require_sha256(artifacts["before_correction_sha256"], "artifacts.before_correction_sha256")
+    if artifacts["subtitle"] is not None:
+        require_job_artifact_path(artifacts["subtitle"], "artifacts.subtitle", job_path.parent)
+
+
+def validate_job(
+    job_path: Path,
+    job: dict[str, Any],
+    *,
+    results_dir: Path | None = None,
+    allow_stale_derived: bool = False,
+) -> None:
+    validate_job_identity(job_path, job, results_dir=results_dir)
+    if job["status"] == "transcription_unbound":
+        return
+    artifacts = job["artifacts"]
+    changed_ids = job["changed_segment_ids"]
     job_dir = job_path.parent
     normalized_path = require_job_artifact_path(
         artifacts.get("normalized_transcript"), "artifacts.normalized_transcript", job_dir
@@ -296,12 +351,13 @@ def validate_job(
         raise SubtitleJobError("normalized transcript artifact is missing")
     baseline = read_json_object(baseline_path, decimal_numbers=True)
     normalized = read_json_object(normalized_path, decimal_numbers=True)
-    compare_normalized_correction(baseline, normalized)
+    expected_changed_ids = compare_normalized_correction(baseline, normalized)
+    normalized_srt_segments(baseline)
     normalized_srt_segments(normalized)
+    if changed_ids != expected_changed_ids and not allow_stale_derived:
+        raise SubtitleJobError("changed_segment_ids does not match normalized transcript")
     recorded_subtitle = artifacts.get("subtitle")
     if recorded_subtitle is None:
-        if changed_ids:
-            raise SubtitleJobError("unfinalized editable job must not have changed segments")
         return
     subtitle_path = require_job_artifact_path(recorded_subtitle, "artifacts.subtitle", job_dir)
     if not subtitle_path.is_file() and not allow_stale_derived:
@@ -314,6 +370,54 @@ def validate_job(
         raise SubtitleJobError(
             "subtitle artifact timeline or text does not match normalized transcript"
         )
-    expected_changed_ids = compare_normalized_correction(baseline, normalized)
-    if changed_ids != expected_changed_ids and not allow_stale_derived:
-        raise SubtitleJobError("changed_segment_ids does not match normalized transcript")
+
+
+def publish_transcript(
+    job_path: Path,
+    job: dict[str, Any],
+    baseline_bytes: bytes,
+    *,
+    normalized_bytes: bytes | None = None,
+    results_dir: Path | None = None,
+) -> Path:
+    # 新文件先写入独立目录；原子切换 job 前，旧绑定和校正始终可用。
+    snapshot_dir = _create_snapshot_directory(job_path.parent)
+    baseline_path = snapshot_dir / BEFORE_CORRECTION_FILENAME
+    normalized_path = snapshot_dir / NORMALIZED_FILENAME
+    for path, content in (
+        (baseline_path, baseline_bytes),
+        (normalized_path, baseline_bytes if normalized_bytes is None else normalized_bytes),
+    ):
+        with path.open("wb") as target:
+            target.write(content)
+            target.flush()
+            os.fsync(target.fileno())
+    new_job = {
+        **job,
+        "status": "transcription_bound",
+        "changed_segment_ids": compare_normalized_correction(
+            read_json_object(baseline_path, decimal_numbers=True),
+            read_json_object(normalized_path, decimal_numbers=True),
+        ),
+        "artifacts": {
+            "normalized_transcript": str(normalized_path),
+            "before_correction": str(baseline_path),
+            "before_correction_sha256": hashlib.sha256(baseline_bytes).hexdigest(),
+            "subtitle": None,
+        },
+    }
+    validate_job(job_path, new_job, results_dir=results_dir)
+    atomic_write_json(job_path, new_job)
+    return normalized_path
+
+
+def _create_snapshot_directory(parent: Path) -> Path:
+    for _ in range(10):
+        path = parent / f"transcript-{uuid4().hex}"
+        try:
+            # Windows 继承父目录 ACL，避免 0o700 排除沙箱身份；POSIX 保持私有权限。
+            path.mkdir(mode=0o777 if os.name == "nt" else 0o700)
+        except FileExistsError:
+            continue
+        return path.resolve()
+    raise FileExistsError(f"cannot create a unique transcript directory under {parent}")
