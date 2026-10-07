@@ -280,7 +280,7 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
         ("bind_transcription", ["job.json", "--transcription-manifest", "manifest.json"]),
         ("generate_srt", ["job.json"]),
         ("remove_subtitle_job", ["job.json"]),
-        ("reset_transcript", ["job.json"]),
+        ("transcript", ["reset", "job.json", "--id", "all"]),
     ],
 )
 def test_subtitle_workflow_start_failure_stops_before_job(

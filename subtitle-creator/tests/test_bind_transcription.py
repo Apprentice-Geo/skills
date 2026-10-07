@@ -319,7 +319,7 @@ def test_bind_cli_keeps_exact_result_and_moves_log(
 def test_bind_and_reset_work_when_private_directory_creation_is_unusable(
     subtitle_task, monkeypatch
 ):
-    from scripts import reset_transcript
+    from scripts import transcript
 
     job_path, manifest_path, _audio, audio_id = subtitle_task
     original_mkdir = os.mkdir
@@ -335,6 +335,6 @@ def test_bind_and_reset_work_when_private_directory_creation_is_unusable(
     )
     path = bind_transcription.bind_transcription(job_path, manifest_path)
     path.write_bytes(json_bytes({**subtitle_job.read_json_object(path), "provider": "damaged"}))
-    restored = reset_transcript.reset_transcript(job_path)
+    restored = transcript.operate("reset", job_path, "all")
     assert restored.is_file()
     subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path))

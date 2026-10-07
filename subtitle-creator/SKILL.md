@@ -44,8 +44,8 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 | 场景 | 正确行为 | 禁止行为 |
 | --- | --- | --- |
 | 转写完成 | 仅把已完成的 `manifest.json` 绝对路径传给 `bind_transcription`；成功后使用本地 normalized transcript。 | 直接读取、修改或长期绑定上游内容。 |
-| 存在源文本 | 仅把它作为证据；只编辑 `normalized_transcript.json` 中每个分段的 `text`。 | 更改分段数量、ID、时间戳、源 metadata 或任何其他字段。 |
-| 重做校正或采用不同转写 | 用 `reset_transcript` 恢复当前本地基准；用 `bind_transcription` 导入目标 manifest。两者都会丢弃当前校正并使旧字幕失效。 | 为换转写删除整个任务，或声称重新绑定会强制上游重新推理。 |
+| 存在源文本 | 仅把它作为证据；通过 `scripts.transcript show/edit` 查看上下文并替换指定分段的 `text`。 | 更改分段数量、ID、时间戳、源 metadata 或任何其他字段。 |
+| 重做校正或采用不同转写 | 用 `transcript reset --id all` 恢复当前本地基准；用 `bind_transcription` 导入目标 manifest。两者都会丢弃当前校正并使旧字幕失效。 | 为换转写删除整个任务，或声称重新绑定会强制上游重新推理。 |
 | 命令失败 | 保留上一个成功状态，报告 stderr 错误，并在解决原因后从该状态恢复。 | 跳过阶段、根据残留文件推断状态，或交付尚未发布的字幕。 |
 
 无法确定如何校正时，保持转写文本不变。
@@ -68,7 +68,7 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 ## 工作流
 
-从 `subtitle-creator` 目录运行以下命令。调用 `audio-transcribe` 时，遵循该 Skill 自身对工作目录和执行方式的要求。同一任务的打开、绑定、reset、生成和删除命令不得并发执行。
+从 `subtitle-creator` 目录运行以下命令。调用 `audio-transcribe` 时，遵循该 Skill 自身对工作目录和执行方式的要求。同一任务的所有命令（包括查看、编辑、reset）串行执行。默认通过分段脚本查看和修改，不直接读写整份 JSON。
 
 退出码 `0` 表示成功。失败时返回退出码 `1`，向 stderr 写入简洁错误；日志已建立时附带精确日志路径。详细 traceback 只写入日志。日志位置和恢复边界见 [错误处理](references/ERROR-HANDLING.md)。
 
@@ -89,7 +89,7 @@ uv run --no-sync python -m scripts.open_subtitle_job "<audio-path>"
 路径均为绝对路径，不可用的 artifact 为 `null`。输出来自已验证的 job，不隐式生成字幕；仅当 SRT 与当前合法工作副本的预期 SRT 字节一致时，`subtitle` 才是路径。
 
 - `transcription_unbound`：尚未绑定转写。使用已有的已完成 manifest，或用输出的 `audio_path` 调用 `audio-transcribe` 并等待其已完成 manifest，再执行绑定。
-- `transcription_bound`：已有本地转写。读取输出的 `normalized_transcript`，按需校正分段 `text`，然后生成 SRT。仅在需要丢弃当前校正或更换转写时，才执行 reset 或重新绑定。`subtitle` 为 `null` 时不能声称已有可交付字幕。
+- `transcription_bound`：已有本地转写。通过下述分段命令查看并按需校正分段 `text`，然后生成 SRT。仅在需要丢弃当前校正或更换转写时，才执行 reset 或重新绑定。`subtitle` 为 `null` 时不能声称已有可交付字幕。
 
 ### 2. 绑定或更换转写
 
@@ -105,7 +105,7 @@ stdout：
 normalized_transcript: <absolute-path>
 ```
 
-使用本次返回的路径编辑工作副本；如果有源文本，仅校正各分段 `text`。绑定会丢弃此前校正；需要保留时先备份。除显式重新绑定外，后续 reset 和生成均不读取上游转写。
+通过分段命令编辑当前工作副本；如果有源文本，沿用上述内容校正判断。绑定会丢弃此前校正；需要保留时先备份。除显式重新绑定外，后续 reset 和生成均不读取上游转写。
 
 ### 3. 生成 SRT
 
@@ -121,15 +121,29 @@ uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>"
 subtitle: <absolute-path>
 ```
 
-### 4. 恢复到当前绑定的转写
+### 4. 查看、编辑与恢复分段
 
 ```powershell
-uv run --no-sync python -m scripts.reset_transcript "<absolute-job-path>"
+uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id 3 --context 2
+uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id all
+uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --id 3 --text '<完整替换文本>'
+uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id 3
+uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id all
 ```
 
-将当前本地基准复制为新的工作副本，丢弃全部文本校正、清空校正记录，使旧字幕失效。stdout 与绑定命令相同；后续使用返回的新路径编辑并生成字幕。reset 不回到未绑定状态，不读取上游，不要求音频仍存在。
+命令均支持现有 `--data-dir`。ID 使用当前 transcript 中从 `0` 开始的整数；不存在、负数或格式错误均拒绝。`edit` 仅接受单个 ID，文本原样保存（包括中文、引号和换行），拒绝空字符串及纯空白，不支持范围或批量编辑。
 
-工作副本缺失、JSON 损坏或时间轴被误改时，只要基准可信就可以 reset。基准损坏时不得 reset；应重新绑定有效 manifest。此操作仅针对已经绑定的任务，需要保留校正时先备份。
+`show` 默认仅返回目标；`--context N` 接受非负整数，返回前后各最多 N 条，首尾自动截断。`--id all` 返回原顺序全部分段，禁止显式传入 `--context`，即使为 `0`。stdout 为单行 JSON，每条分段仅含 `id`、`start`、`end`、`text`：
+
+```json
+{"target_id":3,"segments":[{"id":3,"start":3,"end":4,"text":"示例"}]}
+```
+
+查看全部时 `target_id` 为 `null`。查看不修改任务或产物；正文只写 stdout，日志不记录查看或编辑的文本。
+
+单段 reset 恢复基准中的目标文本，保留其他校正；全部 reset 从可信基准恢复完整工作副本，允许工作副本缺失、JSON 损坏或时间轴误改。基准损坏时所有分段操作均拒绝，应显式重新绑定。查看、编辑和单段 reset 要求工作副本结构与时间轴合法，允许字幕陈旧或缺失。
+
+每次成功编辑或 reset 都发布新工作副本，重新计算全部校正 ID，清空字幕声明，保持 `transcription_bound`；文本无变化时也如此。stdout 为 `normalized_transcript: <absolute-path>`。命令不读取上游，不要求原音频仍存在，不生成或改写 SRT；编辑完成后手动运行 `generate_srt` 才能交付字幕。需要保留校正时，在全部 reset 前先备份。
 
 ### 5. 删除任务
 

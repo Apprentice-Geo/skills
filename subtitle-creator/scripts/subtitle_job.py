@@ -115,6 +115,26 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
+def transcript_json(value: Any) -> str:
+    """序列化已验证的 JSON，保留 Decimal 的数值精度。"""
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise SubtitleJobError("JSON numbers must be finite")
+        return str(value)
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ",".join(
+                json.dumps(key, ensure_ascii=False) + ":" + transcript_json(item)
+                for key, item in value.items()
+            )
+            + "}"
+        )
+    if isinstance(value, list):
+        return "[" + ",".join(transcript_json(item) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+
 def require_sha256(value: object, field: str) -> str:
     if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
         raise SubtitleJobError(f"{field} must be a lowercase SHA-256")
@@ -331,14 +351,13 @@ def validate_job(
         raise SubtitleJobError("normalized transcript artifact is missing")
     baseline = read_json_object(baseline_path, decimal_numbers=True)
     normalized = read_json_object(normalized_path, decimal_numbers=True)
-    compare_normalized_correction(baseline, normalized)
+    expected_changed_ids = compare_normalized_correction(baseline, normalized)
+    normalized_srt_segments(baseline)
     normalized_srt_segments(normalized)
+    if changed_ids != expected_changed_ids and not allow_stale_derived:
+        raise SubtitleJobError("changed_segment_ids does not match normalized transcript")
     recorded_subtitle = artifacts.get("subtitle")
     if recorded_subtitle is None:
-        if changed_ids:
-            raise SubtitleJobError(
-                "unfinalized transcription_bound job must not have changed segments"
-            )
         return
     subtitle_path = require_job_artifact_path(recorded_subtitle, "artifacts.subtitle", job_dir)
     if not subtitle_path.is_file() and not allow_stale_derived:
@@ -351,9 +370,6 @@ def validate_job(
         raise SubtitleJobError(
             "subtitle artifact timeline or text does not match normalized transcript"
         )
-    expected_changed_ids = compare_normalized_correction(baseline, normalized)
-    if changed_ids != expected_changed_ids and not allow_stale_derived:
-        raise SubtitleJobError("changed_segment_ids does not match normalized transcript")
 
 
 def publish_transcript(
@@ -361,21 +377,28 @@ def publish_transcript(
     job: dict[str, Any],
     baseline_bytes: bytes,
     *,
+    normalized_bytes: bytes | None = None,
     results_dir: Path | None = None,
 ) -> Path:
     # 新文件先写入独立目录；原子切换 job 前，旧绑定和校正始终可用。
     snapshot_dir = _create_snapshot_directory(job_path.parent)
     baseline_path = snapshot_dir / BEFORE_CORRECTION_FILENAME
     normalized_path = snapshot_dir / NORMALIZED_FILENAME
-    for path in (baseline_path, normalized_path):
+    for path, content in (
+        (baseline_path, baseline_bytes),
+        (normalized_path, baseline_bytes if normalized_bytes is None else normalized_bytes),
+    ):
         with path.open("wb") as target:
-            target.write(baseline_bytes)
+            target.write(content)
             target.flush()
             os.fsync(target.fileno())
     new_job = {
         **job,
         "status": "transcription_bound",
-        "changed_segment_ids": [],
+        "changed_segment_ids": compare_normalized_correction(
+            read_json_object(baseline_path, decimal_numbers=True),
+            read_json_object(normalized_path, decimal_numbers=True),
+        ),
         "artifacts": {
             "normalized_transcript": str(normalized_path),
             "before_correction": str(baseline_path),

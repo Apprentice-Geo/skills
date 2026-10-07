@@ -8,7 +8,7 @@ from scripts import (
     generate_srt,
     open_subtitle_job,
     remove_subtitle_job,
-    reset_transcript,
+    transcript,
 )
 
 CliMain = Callable[[list[str] | None], int]
@@ -21,7 +21,7 @@ CliMain = Callable[[list[str] | None], int]
         bind_transcription.main,
         generate_srt.main,
         remove_subtitle_job.main,
-        reset_transcript.main,
+        transcript.main,
     ],
 )
 def test_help_does_not_start_logging_session(
@@ -44,7 +44,7 @@ def test_help_does_not_start_logging_session(
         bind_transcription.main,
         generate_srt.main,
         remove_subtitle_job.main,
-        reset_transcript.main,
+        transcript.main,
     ],
 )
 def test_parse_error_stays_outside_logging_session(
