@@ -143,7 +143,7 @@ uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id a
 
 单段 reset 恢复基准中的目标文本，保留其他校正；全部 reset 从可信基准恢复完整工作副本，允许工作副本缺失、JSON 损坏或时间轴误改。基准损坏时所有分段操作均拒绝，应显式重新绑定。查看、编辑和单段 reset 要求工作副本结构与时间轴合法，允许字幕陈旧或缺失。
 
-每次成功编辑或 reset 都发布新工作副本，重新计算全部校正 ID，清空字幕声明，保持 `transcription_bound`；文本无变化时也如此。stdout 为 `normalized_transcript: <absolute-path>`。命令不读取上游，不要求原音频仍存在，不生成或改写 SRT；编辑完成后手动运行 `generate_srt` 才能交付字幕。需要保留校正时，在全部 reset 前先备份。
+每次成功编辑或 reset 都发布新工作副本，重新计算全部校正 ID，清空字幕声明，保持 `transcription_bound`；文本无变化时也如此。stdout 为 `normalized_transcript: <absolute-path>`。绑定、编辑和 reset 成功提交后会清理被替换的受管快照，旧转写路径不再可用；写入或校验失败会清理本次快照；提交异常时以磁盘 job 声明确认应保留的快照，无法确认则保留两份并警告。清理边界和异常恢复见[架构](references/ARCHITECTURE.md#控制流与数据边界)与[错误处理](references/ERROR-HANDLING.md#任务恢复)。命令不读取上游，不要求原音频仍存在，不生成或改写 SRT；编辑完成后手动运行 `generate_srt` 才能交付字幕。需要保留校正时，在全部 reset 前先备份。
 
 ### 5. 删除任务
 

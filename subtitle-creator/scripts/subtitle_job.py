@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from scripts.process_logging import get_logger, warning
 from scripts.runtime_paths import RuntimePaths
 
 SCHEMA_VERSION = 2
@@ -380,35 +381,106 @@ def publish_transcript(
     normalized_bytes: bytes | None = None,
     results_dir: Path | None = None,
 ) -> Path:
+    validate_job_identity(job_path, job, results_dir=results_dir)
+    old_artifacts = job["artifacts"]
+    old_paths = (
+        [Path(old_artifacts[field]) for field in ("before_correction", "normalized_transcript")]
+        if old_artifacts is not None
+        else []
+    )
     # 新文件先写入独立目录；原子切换 job 前，旧绑定和校正始终可用。
     snapshot_dir = _create_snapshot_directory(job_path.parent)
     baseline_path = snapshot_dir / BEFORE_CORRECTION_FILENAME
     normalized_path = snapshot_dir / NORMALIZED_FILENAME
-    for path, content in (
-        (baseline_path, baseline_bytes),
-        (normalized_path, baseline_bytes if normalized_bytes is None else normalized_bytes),
-    ):
-        with path.open("wb") as target:
-            target.write(content)
-            target.flush()
-            os.fsync(target.fileno())
-    new_job = {
-        **job,
-        "status": "transcription_bound",
-        "changed_segment_ids": compare_normalized_correction(
-            read_json_object(baseline_path, decimal_numbers=True),
-            read_json_object(normalized_path, decimal_numbers=True),
-        ),
-        "artifacts": {
-            "normalized_transcript": str(normalized_path),
-            "before_correction": str(baseline_path),
-            "before_correction_sha256": hashlib.sha256(baseline_bytes).hexdigest(),
-            "subtitle": None,
-        },
-    }
-    validate_job(job_path, new_job, results_dir=results_dir)
-    atomic_write_json(job_path, new_job)
+    try:
+        for path, content in (
+            (baseline_path, baseline_bytes),
+            (normalized_path, baseline_bytes if normalized_bytes is None else normalized_bytes),
+        ):
+            with path.open("wb") as target:
+                target.write(content)
+                target.flush()
+                os.fsync(target.fileno())
+        new_job = {
+            **job,
+            "status": "transcription_bound",
+            "changed_segment_ids": compare_normalized_correction(
+                read_json_object(baseline_path, decimal_numbers=True),
+                read_json_object(normalized_path, decimal_numbers=True),
+            ),
+            "artifacts": {
+                "normalized_transcript": str(normalized_path),
+                "before_correction": str(baseline_path),
+                "before_correction_sha256": hashlib.sha256(baseline_bytes).hexdigest(),
+                "subtitle": None,
+            },
+        }
+        validate_job(job_path, new_job, results_dir=results_dir)
+    except BaseException:
+        # 清理失败只记录警告，保留原始发布异常。
+        _cleanup_transcript_files(job_path.parent, [baseline_path, normalized_path])
+        raise
+    try:
+        atomic_write_json(job_path, new_job)
+    except BaseException:
+        # 原子替换后仍可能抛异常；以磁盘声明确认引用，不能凭异常判断未提交。
+        try:
+            persisted_job = load_job(job_path)
+            validate_job_identity(job_path, persisted_job, results_dir=results_dir)
+        except (OSError, ValueError, TypeError) as error:
+            warning(
+                get_logger(__name__),
+                "cannot confirm transcript publication for %s; keeping both snapshots: %s",
+                job_path,
+                error,
+            )
+        else:
+            if persisted_job == new_job:
+                _cleanup_transcript_files(job_path.parent, old_paths)
+            elif persisted_job == job:
+                _cleanup_transcript_files(job_path.parent, [baseline_path, normalized_path])
+            else:
+                warning(
+                    get_logger(__name__),
+                    "cannot confirm transcript publication for %s; keeping both snapshots",
+                    job_path,
+                )
+        raise
+    # job 已提交；旧快照清理失败不能回滚或删除当前快照。
+    _cleanup_transcript_files(job_path.parent, old_paths)
     return normalized_path
+
+
+def _cleanup_transcript_files(job_dir: Path, paths: list[Path]) -> None:
+    directories: set[Path] = set()
+    for path in paths:
+        try:
+            directory = path.parent
+            # 只删除本任务直接子目录内的受管文件，不递归删除用户附加内容。
+            if (
+                path.name not in {BEFORE_CORRECTION_FILENAME, NORMALIZED_FILENAME}
+                or re.fullmatch(r"transcript-[0-9a-f]{32}", directory.name) is None
+                or directory.parent != job_dir.resolve()
+                or directory.is_symlink()
+                or directory.is_junction()
+                or directory.resolve().parent != job_dir.resolve()
+                or path.is_symlink()
+                or path.is_junction()
+            ):
+                continue
+            path.unlink(missing_ok=True)
+            directories.add(directory)
+        except OSError as error:
+            warning(get_logger(__name__), "cannot clean transcript artifact %s: %s", path, error)
+    for directory in directories:
+        try:
+            directory.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            warning(
+                get_logger(__name__), "cannot clean transcript directory %s: %s", directory, error
+            )
 
 
 def _create_snapshot_directory(parent: Path) -> Path:

@@ -183,7 +183,8 @@ def test_bind_always_reimports_and_invalidates_subtitle(subtitle_task, monkeypat
     assert job["changed_segment_ids"] == []
     assert subtitle_job.read_json_object(new_path)["segments"] == replacement.segments
     assert new_path.read_bytes() == Path(job["artifacts"]["before_correction"]).read_bytes()
-    assert first_path.read_bytes() == json_bytes(normalized)
+    assert not first_path.parent.exists()
+    assert list(job_path.parent.glob("transcript-*/")) == [new_path.parent]
 
 
 @pytest.mark.parametrize("bound", [False, True])
@@ -201,6 +202,7 @@ def test_bind_failure_preserves_previous_job_and_retry_succeeds(
         normalized["segments"][0]["text"] = "keep correction"
         normalized_path.write_bytes(json_bytes(normalized))
     before = job_path.read_bytes()
+    old_directories = set(job_path.parent.glob("transcript-*/"))
     old_artifacts = subtitle_job.read_json_object(job_path)["artifacts"]
     old_bytes = (
         {
@@ -229,6 +231,7 @@ def test_bind_failure_preserves_previous_job_and_retry_succeeds(
         with pytest.raises(OSError, match="fail"):
             bind_transcription.bind_transcription(job_path, manifest_path)
     assert job_path.read_bytes() == before
+    assert set(job_path.parent.glob("transcript-*/")) == old_directories
     for field, content in old_bytes.items():
         assert Path(old_artifacts[field]).read_bytes() == content
     subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path), allow_stale_derived=True)
