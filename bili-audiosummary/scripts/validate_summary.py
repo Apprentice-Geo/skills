@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from scripts.config import SKILL_ROOT
+from scripts.config import SKILL_ROOT, SUMMARY_TEMPLATE_BY_LANGUAGE
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -72,6 +72,20 @@ def language_warning(text: str, expected_language: str) -> str | None:
     )
 
 
+def _sections(text: str) -> dict[str, str]:
+    parts = re.split(r"(?m)^##\s+(.+?)\s*$", text)
+    return {parts[index]: parts[index + 1] for index in range(1, len(parts), 2)}
+
+
+def required_sections(language: str) -> list[str]:
+    template = SUMMARY_TEMPLATE_BY_LANGUAGE[language].read_text(encoding="utf-8")
+    return [
+        heading
+        for heading, body in _sections(template).items()
+        if not re.search(r"<!--\s*(?:Optional section|可选章节)", body, re.IGNORECASE)
+    ]
+
+
 def validate_summary(summary_path: Path) -> ValidationResult:
     if not summary_path.exists():
         return ValidationResult(False, [f"summary file does not exist: {summary_path}"])
@@ -83,6 +97,8 @@ def validate_summary(summary_path: Path) -> ValidationResult:
 
     errors: list[str] = []
     warnings: list[str] = []
+    if not text.strip():
+        errors.append("summary body is empty")
     if re.search(r"\{\{[^}]+\}\}", text):
         errors.append("placeholder remains")
     if "<!--" in text or "-->" in text:
@@ -91,6 +107,12 @@ def validate_summary(summary_path: Path) -> ValidationResult:
     # 模板指定语言时检查语言
     expected_language = expected_summary_language(summary_path)
     if expected_language:
+        sections = _sections(text)
+        for heading in required_sections(expected_language):
+            if heading not in sections:
+                errors.append(f"required section is missing: {heading}")
+            elif not re.sub(r"(?m)^\s*#{1,6}\s+.*$", "", sections[heading]).strip():
+                errors.append(f"required section is empty: {heading}")
         warning = language_warning(text, expected_language)
         if warning:
             warnings.append(warning)

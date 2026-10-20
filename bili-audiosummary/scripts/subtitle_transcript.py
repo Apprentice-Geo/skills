@@ -132,9 +132,6 @@ def subtitle_to_transcript(
     json_path = output_dir / f"{output_stem}.json"
     md_path = output_dir / "transcript.md"
     subtitle_language = infer_subtitle_language(subtitle_path)
-    session = LoggingSession.current()
-    if session is not None:
-        session.move_to(output_dir)
 
     payload = {
         "bvid": video_id,

@@ -488,8 +488,6 @@ def run_fetch(args: argparse.Namespace | FetchOptions) -> dict[str, Any]:
     canonical_url = build_canonical_url(info, video_id)
     paths = build_result_paths(info, options.output_dir)
     session = LoggingSession.current()
-    if session is not None:
-        session.move_to(paths["result"])
 
     metadata_path = paths["resource"] / "metadata.json"
     write_json(metadata_path, compact_metadata(info))

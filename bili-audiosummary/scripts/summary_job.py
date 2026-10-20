@@ -102,6 +102,8 @@ def validate_job(job_path: Path, payload: Any) -> dict[str, Any]:
     for key in ("bvid", "title", "url"):
         if not isinstance(video.get(key), str) or not video[key]:
             raise JobValidationError(f"video.{key} must be a non-empty string")
+    if re.fullmatch(r"BV[0-9A-Za-z]+(?:_p[1-9][0-9]*)?", video["bvid"]) is None:
+        raise JobValidationError("video.bvid must be a supported video directory name")
 
     resources = _require_mapping(payload.get("resources"), "resources")
     for key in ("fetch_manifest", "subtitle", "audio", "subtitle_skipped"):

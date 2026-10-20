@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from scripts.config import SKILL_ROOT
 from scripts.process_logging import (
@@ -13,7 +15,6 @@ from scripts.process_logging import (
     get_logger,
     result,
 )
-from scripts.run_pipeline import write_summary_prompt
 from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
 from scripts.summary_job import (
     JobValidationError,
@@ -24,7 +25,8 @@ from scripts.summary_job import (
     require_configured_job_path,
     resolve_local_path,
 )
-from scripts.transcript_output import render_markdown
+from scripts.summary_prompt import select_summary_template, write_summary_prompt
+from scripts.transcript_output import render_markdown, write_markdown_from_json
 from scripts.transcription_input import (
     TranscriptionInput,
     TranscriptionInputError,
@@ -37,15 +39,15 @@ logger = get_logger(__name__)
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Continue a Bilibili summary job with an external transcription."
+        description="Restore a summary job, import transcription, or change summary language."
     )
     parser.add_argument("job", type=Path, help="Path to summary_job.json.")
     parser.add_argument(
         "--transcription-manifest",
         type=Path,
-        required=True,
-        help="Absolute path to an audio-transcribe manifest.json.",
+        help="Import or replace the transcript from an absolute public manifest path.",
     )
+    parser.add_argument("--summary-language", choices=("zh", "en"))
     add_data_dir_argument(parser)
     return parser.parse_args(argv)
 
@@ -102,39 +104,107 @@ def _write_prompt(
     }
 
 
-def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str, Any]:
-    if not manifest_path.is_absolute():
+def _archive_summaries(paths: set[Path]) -> None:
+    archived: list[tuple[Path, Path]] = []
+    try:
+        for path in sorted(paths):
+            if path.exists():
+                backup = path.with_name(
+                    f"{path.stem}.superseded-{uuid4().hex}{path.suffix}"
+                )
+                path.rename(backup)
+                archived.append((path, backup))
+    except OSError as exc:
+        for original, backup in reversed(archived):
+            try:
+                backup.rename(original)
+            except OSError as rollback_error:
+                exc.add_note(
+                    f"Summary preserved at {backup}; rollback failed: {rollback_error}"
+                )
+        raise
+
+
+def _continue_summary_unlocked(
+    job_path: Path,
+    manifest_path: Path | None = None,
+    *,
+    summary_language: str | None = None,
+) -> dict[str, Any]:
+    if manifest_path is not None and not manifest_path.is_absolute():
         raise TranscriptionInputError(
             "--transcription-manifest must be an absolute path"
         )
     job_path = job_path.resolve()
-    manifest_path = manifest_path.resolve()
     job = load_job(job_path)
-
-    if job["status"] in {"prompt_ready", "complete"}:
-        if job["transcript"]["source"] != "audio_transcribe":
-            raise JobValidationError(
-                f"cannot attach transcription to {job['transcript']['source']} job"
-            )
-        return job
-
-    if job["status"] != "needs_transcription":
+    if summary_language not in {None, "zh", "en"}:
+        raise ValueError("summary language must be zh or en")
+    if job["status"] not in {"needs_transcription", "prompt_ready", "complete"}:
         raise JobValidationError(
             f"cannot continue summary job from status {job['status']!r}"
         )
 
-    transcription, markdown = _validated_transcript_markdown(
-        job_path, job, manifest_path
+    markdown_path = job_path.parent / "transcript.md"
+    transcript = job["transcript"]
+    markdown = None
+    if manifest_path is not None:
+        transcription, markdown = _validated_transcript_markdown(
+            job_path, job, manifest_path.resolve()
+        )
+        transcript = {"source": "audio_transcribe", "path": "transcript.md"}
+        default_language = transcription.language
+    elif transcript is None:
+        if summary_language is not None:
+            job = {
+                **job,
+                "video": {**job["video"], "summary_language": summary_language},
+            }
+            publish_job(job_path, job)
+        return job
+    else:
+        source_path = resolve_local_path(
+            job_path, transcript["path"], "transcript.path"
+        )
+        if not source_path.is_file():
+            raise JobValidationError(f"transcript does not exist: {source_path}")
+        if transcript["source"] == "bilibili_subtitle":
+            write_markdown_from_json(source_path, markdown_path)
+        # 已发布的模板语言是默认语言的唯一来源，不重新读取上游。
+        match = re.search(r"_summary_(zh|en)\.md$", job["prompt"]["summary_path"])
+        default_language = match.group(1) if match else None
+
+    language = (
+        summary_language or job["video"].get("summary_language") or default_language
     )
-    write_text_atomic(job_path.parent / "transcript.md", markdown)
-    prompt = _write_prompt(job_path, job, transcription.language)
+    template_language, _ = select_summary_template(language)
+    summary_path = (
+        job_path.parent / f"{job['video']['bvid']}_summary_{template_language}.md"
+    )
+    invalidated = manifest_path is not None or (
+        job["prompt"] is not None and job["prompt"]["summary_path"] != summary_path.name
+    )
+    if invalidated:
+        # 先撤销完成状态；状态发布失败时不移动用户总结或改变输入。
+        if job["status"] == "complete":
+            job = {**job, "status": "prompt_ready"}
+            publish_job(job_path, job)
+        paths = {summary_path}
+        if job["prompt"] is not None:
+            paths.add(
+                resolve_local_path(
+                    job_path, job["prompt"]["summary_path"], "prompt.summary_path"
+                )
+            )
+        _archive_summaries(paths)
+    if markdown is not None:
+        write_text_atomic(markdown_path, markdown)
+    if summary_language is not None:
+        job = {**job, "video": {**job["video"], "summary_language": summary_language}}
+    prompt = _write_prompt(job_path, job, default_language)
     updated = {
         **job,
-        "status": "prompt_ready",
-        "transcript": {
-            "source": "audio_transcribe",
-            "path": "transcript.md",
-        },
+        "status": "prompt_ready" if invalidated else job["status"],
+        "transcript": transcript,
         "prompt": prompt,
         "error": None,
     }
@@ -143,9 +213,13 @@ def _continue_summary_unlocked(job_path: Path, manifest_path: Path) -> dict[str,
 
 
 def continue_summary(
-    job_path: Path, manifest_path: Path, *, results_dir: Path | None = None
+    job_path: Path,
+    manifest_path: Path | None = None,
+    *,
+    summary_language: str | None = None,
+    results_dir: Path | None = None,
 ) -> dict[str, Any]:
-    if not manifest_path.is_absolute():
+    if manifest_path is not None and not manifest_path.is_absolute():
         raise TranscriptionInputError(
             "--transcription-manifest must be an absolute path"
         )
@@ -154,7 +228,9 @@ def continue_summary(
     )
     job_path = job_path.resolve()
     with job_lock(job_path):
-        return _continue_summary_unlocked(job_path, manifest_path)
+        return _continue_summary_unlocked(
+            job_path, manifest_path, summary_language=summary_language
+        )
 
 
 @filesystem_cli
@@ -166,9 +242,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             resolved_job_path = args.job.resolve()
             job = continue_summary(
-                args.job, args.transcription_manifest, results_dir=paths.results_dir
+                args.job,
+                args.transcription_manifest,
+                summary_language=args.summary_language,
+                results_dir=paths.results_dir,
             )
-            session.move_to(resolved_job_path.parent)
         except (OSError, ValueError) as exc:
             session.report_failure(exc)
             return 1

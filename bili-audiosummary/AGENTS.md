@@ -4,7 +4,7 @@
 
 `bili-audiosummary` 是面向 Bilibili 视频的音频总结 Agent Skill。它负责获取 Bilibili 资源、优先处理原生字幕、维护可恢复的 `summary_job.json`、生成总结 prompt 并校验最终总结。
 
-本项目不拥有 ASR 模型、Provider、Execution Policy、转写缓存或 benchmark。需要转写时，Agent 把本地音频路径交给独立 `audio-transcribe` Skill，再把其公开 manifest 绝对路径传回本项目的继续命令。本项目不得导入另一个 Skill 的源码，但可以依赖固定版本的公开 `audio-transcribe-contract` 包。
+本项目不拥有 ASR 模型、Provider、Execution Policy、转写缓存或 benchmark。需要转写时，Agent 把本地音频路径交给独立 `audio-transcribe` Skill，再把其公开 manifest 绝对路径传回本项目的继续命令。本项目不得导入另一个 Skill 的源码，但可以依赖独立的 `audio-transcribe-contract` 合同包及其公共 API。当前通过 `../audio-transcribe/packages/audio-transcribe-contract` editable 安装，三个音频 Skill 应保留同一 checkout 布局；独立分发前须提供合同包来源。
 
 主要入口与文档职责如下：
 

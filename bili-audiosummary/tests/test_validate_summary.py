@@ -3,6 +3,13 @@ from pathlib import Path
 import scripts.validate_summary as validate_summary
 
 
+def valid_summary(language: str, body: str) -> str:
+    return "# Summary\n\n" + "\n\n".join(
+        f"## {heading}\n\n{body}"
+        for heading in validate_summary.required_sections(language)
+    )
+
+
 def test_validate_summary_rejects_placeholders(workspace_tmp_path: Path) -> None:
     summary = workspace_tmp_path / "summary.md"
     summary.write_text("# Summary\n\n{{title}}\n", encoding="utf-8")
@@ -36,73 +43,40 @@ def test_validate_summary_accepts_matching_template_languages(
 ) -> None:
     chinese_summary = workspace_tmp_path / "BVTEST_summary_zh.md"
     english_summary = workspace_tmp_path / "BVTEST_summary_en.md"
-    chinese_summary.write_text("# 视频总结\n\n这是完整内容。\n", encoding="utf-8")
+    chinese_summary.write_text(valid_summary("zh", "这是完整内容。"), encoding="utf-8")
     english_summary.write_text(
-        "# Video Summary\n\nThis is complete.\n", encoding="utf-8"
+        valid_summary("en", "This is complete."), encoding="utf-8"
     )
 
     assert validate_summary.validate_summary(chinese_summary).ok
     assert validate_summary.validate_summary(english_summary).ok
 
 
-def test_validate_summary_accepts_language_ratio_at_eighty_percent(
-    workspace_tmp_path: Path,
-) -> None:
-    chinese_summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    english_summary = workspace_tmp_path / "BVTEST_summary_en.md"
-    chinese_summary.write_text("中文内容完全正确ab", encoding="utf-8")
-    english_summary.write_text("abcdefgh中文", encoding="utf-8")
-
-    assert validate_summary.validate_summary(chinese_summary).ok
-    assert validate_summary.validate_summary(english_summary).ok
+def test_language_warning_at_threshold() -> None:
+    assert validate_summary.language_warning("中文内容完全正确ab", "zh") is None
+    assert validate_summary.language_warning("abcdefgh中文", "en") is None
 
 
-def test_validate_summary_warns_language_ratio_below_eighty_percent(
-    workspace_tmp_path: Path,
-) -> None:
-    summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text("中文内容完全正确abc", encoding="utf-8")
-
-    result = validate_summary.validate_summary(summary)
-
-    assert result.ok
-    assert result.errors == []
-    assert result.warnings == [
+def test_language_warning_below_threshold() -> None:
+    assert validate_summary.language_warning("中文内容完全正确abc", "zh") == (
         "summary language does not match the zh template: Chinese characters are "
         "72.7% of the language characters; rewrite the summary in Chinese"
-    ]
-
-
-def test_validate_summary_ignores_non_prose_content_for_language_ratio(
-    workspace_tmp_path: Path,
-) -> None:
-    summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text(
-        "# 中文总结\n\n"
-        "这是完整内容。\n\n"
-        "[来源](https://example.com/english/path)\n\n"
-        "`english_code`\n\n"
-        "```python\nprint('english code')\n```\n",
-        encoding="utf-8",
     )
 
-    assert validate_summary.validate_summary(summary).ok
+
+def test_language_warning_ignores_code_and_links() -> None:
+    assert (
+        validate_summary.language_warning(
+            "这是完整内容。 [来源](https://example.com/english/path) "
+            "`english_code`\n```python\nprint('english code')\n```",
+            "zh",
+        )
+        is None
+    )
 
 
-def test_validate_summary_warns_known_template_without_language_characters(
-    workspace_tmp_path: Path,
-) -> None:
-    summary = workspace_tmp_path / "BVTEST_summary_en.md"
-    summary.write_text("# 123\n\n- 456\n", encoding="utf-8")
-
-    result = validate_summary.validate_summary(summary)
-
-    assert result.ok
-    assert result.errors == []
-    assert result.warnings == [
-        "summary language does not match the en template: English letters are "
-        "0.0% of the language characters; rewrite the summary in English"
-    ]
+def test_language_warning_without_characters() -> None:
+    assert "0.0%" in (validate_summary.language_warning("123", "en") or "")
 
 
 def test_validate_summary_keeps_language_check_optional_for_other_filenames(
@@ -155,7 +129,7 @@ def test_validate_summary_reports_language_warning_separately_from_errors(
 
     result = validate_summary.validate_summary(summary)
 
-    assert result.errors == [
+    assert result.errors[:2] == [
         "placeholder remains",
         "template comment remains",
     ]
@@ -209,17 +183,14 @@ def test_main_warns_about_template_language_without_failing(
 ) -> None:
     monkeypatch.setattr(validate_summary, "SKILL_ROOT", workspace_tmp_path)
     summary = workspace_tmp_path / "BVTEST_summary_en.md"
-    summary.write_text("# 视频总结\n\n这是完整内容。\n", encoding="utf-8")
+    summary.write_text(valid_summary("en", "这是完整内容。" * 100), encoding="utf-8")
 
     exit_code = validate_summary.main([str(summary)])
 
     assert exit_code == 0
     terminal = capsys.readouterr()
     assert terminal.out == "Summary validation passed with warnings:\n"
-    assert terminal.err == (
-        "- summary language does not match the en template: English letters are "
-        "0.0% of the language characters; rewrite the summary in English\n"
-    )
+    assert terminal.err.startswith("- summary language does not match the en template:")
 
 
 def test_main_logs_runtime_read_error_without_terminal_traceback(
@@ -245,3 +216,24 @@ def test_main_logs_runtime_read_error_without_terminal_traceback(
     log_text = logs[0].read_text(encoding="utf-8")
     assert "Traceback (most recent call last)" in log_text
     assert "PermissionError: read denied" in log_text
+
+
+def test_validation_rejects_empty_body(workspace_tmp_path: Path) -> None:
+    summary = workspace_tmp_path / "summary.md"
+    summary.write_text("  \n", encoding="utf-8")
+    assert "summary body is empty" in validate_summary.validate_summary(summary).errors
+
+
+def test_validation_requires_filled_template_sections(workspace_tmp_path: Path) -> None:
+    summary = workspace_tmp_path / "BVTEST_summary_zh.md"
+    summary.write_text("# 标题\n\n## 一句话总结\n\n", encoding="utf-8")
+    result = validate_summary.validate_summary(summary)
+    assert "required section is empty: 一句话总结" in result.errors
+    assert "required section is missing: 核心要点" in result.errors
+
+
+def test_optional_sections_are_optional(workspace_tmp_path: Path) -> None:
+    summary = workspace_tmp_path / "BVTEST_summary_zh.md"
+    summary.write_text(valid_summary("zh", "有效总结内容。"), encoding="utf-8")
+    assert validate_summary.validate_summary(summary).ok
+    assert "广告内容" not in validate_summary.required_sections("zh")

@@ -105,7 +105,7 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
     prompt = (result["job_path"].parent / job["prompt"]["path"]).read_text(
         encoding="utf-8"
     )
-    assert "[Read transcript data](transcript.md)" in prompt
+    assert "[读取转写数据](transcript.md)" in prompt
     assert "summary_job.json" not in prompt
     assert "fetch_manifest.json" not in prompt
     assert "_transcript.json" not in prompt
@@ -293,7 +293,7 @@ def test_fetch_failure_does_not_persist_sensitive_exception_text(
 
 
 @pytest.mark.parametrize("status", ["prompt_ready", "complete"])
-def test_prepare_does_not_overwrite_existing_ready_job(
+def test_prepare_restores_existing_ready_job_without_refetch(
     workspace_tmp_path: Path,
     mocker,
     status: str,
@@ -302,7 +302,13 @@ def test_prepare_does_not_overwrite_existing_ready_job(
     job_path = fetch_result["paths"]["result"] / "summary_job.json"
     transcript_path = job_path.parent / "BVTEST_transcript.json"
     prompt_path = job_path.parent / "BVTEST_summary_prompt.md"
-    write_json(transcript_path, {"segments": [{"text": "keep"}]})
+    write_json(
+        transcript_path,
+        {
+            "language": "zh-Hans",
+            "segments": [{"id": 0, "start": 0.0, "end": 1.0, "text": "keep"}],
+        },
+    )
     prompt_path.write_text("keep", encoding="utf-8")
     existing = {
         "schema_version": 2,
@@ -333,11 +339,11 @@ def test_prepare_does_not_overwrite_existing_ready_job(
         "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
     )
 
-    with pytest.raises(RuntimeError, match=f"existing {status} job"):
-        run_pipeline.run_pipeline(make_args())
+    result = run_pipeline.run_pipeline(make_args())
 
-    assert read_json(job_path) == existing
-    assert prompt_path.read_text(encoding="utf-8") == "keep"
+    assert result["job"]["status"] == status
+    assert "keep" in (job_path.parent / "transcript.md").read_text(encoding="utf-8")
+    run_pipeline.fetch_audio.run_fetch.assert_not_called()
 
 
 @pytest.mark.parametrize("status", ["prompt_ready", "complete"])
@@ -409,3 +415,36 @@ def test_parse_args_has_no_asr_model_options(monkeypatch) -> None:
 )
 def test_format_duration(seconds: float, expected: str) -> None:
     assert run_pipeline.format_duration(seconds) == expected
+
+
+@pytest.mark.parametrize("conflict", ["language", "skip_subtitles"])
+def test_existing_subtitle_job_rejects_conflicting_input_selection(
+    workspace_tmp_path: Path,
+    mocker,
+    conflict: str,
+) -> None:
+    fetch = make_fetch_result(
+        workspace_tmp_path,
+        subtitle_text="1\n00:00:00,000 --> 00:00:01,000\n现有字幕。\n",
+    )
+    downloader = mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch
+    )
+    first = run_pipeline.run_pipeline(make_args())
+    before = read_json(first["job_path"])
+    before_transcript = (first["job_path"].parent / "transcript.md").read_bytes()
+    downloader.reset_mock()
+    arguments = make_args()
+    if conflict == "language":
+        arguments.language = "en"
+    else:
+        arguments.skip_subtitles = True
+
+    with pytest.raises(ValueError, match="Existing.*--transcription-manifest"):
+        run_pipeline.run_pipeline(arguments)
+
+    downloader.assert_not_called()
+    assert read_json(first["job_path"]) == before
+    assert (
+        first["job_path"].parent / "transcript.md"
+    ).read_bytes() == before_transcript
