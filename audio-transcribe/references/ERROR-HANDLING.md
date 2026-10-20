@@ -4,13 +4,13 @@
 
 ## 运行目录与写入失败
 
-`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `AUDIO_TRANSCRIBE_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。活动日志确定可信 job 后仍可移入 job，删除日志保留在 cache 中。
+`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `AUDIO_TRANSCRIBE_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。所有 CLI 日志始终留在 `.cache/logs/`，不搬迁到结果目录。
 
 所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
 
 创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
 
-依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。日志移动失败时重新打开原日志并继续；原日志或移动后的日志无法重新打开时停止，报告真实路径和系统错误，不声称活动日志可用。检查器关键前置错误仍使用原有退出码。
+依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。检查器关键前置错误仍使用原有退出码。
 
 数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
 
@@ -33,7 +33,8 @@ Windows 下的本地快照、发布和下载暂存目录使用随机名称加独
 
 ## Setup 与依赖
 
-- 修复顺序与次数遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。使用 Python 3.12 和 `uv`；已有环境配置授权可执行适用同步，不得据此删除或替换现有 `.venv`。
+- 使用 Python 3.12 和 `uv`，先运行只读检查器。已有环境配置授权时，对适用依赖失败执行一次对应 setup 并复查；模型缺失或安装校验失败时只安装所需模型并复查，不重复同步环境。复查仍失败则报告并停止自动修复。不得据此删除或替换现有 `.venv`。
+- 三个音频 Skill 从同一 checkout 使用本地合同包 0.4.0，依赖同步会安装 editable 包。保留相对目录关系；独立分发需要同时携带合同源码或先发布合同包并更新依赖来源。
 - 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat --environment cpu|qwen3-asr`。默认 `cpu` 同步 CPU extra 并验证 `torch.version.cuda is None`；`qwen3-asr` 直接同步同名互斥 extra，复用模型安装器的连续导入与 CUDA 检查，不下载模型。Python bootstrap 接受相同 `--environment`。开发同步保留当前 Provider 的 extra 并安装开发依赖，禁止 `--all-extras`。
 - 必需依赖缺失、已安装包不一致或所请求 Qwen 使用 CPU build，适用对应环境同步；可选模块误触发或其他导入兼容异常保留原始原因，不盲目重装。CUDA build 已正确但 GPU runtime 不可用时诊断 GPU/driver，不进入依赖重装。项目文件缺失、Python 版本错误、子进程启动失败、权限或日志/报告写入失败分别诊断，不作为缺包处理。
 - `cpu` 与 `qwen3-asr` extra 互斥；切换环境时只指定目标 extra，禁止同时启用，也禁止使用 `--all-extras`。
@@ -128,7 +129,7 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 - 保留由标点驱动的分段行为。如果句子输出看起来有误，检查 alignment item 和 segmentation 规则，不得手动编辑已发布的 `transcript.json`。
 - alignment 验证失败时，不得发布 `manifest.json`。
 - 如果文本规范化失败，或规范化后的文本与 item 不再对齐，停止执行，不得回退到未规范化的公共文本。
-- 除[架构说明](ARCHITECTURE.md#alignment-与验证流程)定义的 Qwen adapter 尾部误差处理和合法时间的浮点偏移边界处理外，不得裁剪超出范围的 end time；不得把格式错误的 workspace/公共字段强制转换为字符串或浮点数。
+- 除[架构说明](ARCHITECTURE.md#alignment-与规范化)定义的 Qwen adapter 尾部误差处理和合法时间的浮点偏移边界处理外，不得裁剪超出范围的 end time；不得把格式错误的 workspace/公共字段强制转换为字符串或浮点数。
 
 ## 公共 Artifact 验证
 

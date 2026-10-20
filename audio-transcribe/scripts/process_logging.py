@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import warnings
@@ -66,7 +65,6 @@ class CapturedLoggerState:
     level: int
     propagate: bool
     disabled: bool
-    forwarding_handler: ForwardingHandler
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
@@ -129,9 +127,7 @@ class LoggingSession:
             level=self._logger.level,
             propagate=self._logger.propagate,
             disabled=self._logger.disabled,
-            forwarding_handler=ForwardingHandler(self._logger),
         )
-        self._previous_logger_state.forwarding_handler.close()
         self._file_handler = file_handler
         self._started = True
         try:
@@ -163,7 +159,6 @@ class LoggingSession:
             level=external_logger.level,
             propagate=external_logger.propagate,
             disabled=external_logger.disabled,
-            forwarding_handler=forwarding_handler,
         )
         external_logger.handlers[:] = [forwarding_handler]
         external_logger.propagate = False
@@ -186,52 +181,6 @@ class LoggingSession:
         ).rstrip()
         logging.getLogger("py.warnings").warning(warning_text)
 
-    def move_to(self, directory: Path) -> Path:
-        if not self._started:
-            self.start()
-
-        target_path = Path(directory) / self.log_path.name
-        if target_path == self.log_path:
-            return self.log_path
-
-        source_path = self.log_path
-        file_handler = self._file_handler
-        if file_handler is not None:
-            # 把缓冲区里的日志强制写入磁盘，避免还有日志停留在内存里没落盘
-            file_handler.flush()
-            # 关闭文件句柄。因为 FileHandler 内部一直持有目标日志文件，如果不关闭，文件可能仍然被占用
-            file_handler.close()
-            # 把这个 FileHandler 从 logger 上移除。否则 logger 后续还会尝试往这个已经关闭的 handler 写日志。
-            self._logger.removeHandler(file_handler)
-            self._file_handler = None
-
-        try:
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(source_path), str(target_path))
-        except OSError:
-            try:
-                self._file_handler = self._make_file_handler(source_path)
-            except OSError as exc:
-                raise FilesystemFailure(
-                    "reopen original log", source_path, exc
-                ) from exc
-            self._logger.addHandler(self._file_handler)
-            get_logger(__name__).warning(
-                "Unable to move log to %s; continuing with %s",
-                target_path,
-                source_path,
-                exc_info=True,
-            )
-            return source_path
-
-        self.log_path = target_path
-        try:
-            self._file_handler = self._make_file_handler(target_path)
-        except OSError as exc:
-            raise FilesystemFailure("reopen moved log", target_path, exc) from exc
-        self._logger.addHandler(self._file_handler)
-        return target_path
-
     def report_failure(self, exc: BaseException) -> None:
         if self._file_handler is None or self._file_handler.stream is None:
             print(f"Error: {exc}\nLog unavailable: {self.log_path}", file=sys.stderr)
@@ -249,11 +198,12 @@ class LoggingSession:
 
         for name, state in reversed(list(self._captured_loggers.items())):
             external_logger = logging.getLogger(name)
+            for handler in external_logger.handlers:
+                handler.close()
             external_logger.handlers[:] = state.handlers
             external_logger.setLevel(state.level)
             external_logger.propagate = state.propagate
             external_logger.disabled = state.disabled
-            state.forwarding_handler.close()
         self._captured_loggers.clear()
 
         for handler in (self._file_handler, self._stream_handler):
@@ -350,10 +300,6 @@ class ProcessLogger:
 
         result = ProcessResult(completed.returncode, output)
         if check and completed.returncode != 0:
-            print(f"Error: {description} failed.", file=sys.stderr)
-            if output:
-                print(output.rstrip(), file=sys.stderr)
-            print(f"Full log: {self.log_path}", file=sys.stderr)
             raise SetupError(f"{description} failed. See {self.log_path}")
         return result
 

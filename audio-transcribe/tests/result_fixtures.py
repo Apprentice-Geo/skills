@@ -68,6 +68,7 @@ def resolved_request(
         "planning_parameters": {
             "min_chunk_samples": 480000,
             "max_chunk_samples": 2880000,
+            "boundary_strategy": "minimum-hard-cuts-minimax-backtrack",
         },
         "text_normalization": {
             "unicode_normalization": "NFKC",

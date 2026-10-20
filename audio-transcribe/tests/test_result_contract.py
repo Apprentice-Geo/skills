@@ -8,10 +8,11 @@ import shutil
 import subprocess
 from dataclasses import FrozenInstanceError
 from pathlib import Path
-from typing import Any, Callable, Literal, assert_type, get_type_hints
+from typing import Any, Callable, assert_type, get_type_hints
 
 import pytest
 from audio_transcribe_contract import (
+    PUBLIC_SCHEMA_VERSION,
     ResultManifest,
     ResultValidationError,
     Transcript,
@@ -23,10 +24,7 @@ from result_fixtures import resolved_request
 
 
 def _assert_public_result_types(result: TranscriptionResult) -> None:
-    assert_type(
-        result.manifest["request"]["provider"],
-        Literal["faster-whisper", "qwen3-asr"],
-    )
+    assert_type(result.manifest["request"]["provider"], str)
     assert_type(result.transcript["segments"][0]["text"], str)
     assert_type(
         result.transcript["items"][0]["probability"],
@@ -58,7 +56,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     request = {"config_digest": _canonical_sha256(request), **request}
     duration = 1.0
     transcript = {
-        "schema_version": 3,
+        "schema_version": PUBLIC_SCHEMA_VERSION,
         "audio_id": "a" * 64,
         "config_digest": request["config_digest"],
         "provider": provider,
@@ -81,7 +79,7 @@ def _write_result(root: Path, provider: str = "faster-whisper") -> Path:
     transcript_path = root / "transcript.json"
     _write_json(transcript_path, transcript)
     manifest = {
-        "schema_version": 3,
+        "schema_version": PUBLIC_SCHEMA_VERSION,
         "status": "complete",
         "audio": {
             "id": "a" * 64,
@@ -124,38 +122,13 @@ def _rewrite_artifact(
 
 
 @pytest.mark.parametrize(
-    ("provider", "node"),
-    [
-        *[
-            ("faster-whisper", node)
-            for node in (
-                "",
-                "audio",
-                "artifacts",
-                "artifact_sha256",
-                "request",
-                "request.vad_parameters",
-                "request.planning_parameters",
-                "request.text_normalization",
-                "request.alignment_policy",
-            )
-        ],
-        *[
-            (provider, node)
-            for provider in ("faster-whisper", "qwen3-asr")
-            for node in (
-                "request.provider_identity",
-                "request.provider_identity.model",
-                "request.execution_policy",
-            )
-        ],
-    ],
+    "node", ["", "audio", "artifacts", "artifact_sha256", "request"]
 )
 @pytest.mark.parametrize("mutation", ["unknown", "missing", "wrong_type"])
 def test_manifest_objects_are_recursively_strict(
-    workspace_tmp_path: Path, provider: str, node: str, mutation: str
+    workspace_tmp_path: Path, node: str, mutation: str
 ) -> None:
-    path = _write_result(workspace_tmp_path / "result", provider)
+    path = _write_result(workspace_tmp_path / "result")
     manifest = json.loads(path.read_text(encoding="utf-8"))
     target = manifest
     for key in node.split(".") if node else []:
@@ -204,41 +177,20 @@ def test_transcript_objects_are_recursively_strict(
         assert "unexpected" in str(error.value)
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("execution_policy", resolved_request("qwen3-asr")["execution_policy"]),
-        ("provider_identity", resolved_request("qwen3-asr")["provider_identity"]),
-    ],
-)
-def test_resolved_request_rejects_mixed_provider_configuration(
-    workspace_tmp_path: Path, field: str, value: Any
-) -> None:
-    path = _write_result(workspace_tmp_path / "result")
-
-    def mutate(manifest):
-        request = manifest["request"]
-        request[field] = value
-        request["config_digest"] = _canonical_sha256(
-            {key: item for key, item in request.items() if key != "config_digest"}
-        )
-
-    _rewrite_manifest(path, mutate)
-    with pytest.raises(ResultValidationError):
-        load_manifest(path)
-
-
 @pytest.mark.parametrize("target", ["manifest", "transcript"])
+@pytest.mark.parametrize("version", [1, 3])
 def test_unsupported_public_schema_is_rejected_even_with_valid_digests(
-    workspace_tmp_path: Path, target: str
+    workspace_tmp_path: Path, target: str, version: int
 ) -> None:
     path = _write_result(workspace_tmp_path / "result")
     if target == "transcript":
         _rewrite_artifact(
-            path, "transcript", lambda value: value.update(schema_version=1)
+            path, "transcript", lambda value: value.update(schema_version=version)
         )
     else:
-        _rewrite_manifest(path, lambda manifest: manifest.update(schema_version=1))
+        _rewrite_manifest(
+            path, lambda manifest: manifest.update(schema_version=version)
+        )
     with pytest.raises(ResultValidationError, match="schema_version"):
         load_result(path)
 
@@ -278,7 +230,7 @@ def test_public_typed_dict_key_boundaries() -> None:
     assert request.__optional_keys__ == set()
 
 
-@pytest.mark.parametrize("provider", ["faster-whisper", "qwen3-asr"])
+@pytest.mark.parametrize("provider", ["faster-whisper", "qwen3-asr", "future-provider"])
 def test_load_result_returns_complete_snapshot(
     workspace_tmp_path: Path, provider: str
 ) -> None:
@@ -427,12 +379,9 @@ def test_manifest_must_be_a_file(workspace_tmp_path: Path) -> None:
         lambda value: value["audio"].__setitem__("size", True),
         lambda value: value["audio"].__setitem__("size", 10**1000),
         lambda value: value["audio"].__setitem__("duration", math.inf),
-        lambda value: value["request"].__setitem__("provider", "qwen3"),
+        lambda value: value["request"].__setitem__("provider", ""),
         lambda value: value["request"].__setitem__("language", ""),
         lambda value: value["request"].pop("alignment_policy"),
-        lambda value: value["request"]["alignment_policy"].__setitem__(
-            "ordering", "relaxed"
-        ),
         lambda value: value["request"].__setitem__("config_digest", "b" * 64),
         lambda value: value["artifact_sha256"].__setitem__("transcript", "0" * 63),
     ],
@@ -447,41 +396,20 @@ def test_manifest_schema_and_identity_are_strict(
         load_result(manifest_path)
 
 
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        lambda request: request["alignment_policy"].__setitem__(
-            "timestamp_resolution_ms", 2
-        ),
-        lambda request: request["alignment_policy"].__setitem__(
-            "timestamp_resolution_ms", False
-        ),
-        lambda request: request["alignment_policy"].__setitem__(
-            "zero_duration", "keep"
-        ),
-    ],
+PROVENANCE_FIELDS = (
+    "provider_identity",
+    "execution_policy",
+    "vad_parameters",
+    "planning_parameters",
+    "alignment_policy",
+    "text_normalization",
 )
-def test_alignment_policy_is_required_and_exact(
-    workspace_tmp_path: Path, mutate: Callable[[dict[str, Any]], None]
-) -> None:
-    manifest_path = _write_result(workspace_tmp_path / "alignment-policy")
-    _rewrite_manifest(
-        manifest_path,
-        lambda manifest: mutate(manifest["request"]),
-    )
-
-    with pytest.raises(ResultValidationError, match="alignment_policy"):
-        load_result(manifest_path)
 
 
-@pytest.mark.parametrize("resolution", [0, 1])
-def test_loader_accepts_current_and_legacy_timestamp_policies(
-    workspace_tmp_path: Path, resolution: int
-) -> None:
-    path = _write_result(workspace_tmp_path / "result")
+def _rewrite_request(path: Path, mutate: Callable[[dict[str, Any]], None]) -> None:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     request = manifest["request"]
-    request["alignment_policy"]["timestamp_resolution_ms"] = resolution
+    mutate(request)
     request["config_digest"] = _canonical_sha256(
         {key: value for key, value in request.items() if key != "config_digest"}
     )
@@ -491,12 +419,45 @@ def test_loader_accepts_current_and_legacy_timestamp_policies(
         "transcript",
         lambda transcript: transcript.update(config_digest=request["config_digest"]),
     )
-    assert (
-        load_result(path).manifest["request"]["alignment_policy"][
-            "timestamp_resolution_ms"
-        ]
-        == resolution
-    )
+
+
+@pytest.mark.parametrize("field", PROVENANCE_FIELDS)
+@pytest.mark.parametrize(
+    "record", [{}, {"new": [None, True, 2, 0.25, "x", {"nested": []}]}]
+)
+def test_source_configuration_is_opaque_finite_json(
+    workspace_tmp_path: Path, field: str, record: dict[str, Any]
+) -> None:
+    path = _write_result(workspace_tmp_path / "result", "future-provider")
+    _rewrite_request(path, lambda request: request.__setitem__(field, record))
+    assert load_result(path).manifest["request"][field] == record
+
+
+@pytest.mark.parametrize("field", PROVENANCE_FIELDS)
+@pytest.mark.parametrize("invalid", [None, [], "invalid"])
+def test_source_configuration_must_be_an_object(
+    workspace_tmp_path: Path, field: str, invalid: Any
+) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+    _rewrite_request(path, lambda request: request.__setitem__(field, invalid))
+    with pytest.raises(ResultValidationError, match=field):
+        load_result(path)
+
+
+@pytest.mark.parametrize(
+    "invalid_json", ["NaN", "Infinity", "1e400", '{"x": 1, "x": 2}']
+)
+def test_source_configuration_rejects_nested_invalid_json(
+    workspace_tmp_path: Path, invalid_json: str
+) -> None:
+    path = _write_result(workspace_tmp_path / "result")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["request"]["provider_identity"] = {"nested": ["INVALID_JSON_PLACEHOLDER"]}
+    raw = json.dumps(manifest).replace('"INVALID_JSON_PLACEHOLDER"', invalid_json)
+    path.write_text(raw, encoding="utf-8")
+    with pytest.raises(ResultValidationError) as error:
+        load_result(path)
+    assert "digest" not in str(error.value)
 
 
 @pytest.mark.parametrize("name", ["transcript"])
@@ -648,7 +609,9 @@ def test_raw_timestamp_contract(
         load_result(manifest_path)
 
 
-def test_qwen_probability_must_be_null(workspace_tmp_path: Path) -> None:
+def test_public_probability_has_no_provider_specific_rule(
+    workspace_tmp_path: Path,
+) -> None:
     manifest_path = _write_result(workspace_tmp_path / "qwen", "qwen3-asr")
     _rewrite_artifact(
         manifest_path,
@@ -656,8 +619,7 @@ def test_qwen_probability_must_be_null(workspace_tmp_path: Path) -> None:
         lambda raw: raw["items"][0].__setitem__("probability", 0.5),
     )
 
-    with pytest.raises(ResultValidationError, match="probability"):
-        load_result(manifest_path)
+    assert load_result(manifest_path).transcript["items"][0]["probability"] == 0.5
 
 
 def test_failure_does_not_modify_artifacts_or_leak_transcript(

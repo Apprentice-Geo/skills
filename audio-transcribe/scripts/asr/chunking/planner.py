@@ -22,6 +22,17 @@ CountStrategy = Literal["divisible", "full"]
 class PlanningParameters:
     min_chunk_samples: int = MIN_CHUNK_SAMPLES
     max_chunk_samples: int = MAX_CHUNK_SAMPLES
+    boundary_strategy: str = "minimum-hard-cuts-minimax-backtrack"
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.min_chunk_samples) is not int
+            or type(self.max_chunk_samples) is not int
+            or not 0 < self.min_chunk_samples <= self.max_chunk_samples
+        ):
+            raise ValueError("Invalid chunk duration bounds.")
+        if self.boundary_strategy != "minimum-hard-cuts-minimax-backtrack":
+            raise ValueError("Unsupported chunk boundary strategy.")
 
     @property
     def min_chunk_seconds(self) -> float:
@@ -200,17 +211,10 @@ def plan_chunks(
     for count in candidates:
         layouts = plan_fixed_chunk_count(sample_count, count, intervals, parameters)
         loads = tuple(item.estimated_speech_samples for item in layouts)
-        mean = sum(loads) / len(loads)
-        msre = (
-            sum(((value - mean) / mean) ** 2 for value in loads) / len(loads)
-            if mean
-            else 0.0
-        )
         rank = (
             sum(item.end_boundary == BOUNDARY_HARD for item in layouts),
             math.ceil(count / group_size),
             max(loads),
-            round(msre, 15),
             tuple(item.start_sample for item in layouts) + (layouts[-1].end_sample,),
         )
         ranked.append((rank, layouts))

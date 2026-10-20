@@ -28,13 +28,13 @@ def _complete_boundary_oracle(
     min_chunk_samples: int,
     max_chunk_samples: int,
     speech_intervals: list[tuple[int, int]],
-) -> tuple[tuple[int, ...], tuple[int, int, int, tuple[int, ...]]]:
+) -> tuple[int, int]:
     speech_mask = [False] * duration_samples
     for start, end in speech_intervals:
         for sample in range(start, end):
             speech_mask[sample] = True
 
-    candidates: list[tuple[int, int, int, tuple[int, ...]]] = []
+    candidates: list[tuple[int, int]] = []
     for internal in combinations(range(1, duration_samples), chunk_count - 1):
         boundaries = (0, *internal, duration_samples)
         durations = tuple(end - start for start, end in pairwise(boundaries))
@@ -48,17 +48,9 @@ def _complete_boundary_oracle(
         hard_cut_count = sum(
             speech_mask[boundary - 1] and speech_mask[boundary] for boundary in internal
         )
-        candidates.append(
-            (
-                hard_cut_count,
-                max(loads),
-                sum(load * load for load in loads),
-                boundaries,
-            )
-        )
+        candidates.append((hard_cut_count, max(loads)))
 
-    selected = min(candidates)
-    return selected[3], selected
+    return min(candidates)
 
 
 def test_decode_normalizes_once_to_mono_float32(
@@ -157,18 +149,6 @@ def test_planner_rejects_non_contiguous_or_oversized_layouts() -> None:
         plan_fixed_chunk_count(MAX_CHUNK_SAMPLES + 1, 1, [], parameters)
 
 
-def test_boundary_optimizer_uses_earliest_tuple_after_equal_costs() -> None:
-    result = optimize_chunk_boundaries(
-        duration_samples=48,
-        chunk_count=7,
-        min_chunk_samples=1,
-        max_chunk_samples=7,
-        speech_intervals=[(10, 16), (22, 47), (47, 48)],
-    )
-
-    assert result.boundaries == (0, 6, 13, 20, 27, 34, 41, 48)
-
-
 @pytest.mark.parametrize(
     (
         "duration_samples",
@@ -193,7 +173,7 @@ def test_boundary_optimizer_matches_complete_combination_oracle(
     max_chunk_samples: int,
     speech_intervals: list[tuple[int, int]],
 ) -> None:
-    expected_boundaries, expected_score = _complete_boundary_oracle(
+    expected_score = _complete_boundary_oracle(
         duration_samples=duration_samples,
         chunk_count=chunk_count,
         min_chunk_samples=min_chunk_samples,
@@ -209,15 +189,34 @@ def test_boundary_optimizer_matches_complete_combination_oracle(
         speech_intervals=speech_intervals,
     )
 
-    assert result.boundaries == expected_boundaries
-    assert result.hard_cut_count == expected_score[0]
-    assert result.max_speech_load == expected_score[1]
-    assert sum(load * load for load in result.speech_loads) == expected_score[2]
-    total_speech = sum(result.speech_loads)
-    expected_msre = (
-        (chunk_count * expected_score[2] - total_speech * total_speech)
-        / (total_speech * total_speech)
-        if total_speech
-        else 0.0
+    assert (result.hard_cut_count, result.max_speech_load) == expected_score
+    assert result.boundaries[0] == 0
+    assert result.boundaries[-1] == duration_samples
+    assert all(
+        min_chunk_samples <= end - start <= max_chunk_samples
+        for start, end in pairwise(result.boundaries)
     )
-    assert result.speech_load_msre == pytest.approx(expected_msre)
+    assert len(result.speech_loads) == chunk_count
+    assert result == optimize_chunk_boundaries(
+        duration_samples=duration_samples,
+        chunk_count=chunk_count,
+        min_chunk_samples=min_chunk_samples,
+        max_chunk_samples=max_chunk_samples,
+        speech_intervals=speech_intervals,
+    )
+
+
+def test_boundary_optimizer_is_exact_for_all_eight_sample_speech_masks() -> None:
+    for mask in range(1 << 8):
+        # 单样本区间同时覆盖相邻语音合并与多段静音的边界情形。
+        speech_intervals = [
+            (index, index + 1) for index in range(8) if mask >> index & 1
+        ]
+        for chunk_count in (2, 3):
+            test_boundary_optimizer_matches_complete_combination_oracle(
+                duration_samples=8,
+                chunk_count=chunk_count,
+                min_chunk_samples=2,
+                max_chunk_samples=5,
+                speech_intervals=speech_intervals,
+            )

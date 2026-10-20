@@ -38,6 +38,7 @@ from scripts.asr.workspace import (
     workspace_paths,
     write_vad_result,
 )
+from scripts.input_cache import audio_preparation_identity
 from scripts.process_logging import get_logger, terminal_info
 from scripts.utils import ensure_dir, write_json_atomic
 
@@ -177,6 +178,7 @@ def _run_asr_pipeline(
     request = {
         **provider.request_identity(),
         "alignment_policy": dict(ALIGNMENT_POLICY),
+        "audio_preparation": audio_preparation_identity(),
     }
     plan = load_matching_plan(
         paths["plan"],

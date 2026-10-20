@@ -8,6 +8,7 @@ import sys
 import time
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
@@ -29,9 +30,10 @@ from scripts.asr.alignment import (
     AlignedTranscript,
     accept_provider_transcript,
 )
-from scripts.asr.pipeline_types import PipelineOutcome
+from scripts.asr.pipeline_types import PipelineOutcome, validate_production_request
 from scripts.asr.prepared_model import validate_prepared_model
 from scripts.import_compat import clear_optional_aliases, describe_import_error
+from scripts.input_cache import audio_preparation_identity, load_input, save_input
 from scripts.io_utils import canonical_sha256, sha256_file
 from scripts.model_identity import validate_model
 from scripts.process_logging import (
@@ -213,34 +215,76 @@ def run_transcribe(
     # require loading the whole source file into a second memory buffer.
     audio_id = sha256_file(audio_path)
     size = audio_path.stat().st_size
-    samples = decoder(audio_path)
-    sample_count = int(len(samples))
-    if sample_count <= 0:
-        raise ValueError("Decoded audio is empty.")
     from scripts.asr.chunking import (
         DEFAULT_VAD_PARAMETERS,
         NormalizedAudio,
         detect_speech_samples,
     )
 
-    normalized_audio = NormalizedAudio(
-        np.asarray(samples, dtype=np.float32), SAMPLE_RATE
+    # 自定义解码/检测函数不能借用生产解析缓存。
+    cacheable = (
+        decoder is _decode_audio
+        and vad_detector is None
+        and language_detector is _detect_language
     )
+    input_identity: dict[str, Any] = (
+        {
+            "audio_id": audio_id,
+            "size": size,
+            "sample_rate": SAMPLE_RATE,
+            "decoder": audio_preparation_identity(),
+            "language_detection": None,
+        }
+        if cacheable
+        else {}
+    )
+    if cacheable and language is None:
+        input_identity["language_detection"] = {
+            "model": validate_model(
+                "language-id", MODELS_DIR / "lang-id-voxlingua107-ecapa"
+            ),
+            "dependencies": {
+                name: version(name) for name in ("speechbrain", "torch", "torchaudio")
+            },
+            "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
+            "speech_samples": 30 * SAMPLE_RATE,
+        }
+    input_path = (
+        results_dir
+        / audio_id
+        / ("input-auto.json" if language is None else "input.json")
+    )
+    cached_input = load_input(input_path, input_identity) if cacheable else None
+    samples: Any = None
+    normalized_audio: NormalizedAudio | None = None
     speech_intervals: list[tuple[int, int]] | None = None
-    if language is None:
-        speech_intervals = (
-            vad_detector(normalized_audio)
-            if vad_detector is not None
-            else detect_speech_samples(normalized_audio, DEFAULT_VAD_PARAMETERS)
+    if cached_input is not None:
+        sample_count, detected_language = cached_input
+    else:
+        samples = decoder(audio_path)
+        sample_count = int(len(samples))
+        if sample_count <= 0:
+            raise ValueError("Decoded audio is empty.")
+        normalized_audio = NormalizedAudio(
+            np.asarray(samples, dtype=np.float32), SAMPLE_RATE
         )
-    detection_samples = (
-        _language_detection_samples(samples, speech_intervals or [])
-        if language is None
-        else samples
-    )
-    resolved_language = (
-        (language or language_detector(detection_samples)).strip().lower()
-    )
+        detected_language = None
+        if language is None:
+            speech_intervals = (
+                vad_detector(normalized_audio)
+                if vad_detector is not None
+                else detect_speech_samples(normalized_audio, DEFAULT_VAD_PARAMETERS)
+            )
+            detected_language = (
+                language_detector(
+                    _language_detection_samples(samples, speech_intervals)
+                )
+                .strip()
+                .lower()
+            )
+        if cacheable:
+            save_input(input_path, input_identity, sample_count, detected_language)
+    resolved_language = (language or detected_language or "").strip().lower()
     if not resolved_language:
         raise ValueError("Resolved language must not be empty.")
     provider = _select_provider(provider, resolved_language)
@@ -265,13 +309,25 @@ def run_transcribe(
     canonical_request = {
         "provider": provider,
         "language": resolved_language,
-        "provider_identity": provider_strategy.request_identity(),
+        "provider_identity": {
+            **provider_strategy.request_identity(),
+            "audio_preparation": audio_preparation_identity(),
+        },
         "execution_policy": execution,
         "vad_parameters": asdict(DEFAULT_VAD_PARAMETERS),
         "planning_parameters": asdict(policy.planning_parameters),
         "text_normalization": TEXT_NORMALIZATION_POLICY,
         "alignment_policy": dict(ALIGNMENT_POLICY),
     }
+    validate_production_request(
+        {
+            **canonical_request["provider_identity"],
+            "alignment_policy": dict(ALIGNMENT_POLICY),
+        },
+        execution,
+        DEFAULT_VAD_PARAMETERS,
+        policy.planning_parameters,
+    )
     if prepared_model is not None:
         validate_prepared_model(
             prepared_model, canonical_request["provider_identity"], execution
@@ -335,6 +391,16 @@ def run_transcribe(
                     workspace_valid = True
             pipeline_outcome: PipelineOutcome | None = None
             if not workspace_valid:
+                if normalized_audio is None:
+                    samples = decoder(audio_path)
+                    if len(samples) != sample_count:
+                        input_path.unlink(missing_ok=True)
+                        raise ValueError(
+                            "Decoded audio changed; input cache invalidated. Retry transcription."
+                        )
+                    normalized_audio = NormalizedAudio(
+                        np.asarray(samples, dtype=np.float32), SAMPLE_RATE
+                    )
                 if engine is None:
                     from scripts.asr.pipeline import run_asr_pipeline
 

@@ -17,10 +17,9 @@ from typing import (
     is_typeddict,
 )
 
-from ._types import PUBLIC_SCHEMA_VERSION, ResultManifest, Transcript, _Provider
+from ._types import PUBLIC_SCHEMA_VERSION, ResultManifest, Transcript
 
 _SHA256_LENGTH = 64
-_PROVIDERS = {"faster-whisper", "qwen3-asr"}
 
 
 class ResultValidationError(ValueError):
@@ -52,17 +51,6 @@ def _validate_shape(value: Any, annotation: Any, path: str) -> None:
         return
     origin, args = get_origin(annotation), get_args(annotation)
     if origin is types.UnionType:
-        # Provider-specific objects report errors at the actual failing field.
-        if isinstance(value, dict):
-            for choice in args:
-                if is_typeddict(choice):
-                    hints = _type_fields(choice)
-                    for discriminator in ("provider", "policy"):
-                        if discriminator in hints and value.get(
-                            discriminator
-                        ) in get_args(hints[discriminator]):
-                            _validate_shape(value, choice, path)
-                            return
         for choice in args:
             try:
                 _validate_shape(value, choice, path)
@@ -77,75 +65,17 @@ def _validate_shape(value: Any, annotation: Any, path: str) -> None:
             for index, item in enumerate(value):
                 _validate_shape(item, args[0], f"{path}[{index}]")
             return
+    elif origin is dict:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                _validate_shape(key, args[0], f"{path} key")
+                _validate_shape(item, args[1], f"{path}.{key}")
+            return
     elif type(value) is annotation:
         if annotation is float and not math.isfinite(value):
             raise ResultValidationError(f"{path} must be finite.")
         return
     raise ResultValidationError(f"Invalid {path} type or value.")
-
-
-def _validate_resolved_request(request: dict[str, Any]) -> None:
-    identity = request["provider_identity"]
-    execution = request["execution_policy"]
-    provider = request["provider"]
-    if identity["provider"] != provider or identity["language"] != request["language"]:
-        raise ResultValidationError(
-            "request.provider_identity does not match provider/language."
-        )
-    expected_policy = (
-        "whisper-cpu" if provider == "faster-whisper" else "qwen3-asr-cuda"
-    )
-    if execution["policy"] != expected_policy:
-        raise ResultValidationError("request.execution_policy does not match provider.")
-    for key, value in identity["model"].items():
-        if not value or (
-            key.endswith("revision")
-            and (len(value) != 40 or any(c not in "0123456789abcdef" for c in value))
-        ):
-            raise ResultValidationError(
-                f"Invalid request.provider_identity.model.{key}."
-            )
-    for key in ("device", "compute_type"):
-        if not identity[key]:
-            raise ResultValidationError(f"Invalid request.provider_identity.{key}.")
-    for key in ("cpu_budget", "num_workers", "cpu_threads", "group_size", "batch_size"):
-        if key in execution and execution[key] <= 0:
-            raise ResultValidationError(f"Invalid request.execution_policy.{key}.")
-    if provider == "faster-whisper":
-        if identity["beam_size"] <= 0:
-            raise ResultValidationError("Invalid request.provider_identity.beam_size.")
-        if (
-            execution["num_workers"] * execution["cpu_threads"]
-            > execution["cpu_budget"]
-            or execution["group_size"] != execution["num_workers"]
-            or execution["retry_count"] < 0
-        ):
-            raise ResultValidationError(
-                "Invalid request.execution_policy CPU configuration."
-            )
-    elif (
-        identity["max_new_tokens"] <= 0
-        or not identity["model_language"]
-        or execution["group_size"] != execution["batch_size"]
-    ):
-        raise ResultValidationError("Invalid request Qwen configuration.")
-    vad = request["vad_parameters"]
-    for key, value in vad.items():
-        if value is not None:
-            _finite_nonnegative(value, f"request.vad_parameters.{key}")
-    if (
-        vad["threshold"] > 1
-        or vad["neg_threshold"] > 1
-        or vad["sampling_rate"] != 16000
-        or (
-            vad["max_speech_duration_s"] is not None
-            and vad["max_speech_duration_s"] <= 0
-        )
-    ):
-        raise ResultValidationError("Invalid request.vad_parameters.")
-    planning = request["planning_parameters"]
-    if not 0 < planning["min_chunk_samples"] <= planning["max_chunk_samples"]:
-        raise ResultValidationError("Invalid request.planning_parameters.")
 
 
 class _DuplicateKeyError(ValueError):
@@ -263,14 +193,13 @@ def _validate_manifest(
     dict[str, Any],
     str,
     str,
-    _Provider,
+    str,
     str,
     float,
 ]:
     if not _is_public_schema(payload.get("schema_version")):
         raise ResultValidationError("Invalid result manifest schema_version.")
     _validate_shape(payload, ResultManifest, "manifest")
-    _validate_resolved_request(payload["request"])
     if payload.get("status") != "complete":
         raise ResultValidationError("Result manifest status must be complete.")
 
@@ -295,8 +224,8 @@ def _validate_manifest(
     config_digest = _sha256(request.get("config_digest"), "request.config_digest")
     provider = request.get("provider")
     language = request.get("language")
-    if not isinstance(provider, str) or provider not in _PROVIDERS:
-        raise ResultValidationError("Invalid request.provider.")
+    if not isinstance(provider, str) or not provider:
+        raise ResultValidationError("request.provider must be a non-empty string.")
     if not isinstance(language, str) or not language:
         raise ResultValidationError("request.language must be a non-empty string.")
     canonical_request = {
@@ -312,7 +241,7 @@ def _validate_manifest(
         digests,
         audio_id,
         config_digest,
-        cast(_Provider, provider),
+        provider,
         language,
         duration,
     )
@@ -324,7 +253,7 @@ def _validate_common_artifact(
     name: str,
     audio_id: str,
     config_digest: str,
-    provider: _Provider,
+    provider: str,
     language: str,
     duration: float,
 ) -> None:
@@ -344,9 +273,7 @@ def _validate_common_artifact(
         raise ResultValidationError(f"{name} duration does not match manifest.")
 
 
-def _validate_transcript(
-    payload: dict[str, Any], duration: float, provider: _Provider
-) -> Transcript:
+def _validate_transcript(payload: dict[str, Any], duration: float) -> Transcript:
     _validate_shape(payload, Transcript, "transcript")
     segments = payload.get("segments")
     if not isinstance(segments, list) or not segments:
@@ -366,13 +293,11 @@ def _validate_transcript(
                 "Transcript segment times must satisfy 0 <= start < end <= duration."
             )
         previous_end = end
-    _validate_items(payload, duration, provider)
+    _validate_items(payload, duration)
     return cast(Transcript, payload)
 
 
-def _validate_items(
-    payload: dict[str, Any], duration: float, provider: _Provider
-) -> None:
+def _validate_items(payload: dict[str, Any], duration: float) -> None:
     items = payload.get("items")
     if not isinstance(items, list) or not items:
         raise ResultValidationError("transcript.items must be a non-empty array.")
@@ -399,9 +324,5 @@ def _validate_items(
         if start < previous_end or end <= start or end > duration:
             raise ResultValidationError(
                 "Raw timestamp times must satisfy 0 <= start < end <= duration."
-            )
-        if provider == "qwen3-asr" and probability is not None:
-            raise ResultValidationError(
-                "Qwen3-ASR timestamp probability must remain null."
             )
         previous_end = end

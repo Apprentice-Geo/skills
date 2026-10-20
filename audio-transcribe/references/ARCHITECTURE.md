@@ -1,148 +1,87 @@
 # 架构
 
-`audio-transcribe` 把一个本地音频文件转换为经过验证、可复用的公共结果。本文档面向维护者说明稳定边界；实现细节以模块和测试为准。
+`audio-transcribe` 拥有本地音频解析、转写和公共产物发布。总结与字幕 Skill 只通过公共 loader 导入结果，各自拥有导入后的本地快照。
 
-## 运行目录边界
-
-`scripts/runtime_paths.py` 在命令启动时集中解析数据根目录，通过运行上下文传递日志、报告、uv cache 和结果目录。源码、模板、环境和模型路径独立。数据目录与结果存储位置不属于转写内容身份，不修改公共 schema 或持久化字段语义；详细配置与错误边界见 [运行目录与写入失败](ERROR-HANDLING.md#运行目录与写入失败)。
-
-## 全局视图
-
-Agent 先检查失败原因，按所请求 Provider 执行获准且适用的一次环境修复并复查，再仅安装缺失或无效模型、复查后转写。setup 的 `--environment` 默认 `cpu`，Qwen 直接选择 `qwen3-asr`，两者互斥；Qwen setup 与模型安装复用连续导入和 CUDA 验证。检查器保持只读，不承担修复。权限、项目文件和 GPU/driver 问题分别诊断，不进入自动重装；详细条件见 [Setup 与依赖](ERROR-HANDLING.md#setup-与依赖)。
+## 控制流与数据流
 
 ```text
-local audio
-  -> identity and runtime resolution
-  -> Provider candidates and alignment acceptance
-  -> merged and normalized workspace result
-  -> segmentation and manifest-last publication
-  -> validated manifest.json
+本地音频 -> SHA-256 与解析信息 -> 语言和 ready Provider
+  -> resolved request 与 config_digest
+  -> 完整公共结果复用，或 workspace 恢复
+  -> VAD / 精确切片 / Provider 推理 / alignment 接受
+  -> 全局合并与文字规范化 -> 句子分段
+  -> 候选 bundle 验证 -> 正文发布 -> manifest 最后发布
 ```
 
-只有完整公共结果验证成功后，命令才输出 manifest 路径。结果仅能通过该 manifest 和 `audio-transcribe-contract` loader 复用。
+源码、模型和 `.venv` 独立于运行数据目录。CLI 日志始终位于 `<data-dir>/.cache/logs/`，不随结果搬迁。Python API 可以显式指定日志；未指定时保留结果目录内的 `transcribe.log`。路径配置见[运行目录](ERROR-HANDLING.md#运行目录与写入失败)。
 
-## 代码地图
+## 模块边界
 
-| 区域 | 职责 |
+| 模块 | 职责 |
 | --- | --- |
-| `scripts/transcribe.py` | CLI 编排、audio identity、provider 选择、variant identity、锁、cache 和报告 |
-| `scripts/asr/alignment.py` | 唯一的 alignment 核心：`AlignmentItem`、`AlignedTranscript`、`CleanupReport`、固定的 `ALIGNMENT_POLICY`，以及接受、投影、偏移和验证 |
-| `scripts/asr/segmentation.py` | 对已经验证的 global alignment 进行句子分段 |
-| 其他 `scripts/asr/` 模块 | 音频准备、VAD、chunk 规划、Provider 执行、cache、合并和 workspace 输出 |
-| `scripts/artifacts.py` | manifest-last 发布、公共 artifact 恢复、锁和自验证 |
-| `scripts/import_compat.py` | 安装器、检查器和运行时复用的轻量导入兼容处理，不加载模型或 pipeline |
-| `scripts/model_artifacts.py` | 保守的本地模型 ready 检查，包括 indexed safetensors |
-| `scripts/setup/` | Windows 环境和固定 revision 的模型安装 |
-| `packages/audio-transcribe-contract/` | 面向 consumer，对公共 manifest 和 artifact 进行严格的只读验证 |
-| `tests/` | 行为与 contract 的回归覆盖 |
+| `scripts/transcribe.py` | 音频身份、请求解析、完整结果复用及恢复编排 |
+| `scripts/input_cache.py` | 可再生的解码长度和语言检测缓存 |
+| `scripts/asr/chunking/` | VAD、整数采样时间线、长度约束与精确边界求解 |
+| `scripts/asr/providers/` | 第三方模型加载及返回值适配 |
+| `scripts/asr/execution/` | CPU 并发、GPU batch、失败隔离和 chunk 缓存回调 |
+| `scripts/asr/alignment.py` | alignment 接受、字符归属、零时长清理、偏移与验证 |
+| `scripts/asr/pipeline.py`、`workspace.py` | plan/chunk 恢复、合并、规范化与私有结果 |
+| `scripts/artifacts.py` | 候选 bundle、自验证、锁与 manifest-last 发布 |
+| `scripts/model_identity.py`、`model_artifacts.py`、`setup/` | 本地模型身份和环境安装校验 |
+| `packages/audio-transcribe-contract/` | 独立于模型运行时的公共类型及只读 loader |
 
-## 依赖分层
+## 身份与缓存
 
-基础依赖提供 contract、faster-whisper、打包 ffmpeg、数值计算和文本规范化。语言识别依赖由 `speechbrain`、`torch`、`torchaudio` 组成，必须作为整体安装，避免由 SpeechBrain 的传递依赖选择错误的 PyTorch backend。Qwen3-ASR 依赖组包含同一组语言识别依赖及 Qwen 运行时依赖。
+- `audio_id` 是输入文件字节 SHA-256，与路径无关。
+- `config_digest` 是 canonical resolved request 的 SHA-256，包含实际模型 revision、执行策略、VAD、规划、alignment 和文字规范化字段，不是一次调用编号。
+- `audio_id + config_digest` 定位公共结果。正文 SHA-256 标识该次发布的完整文件字节；同身份的损坏修复可以重新发布不同正文。
+- `boundary_strategy=minimum-hard-cuts-minimax-backtrack` 明确当前切片行为，参与 config 和 plan identity。旧启发式策略的结果与 plan 不作为当前结果复用。
 
-`cpu` 与 `qwen3-asr` extra 分别从 PyTorch 官方 CPU 和 CUDA 12.6 explicit index 解析 `torch`、`torchaudio`，两者互斥。统一 `uv.lock` 同时记录两套互斥 resolution；extra 是解析选择，不作为持久化 profile 写入 checker schema、结果身份或 artifact。
+每个音频目录的 `input.json` 或 `input-auto.json` 只缓存采样数量与检测语言。身份绑定音频、解码依赖及实际检测模型、依赖、VAD 参数，内容 digest 和精确字段不符则重新解析；不维护迁移。生产默认解码和检测才使用此缓存，自定义函数不借用缓存。缓存命中仍核对实际语言模型和所选 Provider 安装。
 
-依赖检查通过独立 Python 子进程读取 `torch.__version__`、`torch.version.cuda` 和 `torch.cuda.is_available()`，避免 checker 主进程加载 PyTorch。faster-whisper readiness 要求基础与语言识别 import、打包 ffmpeg、语言模型及 Whisper 模型；因此安装完整 Qwen 依赖的环境也可以运行 faster-whisper，但不应被描述为纯 CPU 环境。Qwen readiness 在这些共享条件之外，还要求 CUDA build、可用 GPU runtime、Qwen 独立 import、语言识别后 Qwen 的同进程组合 import、ASR 模型与 aligner 模型。
+完整公共结果命中可跳过解码、VAD、语言模型推理和 ASR；需重建 workspace 时再解码。解析缓存不认证公共结果，不替代 `load_result()`。
 
-## 系统边界
+## 切片保证
 
-- 输入是本地音频文件；此 Skill 不下载媒体。
-- `workspace/` 是私有恢复状态。`manifest.json` 和 `transcript.json` 构成可独立移动的公共 bundle；日志和 workspace 均非公共依赖。
-- consumer 通过 `audio-transcribe-contract` 读取公共结果；不得 import 此 Skill 的源码或检查 `workspace/`。
-- 模型 setup 和 readiness 属于本地职责。model index 格式错误时，应报告模型不可用，不得让异常逃逸到 setup 或依赖检查中。
+固定切片数与长度约束下，先精确最小化语音内部的硬切数量，再精确最小化最大语音负载。通过区间可达性回溯取得确定性合法边界；仍需硬切时直接使用这些边界。
 
-## 稳定不变量
+不再搜索启发式硬切候选、事件节点或优化负载均方差。无语音与全语音使用对应闭式解。各候选切片数按硬切数、执行轮数、最大负载及确定性边界比较；切片始终连续覆盖完整输入。
 
-- `audio_id` 是音频字节的 SHA-256，与其路径无关。
-- `config_digest` 是排除该字段后的 canonical request JSON SHA-256，标识所有可能改变 transcript 字节或 timestamp 的 resolved behavior；不包含音频身份，也不是单次调用编号。canonical request 包含模型 revision、执行策略、VAD、规划、文本规范化和固定 `alignment_policy` 的实际字段。`audio_id + config_digest` 共同定位结果。
-- `ALIGNMENT_POLICY` 的 `timestamp_resolution_ms=0` 表示不额外量化时间码；其余字段记录 `drop_item_and_owned_text` zero-duration 处理和严格排序。policy 实际字段变化会生成新的 `config_digest` 和 ASR plan identity，旧的 1 ms 策略缓存不会复用。
-- 所有语言都使用 NFKC，仅 `zh` 额外使用 OpenCC `t2s`，因此 normalization policy 变化也会生成新的 `config_digest`。
-- 完整 manifest 最后发布，并且是唯一的成功标记。
-- 公共 artifact 路径必须位于结果目录内；indexed model shard 路径必须位于模型目录内。
-- 完整有效且身份匹配的 bundle 直接复用。损坏 bundle 可在同一音频与配置身份下重新发布；重建 digest 相同时保留原 manifest 字节，不同时仅更新其正文 digest。重建失败不覆盖已有公共文件。
+这些保证针对 VAD 时间线与代理目标，不等同于实际 CER/WER 或耗时最优。benchmark 方法见[benchmark 文档](../benchmark/README.md)。
 
-## 横切关注点
+## Alignment 与规范化
 
-- 原子写入和 variant lock 防止发布与恢复受到部分更新或并发更新影响。
-- contract 验证检查 schema、identity、路径包含关系、digest、timing 和文件类型，不修复文件。
-- 日志包含运行诊断，但不包含 transcript 文本、Cookie 或模型对象；面向 job 的错误保持简洁。
-- Provider 选择在推理前完成解析，失败后不得静默更改。
+Provider 返回 candidate 后统一验证有限数值、范围、顺序、概率与字符归属。仅删除原本零时长 item 及其所属文字；Qwen 尾部误差的有限修正由 adapter 处理。合并应用整数采样起点对应的全局偏移，再验证全局 alignment。
 
-## 模型身份
+公开文字统一 NFKC，仅 `zh` 再执行 OpenCC `t2s`。规范化通过字符归属反向投影至 items，不使用全局文本替换。句子分段从合法 alignment 生成，保留时间精度；SRT 毫秒取整属于字幕消费者。
 
-模型身份记录经本地安装标记核对的 repo、固定 revision 和 logical_id；Qwen 同时绑定 forced-aligner。setup、依赖检查和运行时共用安装校验，详细边界见[模型安装](ERROR-HANDLING.md#模型安装)。形成 canonical request 和查询 cache 前必须校验；Provider 加载前复核。Whisper 自定义路径也必须是具有匹配固定身份的本地目录。自动语言检测仅在实际使用时验证 language-id。
-
-Provider prepare 返回绑定加载配置摘要的 prepared model。生产入口和 benchmark 复用前比较加载时身份与当前请求；摘要包含模型（含 aligner）、设备、dtype/compute type 和实际加载用的线程、worker 或 batch 配置及 Qwen 的 max_new_tokens，语言不影响模型加载。这个摘要只绑定已核对的安装身份与加载参数，不是模型权重摘要。运行期间不得替换安装目录；不提供并发安装与推理的一致性事务。
-
-公共 v3 与旧结果隔离；本次 resolved request 字段变化会生成新的 `config_digest`，旧 plan/chunk 的严格 shape 与 `plan_id` 也不会被当前 workspace 当作缓存复用。升级不能追认历史结果使用的模型身份，旧公共结果不迁移、不自动删除。
-
-## Alignment 与验证流程
-
-Provider adapter 把第三方字段映射为 `AlignedTranscript` candidate。Qwen adapter 仅允许末词在起点未越界且结束时间越界不超过 0.1 秒时，将结束时间收回精确 chunk sample 边界；这是模型尾部误差的专用处理，其他越界仍由通用边界拒绝。随后，每个 candidate 都必须经过同一个 `accept_provider_transcript` 边界：
-
-1. 拒绝负数、非有限、反向、重叠、超出范围或 probability 无效的值；
-2. 保留原始时间精度，按 source 顺序把源字符映射给 alignment-item owner，允许没有 owner 的标点和空白，不使用全局文本替换；
-3. 仅移除原本 `start == end` 的 item，以及恰好归这些 item 所有的源字符；正时长的亚毫秒 item 不移除；
-4. 严格重新验证字符 alignment、`0 <= start < end <= duration`、不重叠和 probability。
-
-如果只剩可移除 item 和没有 owner 的标点或空白，一个 accepted chunk 可能变为空。合并时忽略空 chunk，但合并结果完全为空的转写必须失败。
-
-合并流程只生成一个 global `AlignedTranscript`：复验 accepted chunk，应用 sample 起点对应的 offset，组合非空 chunk，并验证全局结果。偏移运算不取整；浮点加法可能使合法局部端点在全局尾部超过精确 sample 边界一个舍入单位，因此平移结果以该 chunk 的精确全局尾部为上界。这不接受原本越界的 Provider 或 cache 时间码。写入 `workspace/result.json` 前，通过 item ownership 反向投影文本规范化结果，并再次进行严格验证。发布流程严格读取并重新验证 workspace shape 和 alignment；既不强制转换字段类型，也不裁剪无效时间码。句子分段仅在公共转换期间运行一次，直接使用已验证 item 的首尾时间，不再次量化。
-
-对于 Qwen3-ASR，alignment-item probability 保持 `null`。其他被接受的 probability 必须是有限值，并位于 `[0, 1]` 内。
-
-## 私有 cache
-
-私有 cache 只支持当前代码能够严格解析的格式，不承担 schema 兼容或迁移责任。`asr_plan.json` 通过 canonical plan payload 的 SHA-256 `plan_id` 绑定 source、Provider request、execution policy、VAD、规划参数和 chunk layouts；读取时重新计算身份并验证精确字段、类型和 layout 不变量。旧 schema、未知字段、错误 policy 或损坏数据自然成为 cache miss。
-
-`vad_result.json` 只是 plan miss 时的可选输入。合法 plan 是 chunk 恢复的唯一权威，命中时不读取 VAD，也不从 VAD 重新推导 layout。chunk payload 仅保存 `plan_id`、`chunk_index`、accepted text 和 items；边界由 plan 恢复。Provider metadata、elapsed timing 和 `CleanupReport` 不落盘，因此 cleanup warning 只为本次新接受的 candidate 输出，不为 cached chunk 重放。
-
-## 公共结果结构
+## 私有 workspace
 
 ```text
-results/<audio_id>/<provider>-<language>-<config_digest>/
-├─ manifest.json
-├─ transcript.json
-├─ transcribe.log  # Python API 的默认结果日志；CLI 日志位于 data-dir/.cache/logs/
-└─ workspace/
-   ├─ asr_plan.json
-   ├─ vad_result.json
-   ├─ chunk_results/
-   └─ result.json
+results/<audio_id>/
+├─ input.json 或 input-auto.json
+└─ <provider>-<language>-<config_digest>/
+   ├─ manifest.json
+   ├─ transcript.json
+   └─ workspace/
+      ├─ asr_plan.json
+      ├─ vad_result.json
+      ├─ chunk_results/
+      └─ result.json
 ```
 
-manifest 记录 audio identity、resolved request identity、受限于目录内的 `transcript.json` 相对路径及其 SHA-256；不记录日志或 workspace。`transcript.json` 只保留一份 `schema_version`、`audio_id`、`config_digest`、Provider、language 和 duration，同时包含句子级 `segments`（id/start/end/text）及细粒度词级 `items`（text/start/end/probability）。句子文本来自完整规范化文本，不能假定简单拼接 item 文本可恢复全部标点和空白。
+plan 是 chunk 布局的唯一权威，`plan_id` 绑定 source、请求、执行策略、VAD、规划与 layouts；命中 plan 不重新推导 VAD。chunk 保存 accepted 原始文字与 items；合并后 `result.json` 保存规范化文字与全局 items，不保存句子分段。
 
-`audio_id + config_digest` 表示音频与已解析配置组合；`artifact_sha256.transcript` 标识某次发布的整个正文文件字节，包括元数据、segments、items 和 JSON 格式。损坏修复可改变后者，不改变配置摘要算法、结果定位或转写生成算法。需要固定历史结果的消费者应保存独立 bundle；生产端不维护发布历史或备份归档。
-
-两份公共 JSON 保持字节及相对路径不变即可复制或移动到任意目录，consumer 无需访问原音频、模型、日志或 workspace。仅携带 bundle 的环境不具备本地恢复资料。生产端通过输入音频重新计算 audio identity 和 resolved request，定位本地 `results/<audio_id>/<provider>-<language>-<config_digest>/workspace/`，不根据公共 manifest 搜索或读取私有路径。自动解析后的配置变化会选择不同结果目录，不跨配置猜测或复用 workspace。
-
-`workspace/result.json` 是 pipeline 唯一的合并结果，也是发布所使用的唯一私有 recovery snapshot。它仅包含 `audio_id`、`config_digest`、`text`、`items`、`duration`、`provider` 和 `language`，并在读取、发布和恢复时与当前请求逐项验证。
-
-plan 和各 chunk 的 Provider 结果仍为独立的 workspace cache。当所有 chunk cache 都有效时，pipeline 会重新执行合并、timestamp offset、alignment 验证、文本与item 规范化以及 alignment 复验，然后原子替换`result.json`；此过程不加载 Provider。workspace 不存储 segment。包含 `plan`、`words` 或 `segments` 的旧版合并结果不会被读取或迁移。
-
-私有 `chunk_results/` 保留 Provider 文本。`workspace/result.json` 和公共正文 JSON 仅包含规范化文本。规范化失败或规范化后的 alignment 失败会停止发布；恢复流程从已规范化的 workspace snapshot 确定性重建结果。
-
-pipeline 不写入 `progress.json` 或 `metrics.json`，也不会删除历史遗留的这两个文件。进度由 plan、合法 chunk 文件和本次日志推导；diagnostics 通过进程内 `PipelineOutcome` 返回给 benchmark，不属于公开结果合同。
+私有数据仅接受当前严格结构，损坏或不兼容即 miss。完整 chunk 可重新合并；缺失 chunk 才推理。进度和 metrics 不另设持久化状态机，诊断由内存结果与日志承载。
 
 ## 公共 contract 与发布
 
-`audio-transcribe-contract` 0.3.1 只接受公共 schema v3；时间精度字段新增允许值 `0`（不额外量化），仍接受原有值 `1`（1 ms），保留已有字段的语义。新增值不修改公共结构，旧版 loader 需升级才能读取新策略结果，独立于内部 alignment 模块。v3 使用顶层公共 schema 作为唯一格式版本；resolved request、alignment policy 和 text-normalization policy 只记录实际生效字段，不再包含嵌套版本。manifest 与正文之间的 identity、canonical request digest、正文 digest、Provider、language、duration 和路径包含关系必须一致。`artifacts` 和 `artifact_sha256` 只允许 `transcript` 键；alignment item 使用精确键集合和严格 timing/probability 验证。所有公共对象递归使用精确字段集合；完整 resolved 配置全部必需。Provider identity、model 和 execution policy 按 Provider 分别定义结构，校验类型、必要的值约束及 Provider/language 一致性。TypedDict 是字段结构的唯一实现来源，validator 从其解析字段；consumer 不 import 生产代码，不检查本地模型，也不限制 revision 必须等于当前生产 pin。新增任何层级字段或改变合同语义需要评估并升级公共 schema；包版本独立发布，非格式修复无需机械升级 schema。
+`audio-transcribe-contract` 0.4.0 接受公共 schema 4。两个公共文件可保持字节和相对路径一起移动，不依赖模型、原音频或 workspace。旧 schema 不自动迁移、不删除；需要新格式时重新运行生产入口。
 
-`load_result(path)` 完整验证后返回 `TranscriptionResult(manifest_path, transcript_path, manifest, transcript)`，路径均为绝对路径。正文 snapshot 同时提供 `segments` 和 `items`。外层 dataclass 冻结，内层 TypedDict/list 是普通可变内存对象，修改不写回文件。不再导出 `RawTimestamps` 类型或返回独立 timestamp 路径/snapshot。
+manifest 包含音频身份、resolved request、正文相对路径及 SHA-256；正文包含一致的身份、Provider、语言、duration、`segments` 与 `items`。消费者必需字段严格验证；六类来源配置为有限 JSON 对象并参与 canonical digest，loader 不解释生产端模型、batch、worker 或切片策略。生产端负责实际配置合法性。
 
-`load_manifest(path)` 只验证 manifest 元数据、配置摘要、正文摘要格式及路径安全性，返回 manifest snapshot；不要求正文存在，不读取正文。它用于生产端决定恢复约束，不能代替 `load_result()` 认证完整结果。
+`load_result()` 完整校验形状、摘要、路径包含关系、时间轴和跨文件身份，返回内存 snapshot。`load_manifest()` 只校验元数据与路径，不能认证正文。修改返回对象不写回磁盘。
 
-旧公共 schema、旧入口 `result_manifest.json` 和 `variant_id` 字段不兼容，不自动迁移或删除。schema v3 的 resolved request 变化会生成新的 `config_digest` 并选择新结果目录；旧私有 snapshot 也因 identity 或严格结构不匹配而失效。
+发布与恢复在 result lock 内进行：先验证 staging 中完整候选，再替换正文，最后原子发布 manifest。多文件替换不构成整体原子事务，异常后尝试回滚，下次读取必须完整验证。
 
-发布和恢复在同一个 result lock 内进行。先在结果目录下的临时 staging 目录生成完整两文件 candidate，保持最终相对路径，由 `load_result()` 验证后才替换正式正文，最后原子替换 `manifest.json`。candidate 失败不改变已有公共文件；最终 manifest 安装失败时尝试回滚正文。多文件替换不是整体原子事务：进程被强制终止时可能留下需要下次运行验证和恢复的状态，consumer 必须每次完整验证。
-
-生产端复用与恢复按以下顺序执行：
-
-1. 验证 manifest 元数据。有效但与当前 audio/request 不匹配时停止，不覆盖其他身份结果。
-2. 若完整 bundle 验证通过，直接复用，不检查私有文件，也不改写日志。
-3. 否则严格验证固定本地路径的 `workspace/result.json`；无效或缺失时进入 pipeline，从合法 plan/chunks 重建，缓存不足时执行正常推理。此路径同样适用于已有 manifest 的结果。
-4. manifest 元数据有效且重建 digest 相同时，精确恢复并保留原 manifest 字节；digest 不同时允许重新发布，以原 manifest 为基础仅更新 `artifact_sha256.transcript`，保留 artifact 相对路径及其他元数据，不原地修改原文件或 loader snapshot。
-5. manifest 缺失或损坏时，根据当前音频信息、resolved request 和合法 workspace 生成正文及 manifest，使用默认 `transcript.json` 路径，不承诺与历史结果逐字节相同。
-
-恢复仍从规范化 snapshot 确定性生成句子和 items。重建或 candidate 验证失败，保留原有公共文件供后续检查；只有完整候选验证通过后才安装正文与更新后的 manifest。`publish_result()` 默认拒绝覆盖已有 manifest；生产命令通过现有 `replace_existing=True` 进入受控修复，不提供新的强制覆盖接口。成功发布后的诊断见 [错误处理](ERROR-HANDLING.md#日志)。
+有效完整 bundle 直接复用；有效但身份不匹配的 manifest 拒绝覆盖。损坏结果优先从合法 `workspace/result.json` 恢复，其次重建 plan/chunks。恢复正文 digest 不变时保留原 manifest 字节，变化时仅更新正文摘要；候选验证失败保留旧公共文件。
