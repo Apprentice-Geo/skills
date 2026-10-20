@@ -288,7 +288,7 @@ def test_bind_rejects_invalid_replacement_without_changing_bound_job(
     subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path))
 
 
-def test_bind_cli_keeps_exact_result_and_moves_log(
+def test_bind_cli_keeps_exact_result_and_keeps_log(
     subtitle_task: tuple[Path, Path, Path, str],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -313,7 +313,7 @@ def test_bind_cli_keeps_exact_result_and_moves_log(
     )
     assert terminal.out == f"normalized_transcript: {normalized_path}\n"
     assert terminal.err == ""
-    logs = list(job_path.parent.glob("bind-transcription-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("bind-transcription-*.log"))
     assert len(logs) == 1
     assert terminal.out.strip() in logs[0].read_text(encoding="utf-8")
 

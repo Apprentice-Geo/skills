@@ -106,11 +106,11 @@ def test_reset_rejects_unbound_job_and_relative_path(tmp_path):
         transcript.operate("reset", Path("subtitle_job.json"), "all")
 
 
-def test_reset_cli_outputs_current_path_and_moves_log(bound_job, capsys):
+def test_reset_cli_outputs_current_path_and_keeps_log(bound_job, capsys):
     job_path, _normalized_path, _audio, _manifest = bound_job
     assert transcript.main(["reset", str(job_path), "--id", "all"]) == 0
     output = capsys.readouterr()
     job = subtitle_job.read_json_object(job_path)
     assert output.out == f"normalized_transcript: {job['artifacts']['normalized_transcript']}\n"
     assert output.err == ""
-    assert len(list(job_path.parent.glob("transcript-*.log"))) == 1
+    assert len(list((job_path.parents[2] / ".cache" / "logs").glob("transcript-*.log"))) == 1

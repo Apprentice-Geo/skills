@@ -103,7 +103,6 @@ def main(argv: list[str] | None = None) -> int:
                 "normalized_transcript": normalized_path,
                 "subtitle": subtitle_path,
             }
-            session.move_to(job_path.parent)
             result(get_logger(__name__), "%s", json.dumps(summary, ensure_ascii=False))
             return 0
         except (OSError, SubtitleJobError, TypeError, ValueError) as error:

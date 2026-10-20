@@ -57,7 +57,7 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     }
     assert len(result.stdout.splitlines()) == 1
     assert result.stderr == ""
-    logs = list(job_path.parent.glob("open-subtitle-job-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("open-subtitle-job-*.log"))
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8")) == {

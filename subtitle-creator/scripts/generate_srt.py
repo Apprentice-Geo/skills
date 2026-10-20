@@ -113,7 +113,6 @@ def main(argv: list[str] | None = None) -> int:
             subtitle_path = generate_srt(
                 Path(arguments.subtitle_job_path), results_dir=paths.results_dir
             )
-            session.move_to(subtitle_path.parent)
             result(get_logger(__name__), "subtitle: %s", subtitle_path)
             return 0
         except (OSError, SubtitleJobError, TypeError, ValueError) as error:

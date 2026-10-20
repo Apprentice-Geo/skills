@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 from pathlib import Path
 from typing import Any, Literal, NoReturn, overload
@@ -67,14 +68,37 @@ def _load_bound(job_path: Path, results_dir: Path | None):
     return job_path, job, baseline_bytes, baseline
 
 
+def _validate_edits(edits: Any) -> list[dict[str, Any]]:
+    if not isinstance(edits, list) or not edits:
+        raise SubtitleJobError("edits must be a non-empty array of {id, text} objects")
+    seen: set[int] = set()
+    for edit in edits:
+        if (
+            not isinstance(edit, dict)
+            or set(edit) != {"id", "text"}
+            or type(edit["id"]) is not int
+            or edit["id"] < 0
+            or not isinstance(edit["text"], str)
+            or not edit["text"].strip()
+        ):
+            raise SubtitleJobError(
+                "each edit requires a non-negative integer id and non-blank text"
+            )
+        if edit["id"] in seen:
+            raise SubtitleJobError("edits must not contain duplicate ids")
+        seen.add(edit["id"])
+    return edits
+
+
 @overload
 def operate(
     command: Literal["show"],
     job_path: Path,
-    segment_id: int | str,
+    segment_id: int | str | None = None,
     *,
     context: int | None = None,
     text: str | None = None,
+    edits: list[dict[str, Any]] | None = None,
     results_dir: Path | None = None,
 ) -> dict[str, Any]: ...
 
@@ -83,10 +107,11 @@ def operate(
 def operate(
     command: Literal["edit", "reset"],
     job_path: Path,
-    segment_id: int | str,
+    segment_id: int | str | None = None,
     *,
     context: int | None = None,
     text: str | None = None,
+    edits: list[dict[str, Any]] | None = None,
     results_dir: Path | None = None,
 ) -> Path: ...
 
@@ -94,27 +119,47 @@ def operate(
 def operate(
     command: str,
     job_path: Path,
-    segment_id: int | str,
+    segment_id: int | str | None = None,
     *,
     context: int | None = None,
     text: str | None = None,
+    edits: list[dict[str, Any]] | None = None,
     results_dir: Path | None = None,
 ) -> Path | dict[str, Any]:
     if command not in {"show", "edit", "reset"}:
         raise SubtitleJobError("unsupported transcript command")
-    if segment_id != "all" and (type(segment_id) is not int or segment_id < 0):
+    if edits is not None:
+        if command != "edit" or segment_id is not None or text is not None:
+            raise SubtitleJobError("batch edits cannot be combined with id or text")
+        edits = _validate_edits(edits)
+    elif segment_id != "all" and (type(segment_id) is not int or segment_id < 0):
         raise SubtitleJobError("id must be a non-negative integer or all")
     if context is not None and (type(context) is not int or context < 0):
         raise SubtitleJobError("context must be a non-negative integer")
     if context is not None and (command != "show" or segment_id == "all"):
         raise SubtitleJobError("context requires show with an integer id")
-    if command == "edit" and (segment_id == "all" or not isinstance(text, str) or not text.strip()):
+    if (
+        command == "edit"
+        and edits is None
+        and (segment_id == "all" or not isinstance(text, str) or not text.strip())
+    ):
         raise SubtitleJobError("edit requires an integer id and non-blank text")
     job_path, job, baseline_bytes, baseline = _load_bound(job_path, results_dir)
-    if segment_id != "all" and segment_id >= len(baseline["segments"]):
+    ids = [edit["id"] for edit in edits] if edits is not None else [segment_id]
+    if any(isinstance(item, int) and item >= len(baseline["segments"]) for item in ids):
         raise SubtitleJobError("segment id does not exist")
     if command == "reset" and segment_id == "all":
-        return publish_transcript(job_path, job, baseline_bytes, results_dir=results_dir)
+        normalized_path = Path(job["artifacts"]["normalized_transcript"])
+        try:
+            current = read_json_object(normalized_path, decimal_numbers=True)
+            unchanged = not compare_normalized_correction(baseline, current)
+        except SubtitleJobError:
+            unchanged = False
+        if unchanged:
+            return normalized_path
+        return publish_transcript(
+            job_path, job, normalized_bytes=baseline_bytes, results_dir=results_dir
+        )
     validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
     normalized = read_json_object(
         Path(job["artifacts"]["normalized_transcript"]), decimal_numbers=True
@@ -125,14 +170,24 @@ def operate(
             count = context or 0
             segments = segments[max(0, segment_id - count) : segment_id + count + 1]
         return {"target_id": None if segment_id == "all" else segment_id, "segments": segments}
-    assert isinstance(segment_id, int)
-    segments[segment_id]["text"] = (
-        text if command == "edit" else baseline["segments"][segment_id]["text"]
-    )
+    if edits is None:
+        assert isinstance(segment_id, int)
+        edits = [
+            {
+                "id": segment_id,
+                "text": text if command == "edit" else baseline["segments"][segment_id]["text"],
+            }
+        ]
+    changed = False
+    for edit in edits:
+        if segments[edit["id"]]["text"] != edit["text"]:
+            changed = True
+            segments[edit["id"]]["text"] = edit["text"]
+    if not changed:
+        return Path(job["artifacts"]["normalized_transcript"])
     return publish_transcript(
         job_path,
         job,
-        baseline_bytes,
         normalized_bytes=(transcript_json(normalized) + "\n").encode("utf-8"),
         results_dir=results_dir,
     )
@@ -145,18 +200,30 @@ def main(argv: list[str] | None = None) -> int:
     for command in ("show", "edit", "reset"):
         child = commands.add_parser(command)
         child.add_argument("subtitle_job_path", help="subtitle_job.json 的绝对路径。")
-        child.add_argument("--id", required=True, type=_segment_id)
+        child.add_argument("--id", required=command != "edit", type=_segment_id)
         add_data_dir_argument(child)
         if command == "show":
             child.add_argument("--context", type=_context, default=None)
         if command == "edit":
-            child.add_argument("--text", required=True)
+            child.add_argument("--text")
+            child.add_argument("--edits-file", help="UTF-8 JSON 数组，每项仅含 id 和 text。")
     try:
         arguments = parser.parse_args(argv)
         if arguments.command == "show" and arguments.id == "all" and arguments.context is not None:
             raise SubtitleJobError("--id all forbids --context")
-        if arguments.command == "edit" and (arguments.id == "all" or not arguments.text.strip()):
-            raise SubtitleJobError("edit requires an integer id and non-blank text")
+        edits = None
+        if arguments.command == "edit":
+            if arguments.edits_file:
+                if arguments.id is not None or arguments.text is not None:
+                    raise SubtitleJobError("--edits-file cannot be combined with --id or --text")
+                try:
+                    edits = _validate_edits(
+                        json.loads(Path(arguments.edits_file).read_text(encoding="utf-8"))
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                    raise SubtitleJobError(f"cannot read edits file: {error}") from error
+            elif type(arguments.id) is not int or not arguments.text or not arguments.text.strip():
+                raise SubtitleJobError("edit requires an integer id and non-blank text")
     except SubtitleJobError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -171,9 +238,9 @@ def main(argv: list[str] | None = None) -> int:
                 arguments.id,
                 context=getattr(arguments, "context", None),
                 text=getattr(arguments, "text", None),
+                edits=edits,
                 results_dir=paths.results_dir,
             )
-            session.move_to(job_path.resolve().parent)
             if isinstance(output, dict):
                 detail(get_logger(__name__), "show: %s segments", len(output["segments"]))
                 print(transcript_json(output))
@@ -182,7 +249,11 @@ def main(argv: list[str] | None = None) -> int:
                     get_logger(__name__),
                     "%s: %s segments",
                     arguments.command,
-                    1 if arguments.id != "all" else len(read_json_object(output)["segments"]),
+                    len(edits)
+                    if edits is not None
+                    else 1
+                    if arguments.id != "all"
+                    else len(read_json_object(output)["segments"]),
                 )
                 result(get_logger(__name__), "normalized_transcript: %s", output)
             return 0

@@ -94,7 +94,7 @@ def test_edit_reset_records_precision_and_manual_subtitle(task, capsys):
     )
     assert subtitle_job.load_job(job_path)["changed_segment_ids"] == [2]
     repeated = transcript.operate("reset", job_path, 0)
-    assert repeated != reset
+    assert repeated == reset
     generated = generate_srt.generate_srt(job_path)
     assert "校正二" in generated.read_text(encoding="utf-8-sig")
     assert transcript.operate("reset", job_path, "all").read_bytes() == baseline
@@ -167,9 +167,11 @@ def test_invalid_artifacts_refused(task, command, damage):
 
 
 @pytest.mark.parametrize("command", ["edit", "reset"])
-@pytest.mark.parametrize("failure", ["write", "second_write", "validation", "commit"])
+@pytest.mark.parametrize("failure", ["write", "validation", "commit"])
 def test_publish_failure_keeps_existing_results(task, monkeypatch, command, failure):
     job_path = task[0]
+    if command == "reset":
+        transcript.operate("edit", job_path, 0, text="changed")
     srt = generate_srt.generate_srt(job_path)
     normalized = Path(subtitle_job.load_job(job_path)["artifacts"]["normalized_transcript"])
     baseline = Path(subtitle_job.load_job(job_path)["artifacts"]["before_correction"])
@@ -181,7 +183,7 @@ def test_publish_failure_keeps_existing_results(task, monkeypatch, command, fail
         raise OSError("injected publication failure")
 
     def fail_write(path, mode="r", *args, **kwargs):
-        if mode == "wb" and (failure == "write" or path.name == subtitle_job.NORMALIZED_FILENAME):
+        if mode == "wb":
             fail()
         return original_open(path, mode, *args, **kwargs)
 
@@ -224,7 +226,7 @@ def test_cli_external_data_logs_no_text_and_legacy_job(task, monkeypatch, capsys
     assert transcript.main(["reset", *common]) == 0
     capsys.readouterr()
     assert subtitle_job.load_job(job_path)["schema_version"] == 3
-    for log in job_path.parent.glob("transcript-*.log"):
+    for log in (job_path.parents[2] / ".cache" / "logs").glob("transcript-*.log"):
         text = log.read_text(encoding="utf-8")
         assert secret not in text and "原文" not in text
         assert "segments" in text
@@ -255,15 +257,114 @@ def test_segment_operations_allow_unavailable_subtitle(task, damage):
     subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path))
 
 
-def test_unchanged_edit_still_publishes_and_clears_subtitle(task):
+@pytest.mark.parametrize("command,target", [("edit", 0), ("reset", 0), ("reset", "all")])
+def test_unchanged_operation_keeps_paths_and_valid_subtitle(task, command, target):
     job_path = task[0]
     generate_srt.generate_srt(job_path)
     before = subtitle_job.load_job(job_path)
-    path = transcript.operate("edit", job_path, 0, text=task[3]["segments"][0]["text"])
-    assert str(path) != before["artifacts"]["normalized_transcript"]
+    before_bytes = job_path.read_bytes()
+    path = transcript.operate(command, job_path, target, text=task[3]["segments"][0]["text"])
+    assert str(path) == before["artifacts"]["normalized_transcript"]
     after = subtitle_job.load_job(job_path)
     assert after["changed_segment_ids"] == []
-    assert after["artifacts"]["subtitle"] is None
+    assert after == before
+    assert job_path.read_bytes() == before_bytes
+    subtitle_job.validate_job(job_path, after)
+
+
+def test_batch_edit_commits_once_and_reuses_baseline(task, monkeypatch, capsys, caplog):
+    job_path = task[0]
+    before = subtitle_job.load_job(job_path)
+    baseline_path = Path(before["artifacts"]["before_correction"])
+    baseline_stat = baseline_path.stat()
+    edits_file = job_path.parent / "edits.json"
+    edits_file.write_text(
+        json.dumps(
+            [{"id": 0, "text": '  引号"与换行\n'}, {"id": 3, "text": "私密批量校正"}],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    commits = []
+    original_commit = subtitle_job.atomic_write_json
+
+    def commit(path, value):
+        commits.append(value)
+        original_commit(path, value)
+
+    monkeypatch.setattr(subtitle_job, "atomic_write_json", commit)
+    assert transcript.main(["edit", str(job_path), "--edits-file", str(edits_file)]) == 0
+    assert capsys.readouterr().out.startswith("normalized_transcript: ")
+    assert len(commits) == 1
+    after = subtitle_job.load_job(job_path)
+    assert after["changed_segment_ids"] == [0, 3]
+    assert after["artifacts"]["before_correction"] == str(baseline_path)
+    assert baseline_path.stat() == baseline_stat
+    assert "cannot clean transcript directory" not in caplog.text
+    segments = transcript.operate("show", job_path, "all")["segments"]
+    assert segments[0]["text"] == '  引号"与换行\n'
+    assert segments[3]["text"] == "私密批量校正"
+    subtitle = generate_srt.generate_srt(job_path)
+    unchanged = job_path.read_bytes()
+    commits.clear()
+    assert transcript.main(["edit", str(job_path), "--edits-file", str(edits_file)]) == 0
+    assert not commits
+    assert job_path.read_bytes() == unchanged
+    assert subtitle.is_file()
+    logs = (job_path.parents[2] / ".cache" / "logs").glob("transcript-*.log")
+    assert all("私密批量校正" not in path.read_text(encoding="utf-8") for path in logs)
+
+
+@pytest.mark.parametrize(
+    "edits",
+    [
+        [],
+        {},
+        [{"id": 0, "text": "valid"}, {"id": 5, "text": "invalid"}],
+        [{"id": 0, "text": "first"}, {"id": 0, "text": "second"}],
+        [{"id": True, "text": "invalid"}],
+        [{"id": 0, "text": " \n"}],
+        [{"id": 0, "text": "x", "start": 2}],
+    ],
+)
+def test_invalid_batch_changes_nothing(task, edits, capsys):
+    job_path = task[0]
+    generate_srt.generate_srt(job_path)
+    before = {path: path.read_bytes() for path in job_path.parent.rglob("*") if path.is_file()}
+    edits_file = task[1].parent / "edits.json"
+    edits_file.write_text(json.dumps(edits), encoding="utf-8")
+    assert transcript.main(["edit", str(job_path), "--edits-file", str(edits_file)]) == 1
+    assert capsys.readouterr().out == ""
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_batch_file_cannot_mix_single_edit_arguments(task, capsys):
+    job_path = task[0]
+    assert (
+        transcript.main(
+            ["edit", str(job_path), "--edits-file", "missing.json", "--id", "0", "--text", "x"]
+        )
+        == 1
+    )
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_failed_batch_commit_preserves_all_segments(task, monkeypatch):
+    job_path = task[0]
+    before = job_path.read_bytes()
+    current = Path(subtitle_job.load_job(job_path)["artifacts"]["normalized_transcript"])
+    content = current.read_bytes()
+
+    def fail(*args, **kwargs):
+        raise OSError("batch commit failed")
+
+    monkeypatch.setattr(subtitle_job, "atomic_write_json", fail)
+    with pytest.raises(OSError, match="batch commit failed"):
+        transcript.operate(
+            "edit", job_path, edits=[{"id": 0, "text": "first"}, {"id": 2, "text": "second"}]
+        )
+    assert job_path.read_bytes() == before
+    assert current.read_bytes() == content
 
 
 @pytest.mark.parametrize("command", ["bind", "edit", "reset", "reset_all"])
@@ -283,16 +384,26 @@ def test_repeated_publication_reclaims_only_replaced_snapshot(task, monkeypatch,
         original_commit(path, job)
 
     monkeypatch.setattr(subtitle_job, "atomic_write_json", commit)
-    for _ in range(4):
+    baseline_dir = Path(subtitle_job.load_job(job_path)["artifacts"]["before_correction"]).parent
+    for index in range(4):
+        if command in {"reset", "reset_all"}:
+            transcript.operate("edit", job_path, 0, text=f"replacement-{index}")
         old_dir = Path(subtitle_job.load_job(job_path)["artifacts"]["normalized_transcript"]).parent
         if command == "bind":
             current = bind_transcription.bind_transcription(job_path, manifest)
         elif command == "edit":
-            current = transcript.operate("edit", job_path, 0, text="replacement")
+            current = transcript.operate("edit", job_path, 0, text=f"replacement-{index}")
         else:
             current = transcript.operate("reset", job_path, "all" if command == "reset_all" else 0)
-        assert not old_dir.exists()
-        assert set(job_path.parent.glob("transcript-*/")) == {current.parent, unrelated}
+        active_baseline = Path(subtitle_job.load_job(job_path)["artifacts"]["before_correction"])
+        assert not (old_dir / subtitle_job.NORMALIZED_FILENAME).exists()
+        assert set(job_path.parent.glob("transcript-*/")) == {
+            current.parent,
+            active_baseline.parent,
+            unrelated,
+        }
+        if command != "bind":
+            assert active_baseline.parent == baseline_dir
         assert user_file.read_text() == "keep"
         subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path))
 
@@ -300,6 +411,7 @@ def test_repeated_publication_reclaims_only_replaced_snapshot(task, monkeypatch,
 @pytest.mark.parametrize("failure", ["validation", "replace"])
 def test_failed_reset_all_cleans_candidate_snapshot(task, monkeypatch, failure):
     job_path = task[0]
+    transcript.operate("edit", job_path, 0, text="changed")
     before = job_path.read_bytes()
     directories = set(job_path.parent.glob("transcript-*/"))
 
@@ -326,7 +438,7 @@ def test_cleanup_failure_preserves_publication_outcome(task, monkeypatch, caplog
     original_unlink = Path.unlink
 
     def fail_unlink(path, *args, **kwargs):
-        if path.name == subtitle_job.BEFORE_CORRECTION_FILENAME:
+        if path.name == subtitle_job.NORMALIZED_FILENAME:
             raise PermissionError("injected cleanup failure")
         return original_unlink(path, *args, **kwargs)
 
@@ -353,10 +465,10 @@ def test_publication_keeps_user_files_in_replaced_snapshot(task):
     old_dir = Path(subtitle_job.load_job(job_path)["artifacts"]["normalized_transcript"]).parent
     notes = old_dir / "notes.txt"
     notes.write_text("keep")
-    current = transcript.operate("reset", job_path, "all")
+    current = transcript.operate("edit", job_path, 0, text="changed")
     assert notes.read_text() == "keep"
     assert not (old_dir / subtitle_job.NORMALIZED_FILENAME).exists()
-    assert not (old_dir / subtitle_job.BEFORE_CORRECTION_FILENAME).exists()
+    assert (old_dir / subtitle_job.BEFORE_CORRECTION_FILENAME).is_file()
     assert current.is_file()
 
 
@@ -389,12 +501,14 @@ def test_interrupted_commit_keeps_persisted_snapshot(task, monkeypatch, stage):
     current_job = subtitle_job.load_job(job_path)
     current_dir = Path(current_job["artifacts"]["normalized_transcript"]).parent
     subtitle_job.validate_job(job_path, current_job)
-    assert set(job_path.parent.glob("transcript-*/")) == {current_dir}
+    baseline_dir = Path(current_job["artifacts"]["before_correction"]).parent
+    assert set(job_path.parent.glob("transcript-*/")) == {current_dir, baseline_dir}
     if stage == "before_replace":
         assert current_job == old_job
     else:
         assert current_dir != old_dir
-        assert not old_dir.exists()
+        assert (old_dir / subtitle_job.BEFORE_CORRECTION_FILENAME).is_file()
+        assert not (old_dir / subtitle_job.NORMALIZED_FILENAME).exists()
         assert transcript.operate("show", job_path, 0)["segments"][0]["text"] == "replacement"
 
 

@@ -376,7 +376,7 @@ def validate_job(
 def publish_transcript(
     job_path: Path,
     job: dict[str, Any],
-    baseline_bytes: bytes,
+    baseline_bytes: bytes | None = None,
     *,
     normalized_bytes: bytes | None = None,
     results_dir: Path | None = None,
@@ -388,15 +388,28 @@ def publish_transcript(
         if old_artifacts is not None
         else []
     )
-    # 新文件先写入独立目录；原子切换 job 前，旧绑定和校正始终可用。
+    if baseline_bytes is None:
+        if old_artifacts is None or normalized_bytes is None:
+            raise SubtitleJobError("editing requires a bound baseline and normalized transcript")
+        # 编辑复用不可变基准；只有显式绑定才替换基准。
+        baseline_path = Path(old_artifacts["before_correction"])
+        baseline_digest = old_artifacts["before_correction_sha256"]
+        old_paths = [path for path in old_paths if path != baseline_path]
+    else:
+        baseline_path = None
+        baseline_digest = hashlib.sha256(baseline_bytes).hexdigest()
+    # 新工作副本先写入独立目录，最后原子切换 job 引用。
     snapshot_dir = _create_snapshot_directory(job_path.parent)
-    baseline_path = snapshot_dir / BEFORE_CORRECTION_FILENAME
     normalized_path = snapshot_dir / NORMALIZED_FILENAME
+    files = [(normalized_path, baseline_bytes if normalized_bytes is None else normalized_bytes)]
+    if baseline_bytes is not None:
+        baseline_path = snapshot_dir / BEFORE_CORRECTION_FILENAME
+        files.insert(0, (baseline_path, baseline_bytes))
+    assert baseline_path is not None
+    candidate_paths = [path for path, _ in files]
     try:
-        for path, content in (
-            (baseline_path, baseline_bytes),
-            (normalized_path, baseline_bytes if normalized_bytes is None else normalized_bytes),
-        ):
+        for path, content in files:
+            assert content is not None
             with path.open("wb") as target:
                 target.write(content)
                 target.flush()
@@ -411,14 +424,14 @@ def publish_transcript(
             "artifacts": {
                 "normalized_transcript": str(normalized_path),
                 "before_correction": str(baseline_path),
-                "before_correction_sha256": hashlib.sha256(baseline_bytes).hexdigest(),
+                "before_correction_sha256": baseline_digest,
                 "subtitle": None,
             },
         }
         validate_job(job_path, new_job, results_dir=results_dir)
     except BaseException:
         # 清理失败只记录警告，保留原始发布异常。
-        _cleanup_transcript_files(job_path.parent, [baseline_path, normalized_path])
+        _cleanup_transcript_files(job_path.parent, candidate_paths)
         raise
     try:
         atomic_write_json(job_path, new_job)
@@ -438,7 +451,7 @@ def publish_transcript(
             if persisted_job == new_job:
                 _cleanup_transcript_files(job_path.parent, old_paths)
             elif persisted_job == job:
-                _cleanup_transcript_files(job_path.parent, [baseline_path, normalized_path])
+                _cleanup_transcript_files(job_path.parent, candidate_paths)
             else:
                 warning(
                     get_logger(__name__),
@@ -474,7 +487,9 @@ def _cleanup_transcript_files(job_dir: Path, paths: list[Path]) -> None:
             warning(get_logger(__name__), "cannot clean transcript artifact %s: %s", path, error)
     for directory in directories:
         try:
-            directory.rmdir()
+            # 基准或用户文件仍在使用这个目录时，无需尝试删除。
+            if not any(directory.iterdir()):
+                directory.rmdir()
         except FileNotFoundError:
             pass
         except OSError as error:

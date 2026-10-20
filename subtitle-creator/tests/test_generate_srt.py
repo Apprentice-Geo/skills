@@ -107,7 +107,7 @@ def test_generate_publishes_corrected_srt_and_keeps_transcription_bound_job(
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
     assert result.stderr == ""
-    logs = list(job_path.parent.glob("generate-srt-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-srt-*.log"))
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert (
