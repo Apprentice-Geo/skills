@@ -153,6 +153,7 @@ def operate(
         try:
             current = read_json_object(normalized_path, decimal_numbers=True)
             unchanged = not compare_normalized_correction(baseline, current)
+            normalized_srt_segments(current)
         except SubtitleJobError:
             unchanged = False
         if unchanged:

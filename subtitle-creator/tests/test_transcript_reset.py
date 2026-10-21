@@ -63,6 +63,28 @@ def test_reset_restores_bound_snapshot_without_audio_or_upstream(bound_job, dama
     assert transcript.operate("reset", job_path, "all").read_bytes() == baseline
 
 
+@pytest.mark.parametrize("field,value", [("start", False), ("end", True)])
+def test_reset_all_repairs_boolean_timestamps_when_text_is_unchanged(bound_job, field, value):
+    job_path, normalized_path, _audio, _manifest = bound_job
+    job = subtitle_job.load_job(job_path)
+    baseline = Path(job["artifacts"]["before_correction"]).read_bytes()
+    generate_srt.generate_srt(job_path)
+    normalized = subtitle_job.read_json_object(normalized_path)
+    normalized["segments"][0][field] = value
+    subtitle_job.atomic_write_json(normalized_path, normalized)
+    with pytest.raises(subtitle_job.SubtitleJobError, match="must be a JSON number"):
+        generate_srt.generate_srt(job_path)
+
+    restored = transcript.operate("reset", job_path, "all")
+
+    assert restored.read_bytes() == baseline
+    restored_job = subtitle_job.load_job(job_path)
+    assert restored_job["changed_segment_ids"] == []
+    assert restored_job["artifacts"]["subtitle"] is None
+    subtitle_job.validate_job(job_path, restored_job)
+    assert generate_srt.generate_srt(job_path).is_file()
+
+
 def test_reset_rejects_damaged_baseline_without_publishing(bound_job):
     job_path, normalized_path, _audio, _manifest = bound_job
     before = job_path.read_bytes()

@@ -73,7 +73,7 @@ uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id 3
 uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id all
 ```
 
-编辑与 reset 复用不可变基准；文本实际改变才发布新工作副本并使字幕失效，无变化时保留路径和有效字幕。全部 reset 还可从可信基准恢复损坏或缺失的工作副本。命令返回 `normalized_transcript: <absolute-path>`；它们不生成 SRT。
+编辑与 reset 复用不可变基准；仅当当前工作副本合法且文本无变化时保留路径和有效字幕。文本改变或全部 reset 修复损坏、缺失的工作副本时，发布新工作副本并使字幕失效。命令返回 `normalized_transcript: <absolute-path>`；它们不生成 SRT。
 
 ### 3. 生成并交付
 
