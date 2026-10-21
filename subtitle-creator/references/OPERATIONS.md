@@ -21,6 +21,8 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 命令见 [SKILL.md](../SKILL.md#2-查看并按需校正)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。
 
+按时间查看使用 `show --start <seconds> --end <seconds>`，两项必须同时提供，接受有限非负小数，且起点小于终点。仅返回满足 `segment.start < end` 且 `segment.end > start` 的完整分段；不重新分段、裁剪文字或修改时间轴。超出音频范围时返回其中有交集的分段，无匹配时成功返回空数组。不能与 `--id` 或 `--context` 混用。
+
 批量 edit 接收非空 JSON 数组，每项字段严格为 `id`、`text`；拒绝重复或不存在的 ID、额外字段和纯空白文本。文本原样保存，包括引号、空白和换行。允许部分项目与当前文本相同；全部无变化则不提交。`--edits-file` 与 `--id`、`--text` 互斥。
 
 `show` 输出单行 JSON：
@@ -29,7 +31,7 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 {"target_id":3,"segments":[{"id":3,"start":3,"end":4,"text":"示例"}]}
 ```
 
-查看全部时 `target_id` 为 `null`；正文只写 stdout，日志不包含查看或编辑正文。其他命令成功时仅输出结果路径。退出码 `0` 表示成功，失败返回 `1`，stderr 给出错误及可用日志路径。
+查看全部或按时间查看时 `target_id` 为 `null`；正文只写 stdout，日志不包含查看或编辑正文。其他命令成功时仅输出结果路径。退出码 `0` 表示成功，失败返回 `1`，stderr 给出错误及可用日志路径。
 
 ## 删除任务
 

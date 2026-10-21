@@ -5,7 +5,6 @@ import pytest
 import scripts.complete_summary as complete_summary
 import scripts.continue_summary as continue_summary
 from scripts.utils import read_json, write_json
-from scripts.validate_summary import required_sections
 from tests.test_continue_summary import make_needs_job, transcription
 
 
@@ -31,7 +30,7 @@ def test_complete_keeps_prompt_ready_when_summary_is_invalid(
     job_path, audio_path = make_needs_job(workspace_tmp_path)
     job, _manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("{{placeholder}}", encoding="utf-8")
+    summary_path.write_text(" \n", encoding="utf-8")
 
     current, result = complete_summary.complete_summary(job_path)
 
@@ -47,10 +46,7 @@ def test_complete_accepts_warning_and_is_idempotent(
     job, manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
     summary_path.write_text(
-        "# Summary\n\n"
-        + "\n\n".join(
-            f"## {heading}\n\nEnglish only text." for heading in required_sections("zh")
-        ),
+        "English only text, without fixed headings.",
         encoding="utf-8",
     )
     manifest_path.unlink()
@@ -134,10 +130,7 @@ def test_complete_main_moves_success_log_and_routes_warning_to_stderr(
     job, _manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
     summary_path.write_text(
-        "# Summary\n\n"
-        + "\n\n".join(
-            f"## {heading}\n\nEnglish only text." for heading in required_sections("zh")
-        ),
+        "English only text, without fixed headings.",
         encoding="utf-8",
     )
     monkeypatch.setattr(complete_summary, "SKILL_ROOT", workspace_tmp_path)
@@ -161,7 +154,7 @@ def test_complete_main_keeps_validation_failure_log_in_cache(
     job_path, audio_path = make_needs_job(workspace_tmp_path)
     job, _manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("{{placeholder}}", encoding="utf-8")
+    summary_path.write_text(" \n", encoding="utf-8")
     monkeypatch.setattr(complete_summary, "SKILL_ROOT", workspace_tmp_path)
 
     assert complete_summary.main([str(job_path)]) == 1

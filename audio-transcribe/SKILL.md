@@ -41,4 +41,4 @@ uv run --no-sync python -m scripts.transcribe "<local-audio-path>"
 - 设置数据目录：`--data-dir` 或 `AUDIO_TRANSCRIBE_DATA_DIR`，详见[运行目录](references/ERROR-HANDLING.md#运行目录与写入失败)。
 - 首次安装、切换 CPU/CUDA 或模型缺失：[环境修复](references/ERROR-HANDLING.md#setup-与依赖)、[模型安装](references/ERROR-HANDLING.md#模型安装)。
 - CLI 其他选项：`uv run --no-sync python -m scripts.transcribe --help`。
-- 数据流、身份、切片和合同：[架构](references/ARCHITECTURE.md)；执行评测场景：[Agent 评测](references/AGENT-EVALS.md)。
+- 数据流、身份、切片和合同：[架构](references/ARCHITECTURE.md)。

@@ -27,7 +27,7 @@ from scripts.summary_job import (
     relative_path,
     resolve_local_path,
 )
-from scripts.summary_prompt import normalize_template_language, write_summary_prompt
+from scripts.summary_prompt import normalize_summary_language, write_summary_prompt
 from scripts.utils import (
     normalize_bilibili_video_url,
     path_to_posix,
@@ -221,7 +221,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--summary-language",
         choices=("zh", "en"),
-        help="Language for the final summary template. Defaults to transcript language.",
+        help="Language for the final summary. Defaults to transcript language.",
     )
     parser.add_argument(
         "--skip-subtitles",
@@ -261,7 +261,7 @@ def _run_pipeline_unlocked(
                 )
                 if (
                     not language
-                    or normalize_template_language(language) != options.language
+                    or normalize_summary_language(language) != options.language
                 ):
                     raise ValueError(
                         "Existing subtitle language does not match --language. "

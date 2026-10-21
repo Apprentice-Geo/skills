@@ -11,7 +11,7 @@
 - `SKILL.md`：Agent 的 prepare/inspect/continue/complete 编排流程与能力边界。
 - `README.md`：面向使用者的项目概述、使用边界、隐私与进一步阅读说明。
 - `scripts/`：资源准备、外部转写接入、字幕转换和总结完成；详细模块边界见 `references/ARCHITECTURE.md`。
-- `assets/`：总结模板与提示词资源。
+- `assets/`：总结内容指引与提示词资源。
 - `references/ARCHITECTURE.md`：模块职责、job 状态和 artifact 边界。
 - `references/ERROR-HANDLING.md`：故障定位、恢复与停止条件。
 - `tests/`：与公开状态转换和脚本行为对应的测试。

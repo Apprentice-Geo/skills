@@ -4,28 +4,26 @@ import scripts.validate_summary as validate_summary
 
 
 def valid_summary(language: str, body: str) -> str:
-    return "# Summary\n\n" + "\n\n".join(
-        f"## {heading}\n\n{body}"
-        for heading in validate_summary.required_sections(language)
-    )
+    title = "总结" if language == "zh" else "Summary"
+    return f"# {title}\n\n{body}\n"
 
 
-def test_validate_summary_rejects_placeholders(workspace_tmp_path: Path) -> None:
+def test_validate_summary_accepts_literal_braces(workspace_tmp_path: Path) -> None:
     summary = workspace_tmp_path / "summary.md"
-    summary.write_text("# Summary\n\n{{title}}\n", encoding="utf-8")
+    summary.write_text("示例中的变量使用 {{title}} 语法。\n", encoding="utf-8")
 
     result = validate_summary.validate_summary(summary)
 
-    assert "placeholder remains" in result.errors
+    assert result.ok
 
 
-def test_validate_summary_rejects_template_comments(workspace_tmp_path: Path) -> None:
+def test_validate_summary_accepts_comments_in_content(workspace_tmp_path: Path) -> None:
     summary = workspace_tmp_path / "summary.md"
-    summary.write_text("<!-- Organize the summary by topic -->\n", encoding="utf-8")
+    summary.write_text("内容总结。\n<!-- 用户保留的注释 -->\n", encoding="utf-8")
 
     result = validate_summary.validate_summary(summary)
 
-    assert "template comment remains" in result.errors
+    assert result.ok
 
 
 def test_validate_summary_accepts_clean_markdown(workspace_tmp_path: Path) -> None:
@@ -38,7 +36,7 @@ def test_validate_summary_accepts_clean_markdown(workspace_tmp_path: Path) -> No
     assert result.errors == []
 
 
-def test_validate_summary_accepts_matching_template_languages(
+def test_validate_summary_accepts_matching_languages(
     workspace_tmp_path: Path,
 ) -> None:
     chinese_summary = workspace_tmp_path / "BVTEST_summary_zh.md"
@@ -59,7 +57,7 @@ def test_language_warning_at_threshold() -> None:
 
 def test_language_warning_below_threshold() -> None:
     assert validate_summary.language_warning("中文内容完全正确abc", "zh") == (
-        "summary language does not match the zh template: Chinese characters are "
+        "summary language does not match the expected language zh: Chinese characters are "
         "72.7% of the language characters; rewrite the summary in Chinese"
     )
 
@@ -107,34 +105,17 @@ def test_validate_summary_rejects_non_utf8_file(workspace_tmp_path: Path) -> Non
     assert result.errors == ["summary file is not valid UTF-8"]
 
 
-def test_validate_summary_reports_multiple_errors(workspace_tmp_path: Path) -> None:
-    summary = workspace_tmp_path / "summary.md"
-    summary.write_text("{{title}}\n<!-- remove this -->\n", encoding="utf-8")
-
-    result = validate_summary.validate_summary(summary)
-
-    assert result.errors == [
-        "placeholder remains",
-        "template comment remains",
-    ]
-
-
 def test_validate_summary_reports_language_warning_separately_from_errors(
     workspace_tmp_path: Path,
 ) -> None:
     summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text(
-        "{{title}}\n<!-- remove this -->\nEnglish text\n", encoding="utf-8"
-    )
+    summary.write_text("English text\n", encoding="utf-8")
 
     result = validate_summary.validate_summary(summary)
 
-    assert result.errors[:2] == [
-        "placeholder remains",
-        "template comment remains",
-    ]
+    assert result.ok and result.errors == []
     assert result.warnings == [
-        "summary language does not match the zh template: Chinese characters are "
+        "summary language does not match the expected language zh: Chinese characters are "
         "0.0% of the language characters; rewrite the summary in Chinese",
     ]
 
@@ -154,14 +135,14 @@ def test_main_prints_pass_message_for_valid_summary(
     assert capsys.readouterr().out == "Summary validation passed.\n"
 
 
-def test_main_prints_all_errors_for_invalid_summary(
+def test_main_reports_empty_summary(
     workspace_tmp_path: Path,
     capsys,
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(validate_summary, "SKILL_ROOT", workspace_tmp_path)
     summary = workspace_tmp_path / "summary.md"
-    summary.write_text("{{title}}\n<!-- remove this -->\n", encoding="utf-8")
+    summary.write_text(" \n", encoding="utf-8")
 
     exit_code = validate_summary.main([str(summary)])
 
@@ -169,14 +150,12 @@ def test_main_prints_all_errors_for_invalid_summary(
     terminal = capsys.readouterr()
     assert terminal.out == ""
     assert terminal.err.startswith(
-        "Summary validation failed:\n"
-        "- placeholder remains\n"
-        "- template comment remains\n"
+        "Summary validation failed:\n- summary body is empty\n"
     )
     assert "Full log:" in terminal.err
 
 
-def test_main_warns_about_template_language_without_failing(
+def test_main_warns_about_summary_language_without_failing(
     workspace_tmp_path: Path,
     capsys,
     monkeypatch,
@@ -190,7 +169,9 @@ def test_main_warns_about_template_language_without_failing(
     assert exit_code == 0
     terminal = capsys.readouterr()
     assert terminal.out == "Summary validation passed with warnings:\n"
-    assert terminal.err.startswith("- summary language does not match the en template:")
+    assert terminal.err.startswith(
+        "- summary language does not match the expected language en:"
+    )
 
 
 def test_main_logs_runtime_read_error_without_terminal_traceback(
@@ -224,16 +205,10 @@ def test_validation_rejects_empty_body(workspace_tmp_path: Path) -> None:
     assert "summary body is empty" in validate_summary.validate_summary(summary).errors
 
 
-def test_validation_requires_filled_template_sections(workspace_tmp_path: Path) -> None:
+def test_validation_accepts_summary_without_fixed_sections(
+    workspace_tmp_path: Path,
+) -> None:
     summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text("# 标题\n\n## 一句话总结\n\n", encoding="utf-8")
+    summary.write_text("- 用户只需要这一条核心结论。\n", encoding="utf-8")
     result = validate_summary.validate_summary(summary)
-    assert "required section is empty: 一句话总结" in result.errors
-    assert "required section is missing: 核心要点" in result.errors
-
-
-def test_optional_sections_are_optional(workspace_tmp_path: Path) -> None:
-    summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text(valid_summary("zh", "有效总结内容。"), encoding="utf-8")
-    assert validate_summary.validate_summary(summary).ok
-    assert "广告内容" not in validate_summary.required_sections("zh")
+    assert result.ok and not result.warnings

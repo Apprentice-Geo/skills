@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal, NoReturn, overload
 
@@ -47,6 +48,40 @@ def _context(value: str) -> int:
     if not isinstance(parsed, int):
         raise SubtitleJobError("context must be a non-negative integer")
     return parsed
+
+
+def _seconds(value: str) -> Decimal:
+    try:
+        seconds = Decimal(value)
+    except InvalidOperation as error:
+        raise SubtitleJobError("time must be a finite non-negative number of seconds") from error
+    if not seconds.is_finite() or seconds < 0:
+        raise SubtitleJobError("time must be a finite non-negative number of seconds")
+    return seconds
+
+
+def _show_time_range(
+    command: str,
+    segment_id: int | str | None,
+    context: int | None,
+    start: Decimal | float | None,
+    end: Decimal | float | None,
+) -> tuple[Decimal, Decimal] | None:
+    if start is None and end is None:
+        return None
+    if command != "show" or segment_id is not None or context is not None:
+        raise SubtitleJobError("time range requires show without id or context")
+    if start is None or end is None:
+        raise SubtitleJobError("time range requires both start and end")
+    if any(
+        isinstance(value, bool) or not isinstance(value, (Decimal, int, float))
+        for value in (start, end)
+    ):
+        raise SubtitleJobError("time must be a finite non-negative number of seconds")
+    first, last = _seconds(str(start)), _seconds(str(end))
+    if first >= last:
+        raise SubtitleJobError("time range requires start < end")
+    return first, last
 
 
 def _load_bound(job_path: Path, results_dir: Path | None):
@@ -97,6 +132,8 @@ def operate(
     segment_id: int | str | None = None,
     *,
     context: int | None = None,
+    start: Decimal | float | None = None,
+    end: Decimal | float | None = None,
     text: str | None = None,
     edits: list[dict[str, Any]] | None = None,
     results_dir: Path | None = None,
@@ -110,6 +147,8 @@ def operate(
     segment_id: int | str | None = None,
     *,
     context: int | None = None,
+    start: Decimal | float | None = None,
+    end: Decimal | float | None = None,
     text: str | None = None,
     edits: list[dict[str, Any]] | None = None,
     results_dir: Path | None = None,
@@ -122,17 +161,24 @@ def operate(
     segment_id: int | str | None = None,
     *,
     context: int | None = None,
+    start: Decimal | float | None = None,
+    end: Decimal | float | None = None,
     text: str | None = None,
     edits: list[dict[str, Any]] | None = None,
     results_dir: Path | None = None,
 ) -> Path | dict[str, Any]:
     if command not in {"show", "edit", "reset"}:
         raise SubtitleJobError("unsupported transcript command")
+    time_range = _show_time_range(command, segment_id, context, start, end)
     if edits is not None:
         if command != "edit" or segment_id is not None or text is not None:
             raise SubtitleJobError("batch edits cannot be combined with id or text")
         edits = _validate_edits(edits)
-    elif segment_id != "all" and (type(segment_id) is not int or segment_id < 0):
+    elif (
+        time_range is None
+        and segment_id != "all"
+        and (type(segment_id) is not int or segment_id < 0)
+    ):
         raise SubtitleJobError("id must be a non-negative integer or all")
     if context is not None and (type(context) is not int or context < 0):
         raise SubtitleJobError("context must be a non-negative integer")
@@ -167,7 +213,14 @@ def operate(
     )
     segments = normalized["segments"]
     if command == "show":
-        if isinstance(segment_id, int):
+        if time_range is not None:
+            first, last = time_range
+            segments = [
+                segment
+                for segment in segments
+                if segment["start"] < last and segment["end"] > first
+            ]
+        elif isinstance(segment_id, int):
             count = context or 0
             segments = segments[max(0, segment_id - count) : segment_id + count + 1]
         return {"target_id": None if segment_id == "all" else segment_id, "segments": segments}
@@ -201,10 +254,12 @@ def main(argv: list[str] | None = None) -> int:
     for command in ("show", "edit", "reset"):
         child = commands.add_parser(command)
         child.add_argument("subtitle_job_path", help="subtitle_job.json 的绝对路径。")
-        child.add_argument("--id", required=command != "edit", type=_segment_id)
+        child.add_argument("--id", required=command == "reset", type=_segment_id)
         add_data_dir_argument(child)
         if command == "show":
             child.add_argument("--context", type=_context, default=None)
+            child.add_argument("--start", type=_seconds, help="查询起点，单位为秒。")
+            child.add_argument("--end", type=_seconds, help="查询终点，单位为秒。")
         if command == "edit":
             child.add_argument("--text")
             child.add_argument("--edits-file", help="UTF-8 JSON 数组，每项仅含 id 和 text。")
@@ -212,6 +267,12 @@ def main(argv: list[str] | None = None) -> int:
         arguments = parser.parse_args(argv)
         if arguments.command == "show" and arguments.id == "all" and arguments.context is not None:
             raise SubtitleJobError("--id all forbids --context")
+        if arguments.command == "show":
+            time_range = _show_time_range(
+                "show", arguments.id, arguments.context, arguments.start, arguments.end
+            )
+            if arguments.id is None and time_range is None:
+                raise SubtitleJobError("show requires --id or both --start and --end")
         edits = None
         if arguments.command == "edit":
             if arguments.edits_file:
@@ -238,6 +299,8 @@ def main(argv: list[str] | None = None) -> int:
                 job_path,
                 arguments.id,
                 context=getattr(arguments, "context", None),
+                start=getattr(arguments, "start", None),
+                end=getattr(arguments, "end", None),
                 text=getattr(arguments, "text", None),
                 edits=edits,
                 results_dir=paths.results_dir,

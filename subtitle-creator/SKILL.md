@@ -55,6 +55,7 @@ uv run --no-sync python -m scripts.bind_transcription "<absolute-job-path>" --tr
 ```powershell
 uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id 3 --context 2
 uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id all
+uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --start 60 --end 90
 uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits-file "<edits.json>"
 ```
 
@@ -64,7 +65,7 @@ uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits
 [{"id":3,"text":"校正后的完整文本"},{"id":7,"text":"另一处分段校正"}]
 ```
 
-整批校验成功才一次提交；重复 ID、越界 ID、空白文本均拒绝，失败不部分写入。单段修改仍可用 `--id 3 --text '<完整替换文本>'`，不能与 `--edits-file` 混用。`show` 返回 `target_id` 和 `segments`，`--id all` 不接受 `--context`。
+整批校验成功才一次提交；重复 ID、越界 ID、空白文本均拒绝，失败不部分写入。单段修改仍可用 `--id 3 --text '<完整替换文本>'`，不能与 `--edits-file` 混用。`show` 返回 `target_id` 和 `segments`，`--id all` 不接受 `--context`。按时间查询时成对提供 `--start`、`--end`，单位为秒，可含小数，要求 `0 <= start < end`；返回与 `[start, end)` 重叠的完整分段，不裁剪文本或时间轴，`target_id` 为 `null`，无匹配时返回空数组。时间范围不能与 `--id` 或 `--context` 混用。
 
 恢复一段或全部文本：
 

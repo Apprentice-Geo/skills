@@ -25,7 +25,7 @@ from scripts.summary_job import (
     require_configured_job_path,
     resolve_local_path,
 )
-from scripts.summary_prompt import select_summary_template, write_summary_prompt
+from scripts.summary_prompt import select_summary_language, write_summary_prompt
 from scripts.transcript_output import render_markdown, write_markdown_from_json
 from scripts.transcription_input import (
     TranscriptionInput,
@@ -169,16 +169,16 @@ def _continue_summary_unlocked(
             raise JobValidationError(f"transcript does not exist: {source_path}")
         if transcript["source"] == "bilibili_subtitle":
             write_markdown_from_json(source_path, markdown_path)
-        # 已发布的模板语言是默认语言的唯一来源，不重新读取上游。
+        # 已发布的总结语言是默认语言的唯一来源，不重新读取上游。
         match = re.search(r"_summary_(zh|en)\.md$", job["prompt"]["summary_path"])
         default_language = match.group(1) if match else None
 
     language = (
         summary_language or job["video"].get("summary_language") or default_language
     )
-    template_language, _ = select_summary_template(language)
+    selected_language = select_summary_language(language)
     summary_path = (
-        job_path.parent / f"{job['video']['bvid']}_summary_{template_language}.md"
+        job_path.parent / f"{job['video']['bvid']}_summary_{selected_language}.md"
     )
     invalidated = manifest_path is not None or (
         job["prompt"] is not None and job["prompt"]["summary_path"] != summary_path.name

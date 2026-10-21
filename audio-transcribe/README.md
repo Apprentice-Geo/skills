@@ -29,7 +29,6 @@
 - [SKILL.md](SKILL.md)：完整使用规则、环境要求、命令和停止条件。
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。
 - [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：安装、模型、Provider、缓存和产物错误处理。
-- [references/AGENT-EVALS.md](references/AGENT-EVALS.md)：指令与跨 Skill 编排的最小执行评测场景。
 
 ## 开发与维护
 

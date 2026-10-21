@@ -6,7 +6,7 @@
 
 `scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `BILI_AUDIOSUMMARY_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。所有日志固定保存在 `.cache/logs/`，不随 job 移动或删除。
 
-所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
+所有命令启动时解析绝对路径，再传给业务入口。源码、提示词资源、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
 
 创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
 
@@ -119,13 +119,11 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 出现以下情况时，completion 失败且不改变 `prompt_ready`：
 
 - summary 文件缺失、为空或不是有效 UTF-8；
-- 模板必需章节缺失或未填写；
-- 仍有 template placeholder 或 prompt 注释；
 - 适用的 transcript source 无效。
 
 summary 语言比例不足只产生 warning，命令仍以成功状态退出并把 job 改为 `complete`。warning 写入 stderr 和当次 complete 日志，不写入 `summary_job.json`。读取 warning，并根据总结指令判断是否需要修订。
 
-脚本从模板提取非 optional 的必需 section 并检查正文；不判断内容是否有 transcript 支持或时间戳是否对应相关内容，这些项目由 Agent 在 completion 前检查。适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。通过上述脚本校验的 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
+脚本不检查固定章节或格式；内容是否回应用户请求、有 transcript 支持、时间戳对应相关内容，以及是否误复制 prompt，均由 Agent 在 completion 前检查。适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。通过上述脚本校验的 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
 
 ## 日志
 
@@ -147,7 +145,7 @@ summary 语言比例不足只产生 warning，命令仍以成功状态退出并�
 - 既没有可用的原生字幕，也没有可用音频；
 - job 为 `preparing`、`needs_transcription` 或 `failed`；
 - job 未通过 schema 或路径验证，或无法安全读取必需的内部 artifact；
-- 无法安全解析必需的 prompt、template、transcript 或 summary 路径；
+- 无法安全解析必需的 prompt、transcript 或 summary 路径；
 - 转写在生成完整公共 manifest 前失败。
 
 禁止通过手动编辑 job status 绕过停止条件。

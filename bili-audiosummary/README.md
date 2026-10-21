@@ -6,6 +6,8 @@
 
 它不负责分析画面、图表、屏幕文字、动作、评论区或封面，也不适合作为 PV、音乐、舞蹈等主要依赖视觉或声音表现而非讲述内容的视频分析工具。
 
+总结按用户请求和内容选择组织方式，不要求固定章节或模板；默认关注要点见[内容指引](assets/summary_instructions.md)。
+
 ## 安装环境
 
 使用 Windows、Python 3.12 和 uv。当前 checkout 通过相邻路径 `../audio-transcribe/packages/audio-transcribe-contract` 安装本地合同包；三个音频 Skill 需保留在同一仓库布局。独立分发此 Skill 时，须同时提供合同包并调整依赖来源，或先发布对应版本；不能仅复制此目录后沿用不存在的远端版本。

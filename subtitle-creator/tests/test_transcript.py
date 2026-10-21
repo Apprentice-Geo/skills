@@ -65,6 +65,68 @@ def test_show_preserves_artifacts_and_precision(task, target, context, ids):
     assert all(p.read_bytes() == content for p, content in before.items())
 
 
+@pytest.mark.parametrize(
+    "start,end,ids",
+    [
+        (1, 3, [1, 2]),
+        (Decimal("0.5"), Decimal("1.5"), [0, 1]),
+        (Decimal("0.99912345678901234567890123456789"), 1, []),
+        (5, 10, []),
+        (0, 100, [0, 1, 2, 3, 4]),
+    ],
+)
+def test_show_time_range_returns_overlapping_segments_without_changes(task, start, end, ids):
+    job_path, audio, manifest, _, _ = task
+    transcript.operate("edit", job_path, 1, text="校正后的文字")
+    subtitle = generate_srt.generate_srt(job_path)
+    audio.unlink()
+    manifest.unlink()
+    job = subtitle_job.load_job(job_path)
+    files = [
+        job_path,
+        subtitle,
+        *(
+            Path(job["artifacts"][field])
+            for field in ("before_correction", "normalized_transcript")
+        ),
+    ]
+    before = {path: path.read_bytes() for path in files}
+    current = transcript.operate("show", job_path, "all")["segments"]
+    output = transcript.operate("show", job_path, start=start, end=end)
+    assert output == {"target_id": None, "segments": [current[index] for index in ids]}
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_show_time_range_cli_preserves_decimal_precision(task, capsys):
+    assert transcript.main(["show", str(task[0]), "--start", "0.5", "--end", "1.5"]) == 0
+    output = json.loads(capsys.readouterr().out, parse_float=Decimal)
+    assert output == {"target_id": None, "segments": task[3]["segments"][:2]}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        [],
+        ["--start", "0"],
+        ["--end", "1"],
+        ["--start", "1", "--end", "1"],
+        ["--start", "2", "--end", "1"],
+        ["--start", "-1", "--end", "1"],
+        ["--start", "nan", "--end", "1"],
+        ["--start", "0", "--end", "Infinity"],
+        ["--start", "oops", "--end", "1"],
+        ["--start", "0", "--end", "1", "--id", "0"],
+        ["--start", "0", "--end", "1", "--context", "1"],
+    ],
+)
+def test_invalid_time_range_is_rejected_before_loading_job(task, arguments, capsys):
+    before = task[0].read_bytes()
+    assert transcript.main(["show", str(task[0]), *arguments]) == 1
+    output = capsys.readouterr()
+    assert output.out == "" and output.err.startswith("error:")
+    assert task[0].read_bytes() == before
+
+
 def test_edit_reset_records_precision_and_manual_subtitle(task, capsys):
     job_path, _, _, original, baseline = task
     old_srt = generate_srt.generate_srt(job_path)

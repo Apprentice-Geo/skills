@@ -26,8 +26,3 @@ DEFAULT_AUDIO_CODEC = "best"
 DEFAULT_AUDIO_SELECTOR = "worstaudio/worst[acodec!=none]/worst"
 
 DEFAULT_SUBTITLE_LANGUAGE = "zh"
-
-SUMMARY_TEMPLATE_BY_LANGUAGE = {
-    "en": ASSETS_DIR / "summary_template_en.md",
-    "zh": ASSETS_DIR / "summary_template_zh.md",
-}
