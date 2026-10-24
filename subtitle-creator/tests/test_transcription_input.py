@@ -15,7 +15,7 @@ def test_adapter_projects_only_consumer_fields(monkeypatch: pytest.MonkeyPatch) 
             "language": "zh",
             "duration": 1.0,
             "segments": [{"id": 0, "start": 0.0, "end": 1.0, "text": "文本"}],
-            "items": [],
+            "items": [{"text": "文本", "start": 0, "end": 1, "probability": 0.75}],
         },
     )
     monkeypatch.setattr(transcription_input, "load_result", lambda _path: result)
@@ -24,6 +24,8 @@ def test_adapter_projects_only_consumer_fields(monkeypatch: pytest.MonkeyPatch) 
 
     assert projected.audio_id == "a" * 64
     assert projected.segments[0]["text"] == "文本"
+    assert projected.items == result.transcript["items"]
+    assert projected.items[0] is not result.transcript["items"][0]
 
 
 def test_adapter_hides_contract_error_type(monkeypatch: pytest.MonkeyPatch) -> None:

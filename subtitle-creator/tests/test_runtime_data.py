@@ -220,6 +220,7 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
         language="en",
         duration=2.0,
         segments=[{"id": 0, "start": 0.0, "end": 1.0, "text": "hello"}],
+        items=[{"start": 0, "end": 1, "text": "hello", "probability": None}],
     )
     monkeypatch.setattr(bind_transcription, "load_transcription", lambda _path: snapshot)
     common = ["--data-dir", str(data)]

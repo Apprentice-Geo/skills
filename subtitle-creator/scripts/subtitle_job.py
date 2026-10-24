@@ -5,7 +5,9 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -13,8 +15,8 @@ from uuid import uuid4
 from scripts.process_logging import get_logger, warning
 from scripts.runtime_paths import RuntimePaths
 
-SCHEMA_VERSION = 2
-JOB_SCHEMA_VERSION = 3
+SCHEMA_VERSION = 3
+JOB_SCHEMA_VERSION = 4
 JOB_FILENAME = "subtitle_job.json"
 NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
@@ -28,6 +30,13 @@ JOB_KEYS = {
     "audio",
     "artifacts",
     "changed_segment_ids",
+    "subtitle_options",
+}
+DEFAULT_SUBTITLE_OPTIONS = {
+    "target_chars": 24,
+    "target_seconds": Decimal(6),
+    "min_gap": Decimal("0.2"),
+    "tail_factor": Decimal("1.1"),
 }
 
 
@@ -70,18 +79,7 @@ def read_json_object(path: Path, *, decimal_numbers: bool = False) -> dict[str, 
 
 
 def load_job(path: Path) -> dict[str, Any]:
-    job = read_json_object(path)
-    if type(job.get("schema_version")) is int and job["schema_version"] == 2:
-        old_status = job.get("status")
-        statuses = {
-            "needs_transcription": "transcription_unbound",
-            "editable": "transcription_bound",
-        }
-        if not isinstance(old_status, str) or old_status not in statuses:
-            raise SubtitleJobError(f"unsupported legacy job status: {old_status}")
-        job["schema_version"] = JOB_SCHEMA_VERSION
-        job["status"] = statuses[old_status]
-    return job
+    return read_json_object(path, decimal_numbers=True)
 
 
 def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
@@ -98,7 +96,7 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
             delete=False,
         ) as temporary:
             temporary_path = Path(temporary.name)
-            json.dump(value, temporary, ensure_ascii=False, indent=2, allow_nan=False)
+            temporary.write(transcript_json(value))
             temporary.write("\n")
             temporary.flush()
             os.fsync(temporary.fileno())
@@ -160,20 +158,21 @@ def compare_normalized_correction(
     normalized: dict[str, Any],
 ) -> list[int]:
     for name, payload in (("before_correction", baseline), ("normalized_transcript", normalized)):
-        if set(payload) != {
+        version = payload.get("schema_version")
+        if type(version) is not int or version != SCHEMA_VERSION:
+            raise SubtitleJobError(f"{name} has an unsupported schema_version")
+        fields = {
             "schema_version",
             "source",
             "provider",
             "language",
             "duration",
             "segments",
-        }:
+            "items",
+        }
+        if set(payload) != fields:
             raise SubtitleJobError(f"{name} has invalid fields")
-        if (
-            type(payload.get("schema_version")) is not int
-            or payload["schema_version"] != SCHEMA_VERSION
-        ):
-            raise SubtitleJobError(f"{name} has an unsupported schema_version")
+        _validate_items(payload)
         if payload.get("source") != "audio_transcribe":
             raise SubtitleJobError(f"{name} source is invalid")
         segments = payload.get("segments")
@@ -221,6 +220,52 @@ def _decimal_number(value: object, field: str) -> Decimal:
     return number
 
 
+def _validate_items(payload: dict[str, Any]) -> None:
+    duration = _decimal_number(payload.get("duration"), "duration")
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise SubtitleJobError("items must be a non-empty array")
+    previous_end = Decimal(0)
+    for index, item in enumerate(items):
+        field = f"items[{index}]"
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"text", "start", "end", "probability"}
+            or not isinstance(item["text"], str)
+            or not item["text"]
+        ):
+            raise SubtitleJobError(f"{field} has invalid fields or text")
+        start = _decimal_number(item["start"], f"{field}.start")
+        end = _decimal_number(item["end"], f"{field}.end")
+        if start < previous_end or end <= start or end > duration:
+            raise SubtitleJobError(f"{field} has invalid or overlapping timestamps")
+        if item["probability"] is not None:
+            probability = _decimal_number(item["probability"], f"{field}.probability")
+            if probability > 1:
+                raise SubtitleJobError(f"{field}.probability must be between zero and one")
+        previous_end = end
+
+
+def validate_subtitle_options(options: Any) -> dict[str, Any]:
+    if not isinstance(options, dict) or set(options) != set(DEFAULT_SUBTITLE_OPTIONS):
+        raise SubtitleJobError("subtitle_options has invalid fields")
+    if type(options["target_chars"]) is not int or options["target_chars"] <= 0:
+        raise SubtitleJobError("target_chars must be a positive integer")
+    options = dict(options)
+    for field in ("target_seconds", "min_gap", "tail_factor"):
+        if isinstance(options[field], float):
+            options[field] = Decimal(str(options[field]))
+        if _decimal_number(options[field], field) <= 0:
+            raise SubtitleJobError(f"{field} must be finite and positive")
+    if options["tail_factor"] != Decimal("1.1"):
+        raise SubtitleJobError("tail_factor must be 1.1")
+    return options
+
+
+def _milliseconds(seconds: Decimal) -> int:
+    return int((seconds * 1000).to_integral_value(rounding=ROUND_HALF_UP))
+
+
 def normalized_srt_segments(normalized: dict[str, Any]) -> list[tuple[int, int, str]]:
     duration = _decimal_number(normalized.get("duration"), "normalized_transcript.duration")
     segments = normalized["segments"]
@@ -232,8 +277,8 @@ def normalized_srt_segments(normalized: dict[str, Any]) -> list[tuple[int, int, 
         end = _decimal_number(segment["end"], f"segments[{segment_id}].end")
         if end > duration:
             raise SubtitleJobError(f"segments[{segment_id}].end exceeds duration")
-        start_ms = int((start * 1000).to_integral_value(rounding=ROUND_HALF_UP))
-        end_ms = int((end * 1000).to_integral_value(rounding=ROUND_HALF_UP))
+        start_ms = _milliseconds(start)
+        end_ms = _milliseconds(end)
         if end_ms <= start_ms:
             raise SubtitleJobError(f"segments[{segment_id}] is empty after millisecond rounding")
         if start_ms < previous_end:
@@ -246,6 +291,152 @@ def normalized_srt_segments(normalized: dict[str, Any]) -> list[tuple[int, int, 
     return result
 
 
+def _separator(character: str) -> bool:
+    return character.isspace() or unicodedata.category(character).startswith("P")
+
+
+def _item_groups(baseline: dict[str, Any]) -> tuple[list[list[dict[str, Any]]], set[int]]:
+    """仅按完整时间包含关系归属；跨段、歧义或缺少 items 的段不猜测。"""
+    segments = baseline["segments"]
+    groups: list[list[dict[str, Any]]] = [[] for _ in segments]
+    invalid: set[int] = set()
+    first = 0
+    for item in baseline["items"]:
+        while first < len(segments) and segments[first]["end"] <= item["start"]:
+            first += 1
+        overlaps = []
+        index = first
+        while index < len(segments) and segments[index]["start"] < item["end"]:
+            overlaps.append(index)
+            index += 1
+        if len(overlaps) == 1:
+            index = overlaps[0]
+            segment = segments[index]
+            if segment["start"] <= item["start"] and item["end"] <= segment["end"]:
+                groups[index].append(item)
+                continue
+        invalid.update(overlaps)
+    return groups, invalid
+
+
+def _item_offsets(text: str, items: list[dict[str, Any]]) -> list[int] | None:
+    positions = [index for index, character in enumerate(text) if not _separator(character)]
+    keys = ["".join(c for c in item["text"] if not _separator(c)) for item in items]
+    # 无实字的 item 没有唯一文字锚点，不能据此确定切点。
+    if not keys or any(not key for key in keys):
+        return None
+    if "".join(keys) != "".join(text[index] for index in positions):
+        return None
+    offsets = [0]
+    consumed = 0
+    for key in keys[:-1]:
+        consumed += len(key)
+        # 两个 item 之间的标点和空白归前条。
+        offsets.append(positions[consumed])
+    offsets.append(len(text))
+    return offsets
+
+
+def _correction_keeps_offsets(before: str, after: str) -> bool:
+    return len(before) == len(after) and all(
+        left == right or (not _separator(left) and not _separator(right))
+        for left, right in zip(before, after, strict=True)
+    )
+
+
+type SubtitleBlock = tuple[Decimal, Decimal, str]
+
+
+def _split_segment(
+    segment: dict[str, Any],
+    text: str,
+    items: list[dict[str, Any]],
+    offsets: list[int],
+    options: dict[str, Any],
+) -> list[SubtitleBlock]:
+    blocks: list[SubtitleBlock] = []
+    start = Decimal(segment["start"])
+    text_start = 0
+    chars = 0
+    for index, (current, following) in enumerate(pairwise(items)):
+        text_end = offsets[index + 1]
+        chars += sum(not character.isspace() for character in text[offsets[index] : text_end])
+        reached = (
+            chars >= options["target_chars"] or current["end"] - start >= options["target_seconds"]
+        )
+        if reached and following["start"] - current["end"] >= options["min_gap"]:
+            blocks.append((start, Decimal(current["end"]), text[text_start:text_end]))
+            start = Decimal(following["start"])
+            text_start = text_end
+            chars = 0
+    blocks.append((start, Decimal(segment["end"]), text[text_start:]))
+    return blocks
+
+
+def rendered_srt_segments(
+    normalized: dict[str, Any],
+    baseline: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+    *,
+    warn: bool = False,
+) -> list[tuple[int, int, str]]:
+    options = validate_subtitle_options(DEFAULT_SUBTITLE_OPTIONS if options is None else options)
+    baseline = baseline if baseline is not None else normalized
+    compare_normalized_correction(baseline, normalized)
+    normalized_srt_segments(normalized)
+    groups, invalid = _item_groups(baseline)
+    blocks_by_segment: list[list[SubtitleBlock]] = []
+    fallback = set(invalid)
+    for before, after, items in zip(
+        baseline["segments"], normalized["segments"], groups, strict=True
+    ):
+        original = " ".join(before["text"].split())
+        text = " ".join(after["text"].split())
+        offsets = _item_offsets(original, items)
+        if (
+            before["id"] in invalid
+            or offsets is None
+            or not _correction_keeps_offsets(original, text)
+        ):
+            fallback.add(before["id"])
+            blocks = [(Decimal(before["start"]), Decimal(before["end"]), text)]
+        else:
+            blocks = _split_segment(before, text, items, offsets, options)
+        blocks_by_segment.append(blocks)
+    if warn and fallback:
+        warning(
+            get_logger(__name__),
+            "cannot subdivide segment IDs %s: missing/unmatched items or incompatible correction; "
+            "keeping original segment boundaries",
+            sorted(fallback),
+        )
+
+    duration = Decimal(normalized["duration"])
+    while True:
+        flattened = [
+            (group_index, block_index, block)
+            for group_index, group in enumerate(blocks_by_segment)
+            for block_index, block in enumerate(group)
+        ]
+        result = []
+        for index, (group_index, block_index, (start, end, text)) in enumerate(flattened):
+            next_start = flattened[index + 1][2][0] if index + 1 < len(flattened) else duration
+            extended_end = min(start + (end - start) * options["tail_factor"], next_start, duration)
+            start_ms, end_ms = _milliseconds(start), _milliseconds(extended_end)
+            if end_ms <= start_ms:
+                group = blocks_by_segment[group_index]
+                if len(group) == 1:
+                    raise SubtitleJobError("segment is empty after millisecond rounding")
+                # 撤销切点，优先并入前块；首块则并入后块。始终从未延长时间重算。
+                merge_index = max(0, block_index - 1)
+                left, right = group[merge_index : merge_index + 2]
+                group[merge_index : merge_index + 2] = [(left[0], right[1], left[2] + right[2])]
+                break
+            result.append((start_ms, end_ms, text.strip()))
+        else:
+            return result
+
+
 def _timestamp(milliseconds: int) -> str:
     hours, remainder = divmod(milliseconds, 3_600_000)
     minutes, remainder = divmod(remainder, 60_000)
@@ -253,16 +444,31 @@ def _timestamp(milliseconds: int) -> str:
     return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
 
-def expected_srt_bytes(normalized: dict[str, Any]) -> bytes:
+def expected_srt_bytes(
+    normalized: dict[str, Any],
+    baseline: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+    *,
+    warn: bool = False,
+) -> bytes:
     blocks = [
         f"{index}\n{_timestamp(start)} --> {_timestamp(end)}\n{text}"
-        for index, (start, end, text) in enumerate(normalized_srt_segments(normalized), start=1)
+        for index, (start, end, text) in enumerate(
+            rendered_srt_segments(normalized, baseline, options, warn=warn), start=1
+        )
     ]
     return ("\n\n".join(blocks) + "\n").encode("utf-8-sig")
 
 
-def subtitle_matches_normalized(subtitle_path: Path, normalized: dict[str, Any]) -> bool:
-    return subtitle_path.is_file() and subtitle_path.read_bytes() == expected_srt_bytes(normalized)
+def subtitle_matches_normalized(
+    subtitle_path: Path,
+    normalized: dict[str, Any],
+    baseline: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+) -> bool:
+    return subtitle_path.is_file() and subtitle_path.read_bytes() == expected_srt_bytes(
+        normalized, baseline, options
+    )
 
 
 def validate_job_identity(
@@ -275,6 +481,8 @@ def validate_job_identity(
         raise SubtitleJobError("subtitle job has an invalid top-level shape")
     if type(job.get("schema_version")) is not int or job["schema_version"] != JOB_SCHEMA_VERSION:
         raise SubtitleJobError("unsupported job schema_version")
+    if job["subtitle_options"] is not None:
+        validate_subtitle_options(job["subtitle_options"])
 
     job_id = require_sha256(job.get("job_id"), "job_id")
     audio = job.get("audio")
@@ -321,6 +529,8 @@ def validate_job_identity(
         require_job_artifact_path(artifacts[field], f"artifacts.{field}", job_path.parent)
     require_sha256(artifacts["before_correction_sha256"], "artifacts.before_correction_sha256")
     if artifacts["subtitle"] is not None:
+        if job["subtitle_options"] is None:
+            raise SubtitleJobError("subtitle artifact requires subtitle_options")
         require_job_artifact_path(artifacts["subtitle"], "artifacts.subtitle", job_path.parent)
 
 
@@ -365,7 +575,9 @@ def validate_job(
         raise SubtitleJobError("subtitle artifact is missing")
     if (
         subtitle_path.is_file()
-        and not subtitle_matches_normalized(subtitle_path, normalized)
+        and not subtitle_matches_normalized(
+            subtitle_path, normalized, baseline, job["subtitle_options"]
+        )
         and not allow_stale_derived
     ):
         raise SubtitleJobError(

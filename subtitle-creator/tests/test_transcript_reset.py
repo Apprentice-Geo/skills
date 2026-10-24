@@ -25,6 +25,7 @@ def bound_job(tmp_path, monkeypatch):
         language="zh",
         duration=2,
         segments=[{"id": 0, "start": 0, "end": 1, "text": "原始文本"}],
+        items=[{"start": 0, "end": 1, "text": "原始文本", "probability": None}],
     )
     monkeypatch.setattr(bind_transcription, "load_transcription", lambda _: transcription)
     normalized_path = bind_transcription.bind_transcription(job_path, manifest)

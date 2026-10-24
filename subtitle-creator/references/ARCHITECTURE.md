@@ -10,15 +10,15 @@
 ```
 
 - `open_subtitle_job.py` 按音频内容创建或恢复任务，返回当前可用产物；不生成字幕。
-- `transcription_input.py` 通过公共合同只读接入上游，`bind_transcription.py` 验证音频身份并导入本地数据；每次显式绑定都替换基准、清空校正并使字幕失效。
-- `subtitle_job.py` 验证任务身份、产物路径、文本校正边界、时间轴与 SRT 内容，发布本地工作副本。
+- `transcription_input.py` 通过公共 `load_result()` 只读接入上游，完整投影公开 `items` 字段；`bind_transcription.py` 验证音频身份并导入本地数据，每次显式绑定都替换基准、清空校正并使字幕失效。
+- `subtitle_job.py` 验证任务身份、产物路径、文本校正边界、不可编辑 items、时间轴与 SRT 内容，发布本地工作副本。SRT 导出、打开任务及有效性检查共用其渲染函数与 job 保存的配置；切分、校正回退和尾部规则集中见[字幕渲染](SUBTITLE-RENDERING.md)。
 - `transcript.py` 查看、批量修改文本，或从本地基准恢复文本；`generate_srt.py` 从合法工作副本生成 SRT 并记录校正 ID。
 - `remove_subtitle_job.py` 只删除当前配置根目录下单个任务，拒绝链接与越界。
 - `runtime_paths.py` 解析数据目录，`process_logging.py` 管理固定位置的会话日志。环境与依赖检查不参与字幕业务状态。
 
 ## 持久化和提交
 
-任务只有 `transcription_unbound`、`transcription_bound` 两个状态。绑定后保存本地基准、工作副本路径、基准 digest、`changed_segment_ids` 和可空的字幕路径；后续编辑、reset、生成不读取上游或原音频。同一任务的命令必须串行执行。
+任务只有 `transcription_unbound`、`transcription_bound` 两个状态。绑定后保存本地基准、工作副本路径、基准 digest、`changed_segment_ids` 和可空的字幕路径；生成后还保存 `subtitle_options`。后续编辑、reset、生成不读取上游或原音频，items 随本地基准保留。同一任务的命令必须串行执行。
 
 只有绑定写入新基准；编辑和 reset 复用原基准路径及 digest。整批修改先校验，再在独立 `transcript-<random>/` 目录写工作副本，最后原子切换 job 引用，时间轴和 metadata 必须与基准一致。工作副本结构、数值类型和时间轴合法且文本无变化时，直接返回当前路径，不写 job、不使字幕失效；全部 reset 遇到损坏副本时从可信基准重建。文本改变或副本重建时重新计算校正 ID 并将字幕声明置空；旧 SRT 可以残留，不能作为有效字幕交付。
 
@@ -28,8 +28,8 @@
 
 打开、查看、编辑和单段 reset 要求基准与工作副本结构、时间轴合法，允许校正记录或 SRT 陈旧；全部 reset 只要求任务声明及基准可信，能修复缺失或损坏的工作副本。重新绑定只要求任务声明可信及新转写有效。生成重新验证时间轴与文本并更新校正记录；只有 SRT 与当前工作副本预期字节一致时，打开任务才返回其路径。
 
-## 持久化兼容
+## 持久化结构
 
-job schema 为 `3`，转写 JSON schema 为 `2`。旧 job schema `2` 的 `needs_transcription`、`editable` 在读取时分别映射为当前两个状态，保留基准、校正和绝对产物路径；读取本身不改写。下一次实际写入 job 保存 schema `3`；无变化编辑/reset 不触发迁移。旧工具不能读取新 job，不接受未知版本，不迁移可再生缓存。
+只接受 job schema `4` 和转写 JSON schema `3`，不迁移历史版本。job 必须包含可空的 `subtitle_options`；声明字幕时必须保存生成参数。转写必须包含不可编辑且完整保留公开字段的非空 `items`。缺少字段、未知版本或损坏 items 均拒绝；合法但不能对应的 items 按段回退。
 
-已验证 transcript 使用递归 JSON 序列化，有限 `Decimal` 直接写成 JSON 数字，保留 duration 和时间戳精度，不经 `float`。新旧任务均允许基准与工作副本位于不同目录，无需迁移存量文件。
+已验证 transcript 使用递归 JSON 序列化，有限 `Decimal` 直接写成 JSON 数字，保留 duration 和时间戳精度，不经 `float`。基准与工作副本允许位于不同目录。

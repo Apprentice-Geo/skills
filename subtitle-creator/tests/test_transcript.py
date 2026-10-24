@@ -21,6 +21,9 @@ def task(tmp_path, monkeypatch):
         language="zh",
         duration=6,
         segments=[{"id": i, "start": i, "end": i + 1, "text": f"原文{i}"} for i in range(5)],
+        items=[
+            {"start": i, "end": i + 1, "text": f"原文{i}", "probability": None} for i in range(5)
+        ],
     )
     monkeypatch.setattr(bind_transcription, "load_transcription", lambda _: snapshot)
     path = bind_transcription.bind_transcription(job_path, manifest)
@@ -268,7 +271,7 @@ def test_publish_failure_keeps_existing_results(task, monkeypatch, command, fail
     assert set(job_path.parent.glob("transcript-*/")) == directories
 
 
-def test_cli_external_data_logs_no_text_and_legacy_job(task, monkeypatch, capsys):
+def test_cli_external_data_logs_no_text(task, monkeypatch, capsys):
     job_path = task[0]
     data = job_path.parents[2]
     monkeypatch.setenv("SUBTITLE_CREATOR_DATA_DIR", str(data / "other"))
@@ -281,13 +284,9 @@ def test_cli_external_data_logs_no_text_and_legacy_job(task, monkeypatch, capsys
     secret = "私密编辑正文"
     assert transcript.main(["edit", *common, "--text", secret]) == 0
     assert capsys.readouterr().out.startswith("normalized_transcript: ")
-    job = subtitle_job.load_job(job_path)
-    job["schema_version"] = 2
-    job["status"] = "editable"
-    subtitle_job.atomic_write_json(job_path, job)
     assert transcript.main(["reset", *common]) == 0
     capsys.readouterr()
-    assert subtitle_job.load_job(job_path)["schema_version"] == 3
+    assert subtitle_job.load_job(job_path)["schema_version"] == 4
     for log in (job_path.parents[2] / ".cache" / "logs").glob("transcript-*.log"):
         text = log.read_text(encoding="utf-8")
         assert secret not in text and "原文" not in text
@@ -361,7 +360,11 @@ def test_batch_edit_commits_once_and_reuses_baseline(task, monkeypatch, capsys, 
     after = subtitle_job.load_job(job_path)
     assert after["changed_segment_ids"] == [0, 3]
     assert after["artifacts"]["before_correction"] == str(baseline_path)
-    assert baseline_path.stat() == baseline_stat
+    # 校验会读取基准，访问时间可改变；内容与写入时间必须保持不变。
+    assert baseline_path.stat().st_mtime_ns == baseline_stat.st_mtime_ns
+    assert (
+        subtitle_job.sha256_file(baseline_path) == before["artifacts"]["before_correction_sha256"]
+    )
     assert "cannot clean transcript directory" not in caplog.text
     segments = transcript.operate("show", job_path, "all")["segments"]
     assert segments[0]["text"] == '  引号"与换行\n'

@@ -61,12 +61,13 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8")) == {
-        "schema_version": 3,
+        "schema_version": 4,
         "job_id": audio_id,
         "status": "transcription_unbound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
         "artifacts": None,
         "changed_segment_ids": [],
+        "subtitle_options": None,
     }
 
 
@@ -99,11 +100,12 @@ def seed_transcription_bound_job(
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)
     baseline = {
-        "schema_version": 2,
+        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",
         "duration": 1,
+        "items": [{"text": "原始文本", "start": 0, "end": 1, "probability": None}],
         "segments": [{"id": 0, "start": 0, "end": 1, "text": "原始文本"}],
     }
     baseline_path = (job_dir / "normalized_transcript.before_correction.json").resolve()
@@ -114,7 +116,7 @@ def seed_transcription_bound_job(
     subtitle_path.write_bytes(subtitle_job.expected_srt_bytes(baseline))
     job_path = (job_dir / "subtitle_job.json").resolve()
     job = {
-        "schema_version": 3,
+        "schema_version": 4,
         "job_id": audio_id,
         "status": "transcription_bound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
@@ -125,6 +127,12 @@ def seed_transcription_bound_job(
             "subtitle": str(subtitle_path),
         },
         "changed_segment_ids": [],
+        "subtitle_options": {
+            "target_chars": 24,
+            "target_seconds": 6,
+            "min_gap": 0.2,
+            "tail_factor": 1.1,
+        },
     }
     job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     if stale_artifact == "normalized_transcript":
@@ -170,7 +178,9 @@ def test_create_recovers_existing_transcription_bound_job_from_audio(
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
     assert generate_srt.generate_srt(job_path) == subtitle_path
     normalized = subtitle_job.read_json_object(normalized_path, decimal_numbers=True)
-    assert subtitle_path.read_bytes() == subtitle_job.expected_srt_bytes(normalized)
+    assert subtitle_path.read_bytes() == subtitle_job.expected_srt_bytes(
+        normalized, options=subtitle_job.load_job(job_path)["subtitle_options"]
+    )
 
 
 @pytest.mark.parametrize("damage", ["timeline", "baseline"])
@@ -248,37 +258,24 @@ def test_create_keeps_job_unpublished_when_atomic_replace_fails(
     assert list(job_dir.glob("*.tmp")) == []
 
 
+@pytest.mark.parametrize("version", [2, 3])
 @pytest.mark.parametrize("bound", [False, True])
-def test_open_reads_legacy_job_without_rewriting_or_losing_corrections(audio, bound):
-    audio_path, audio_id = audio
-    normalized_path = None
-    original_text = None
+def test_open_rejects_old_job_without_modifying_artifacts(audio, version, bound):
+    audio_path, _ = audio
     if bound:
-        job_path, normalized_path, _subtitle_path = seed_transcription_bound_job(
-            audio, "normalized_transcript"
-        )
-        original_text = normalized_path.read_bytes()
+        job_path, _, _ = seed_transcription_bound_job(audio, "valid")
     else:
         job_path = open_subtitle_job.open_subtitle_job(str(audio_path))
     job = subtitle_job.read_json_object(job_path)
-    job["schema_version"] = 2
-    job["status"] = "editable" if bound else "needs_transcription"
+    job["schema_version"] = version
+    del job["subtitle_options"]
+    if version == 2:
+        job["status"] = "editable" if bound else "needs_transcription"
     subtitle_job.atomic_write_json(job_path, job)
-    original_job = job_path.read_bytes()
+    before = {path: path.read_bytes() for path in job_path.parent.iterdir() if path.is_file()}
 
     result = run_create(audio_path)
 
-    assert result.returncode == 0
-    assert json.loads(result.stdout)["status"] == (
-        "transcription_bound" if bound else "transcription_unbound"
-    )
-    assert job_path.read_bytes() == original_job
-    assert subtitle_job.load_job(job_path)["job_id"] == audio_id
-    if bound:
-        assert normalized_path is not None
-        assert normalized_path.read_bytes() == original_text
-        generate_srt.generate_srt(job_path)
-        upgraded = subtitle_job.read_json_object(job_path)
-        assert upgraded["schema_version"] == 3
-        assert upgraded["changed_segment_ids"] == [0]
-        assert normalized_path.read_bytes() == original_text
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert {path: path.read_bytes() for path in before} == before

@@ -19,7 +19,7 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 ## 分段命令约定
 
-命令见 [SKILL.md](../SKILL.md#2-查看并按需校正)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。
+命令见 [SKILL.md](../SKILL.md#2-查看并按需校正)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。校正和查看使用原分段 ID，与 SRT 切分后的序号无关。
 
 按时间查看使用 `show --start <seconds> --end <seconds>`，两项必须同时提供，接受有限非负小数，且起点小于终点。仅返回满足 `segment.start < end` 且 `segment.end > start` 的完整分段；不重新分段、裁剪文字或修改时间轴。超出音频范围时返回其中有交集的分段，无匹配时成功返回空数组。不能与 `--id` 或 `--context` 混用。
 
@@ -32,6 +32,20 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 ```
 
 查看全部或按时间查看时 `target_id` 为 `null`；正文只写 stdout，日志不包含查看或编辑正文。其他命令成功时仅输出结果路径。退出码 `0` 表示成功，失败返回 `1`，stderr 给出错误及可用日志路径。
+
+## 生成参数
+
+```powershell
+uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --target-chars 24 --target-seconds 6 --min-gap 0.2
+```
+
+| 参数 | 约束 | 首次默认值 |
+| --- | --- | --- |
+| `--target-chars` | 正整数，计数非空白 Unicode 码点，含标点 | `24` |
+| `--target-seconds` | 有限正数，单位秒 | `6` |
+| `--min-gap` | 有限正数，单位秒 | `0.2` |
+
+后续生成时，未显式提供的参数复用上次记录值；只覆盖一个参数也会保留其他值。尾部倍数固定为 `1.1`，没有可调参数。阈值为软目标，切点不保证词语完整；分段、校正回退及取整规则见[字幕渲染](SUBTITLE-RENDERING.md)。生成后的打开与有效性检查也使用保存的参数，不以默认值重新解释字幕。
 
 ## 删除任务
 

@@ -58,6 +58,7 @@ def _read_normalized_transcript(manifest_path: Path, audio_id: str) -> dict[str,
         "language": transcription.language,
         "duration": transcription.duration,
         "segments": normalized_segments,
+        "items": transcription.items,
     }
 
 

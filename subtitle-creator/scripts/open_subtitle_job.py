@@ -62,6 +62,7 @@ def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -
         "audio": {"path": str(audio_path), "id": audio_id},
         "artifacts": None,
         "changed_segment_ids": [],
+        "subtitle_options": None,
     }
     atomic_write_json(job_path, job)
     return job_path
@@ -93,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
                 and not subtitle_matches_normalized(
                     Path(subtitle_path),
                     read_json_object(Path(normalized_path), decimal_numbers=True),
+                    read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True),
+                    job["subtitle_options"],
                 )
             ):
                 subtitle_path = None
