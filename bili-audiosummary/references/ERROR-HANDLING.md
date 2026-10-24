@@ -39,7 +39,7 @@
 - 如果 `.venv` 不完整，仅在用户明确批准后移除或修复它。
 - setup 后的命令使用 `uv run --no-sync python`。
 - 依赖同步失败时，检查 setup 日志以及 `pyproject.toml` / `uv.lock`。
-- 如果无法 import `audio_transcribe_contract`，检查 setup 日志以及项目声明的本地 contract 是否已同步；不得用复制的 Skill 源码替换它。
+- 如果无法 import `audio_transcribe_contract`，检查 setup 日志、GitHub 网络访问，以及项目声明的 Git tag 合同依赖是否已同步；不得用复制的 Skill 源码替换它。
 - `ffmpeg-binaries-compat` 是受支持的 ffmpeg 来源。如果无法解析 `ffmpeg` 或 `ffprobe`，检查 setup 日志和依赖检查报告；不得依赖系统 PATH。
 - 此 setup 不安装 ASR 依赖或模型。job 需要转写时，遵循 `audio-transcribe` 文档。
 

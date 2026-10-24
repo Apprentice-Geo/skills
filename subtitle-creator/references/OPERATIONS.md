@@ -4,7 +4,7 @@
 
 从 Skill 目录使用 Python 3.12 和 `uv`。运行 `scripts/check_dependencies.bat` 检查环境；它只检查并写报告，不安装依赖。依赖缺失或合同包不满足声明时，运行 `scripts/setup/setup_windows.bat` 同步，再检查；相同错误持续时根据日志定位，不反复同步。权限、项目文件和解释器错误按[错误处理](ERROR-HANDLING.md#环境与依赖)诊断。
 
-三个音频 Skill 需要来自同一仓库 checkout：本 Skill 通过 `../audio-transcribe/packages/audio-transcribe-contract` 的本地 editable source 安装合同包。单独分发时必须一并提供该包，或先发布并改用已发布依赖；不能仅复制本 Skill 目录后运行 setup。
+本 Skill 可独立安装，不依赖其他 Skill 的相对目录。合同包从 GitHub tag `audio-transcribe-contract-v0.4.0` 的 `audio-transcribe/packages/audio-transcribe-contract` 子目录安装，锁文件固定解析到的提交；安装环境需要 Git 并能访问 GitHub。
 
 setup 会安装 Python 3.12、同步 `.venv` 并检查公共合同包。需要转写时另按 `audio-transcribe` 的 Skill 配置其环境和模型。
 

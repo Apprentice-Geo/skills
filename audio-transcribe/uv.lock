@@ -107,7 +107,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'qwen3-asr'" },
-    { name = "audio-transcribe-contract", editable = "packages/audio-transcribe-contract" },
+    { name = "audio-transcribe-contract", git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.4.0" },
     { name = "faster-whisper", specifier = "==1.2.1" },
     { name = "ffmpeg-binaries-compat" },
     { name = "huggingface-hub", marker = "extra == 'qwen3-asr'" },
@@ -138,7 +138,7 @@ dev = [
 [[package]]
 name = "audio-transcribe-contract"
 version = "0.4.0"
-source = { editable = "packages/audio-transcribe-contract" }
+source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.4.0#b3252fa9e34e03792647d8ac8c4d642b699c1e2b" }
 
 [[package]]
 name = "audioread"

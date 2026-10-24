@@ -1,7 +1,7 @@
 ---
 name: subtitle-creator
 description: 从本地音频创建或恢复 SRT 字幕，依据源文本校正错字，并按细粒度时间戳间的停顿切分过长字幕。校正保留基准分段和时间轴，需要语音转写时调用 audio-transcribe。
-compatibility: Windows。需要 uv、Python 3.12，三个音频 Skill 需来自同一仓库 checkout。
+compatibility: Windows。需要 uv、Python 3.12 和 Git；首次安装需访问 GitHub 下载合同包。
 license: Apache-2.0
 metadata:
   Github: https://github.com/Apprentice-Geo/skills/tree/main/subtitle-creator

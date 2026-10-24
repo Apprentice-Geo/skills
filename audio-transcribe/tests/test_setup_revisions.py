@@ -26,8 +26,9 @@ def test_dependency_profiles_and_sources_are_explicit_and_mutually_exclusive() -
 
     uv = config["tool"]["uv"]
     assert uv["sources"]["audio-transcribe-contract"] == {
-        "path": "packages/audio-transcribe-contract",
-        "editable": True,
+        "git": "https://github.com/Apprentice-Geo/skills.git",
+        "tag": "audio-transcribe-contract-v0.4.0",
+        "subdirectory": "audio-transcribe/packages/audio-transcribe-contract",
     }
     assert uv["sources"]["torch"] == [
         {"index": "pytorch-cpu", "extra": "cpu"},

@@ -15,7 +15,7 @@ metadata:
 
 ## 环境
 
-Windows、Python 3.12、`uv`；从本 Skill 目录执行命令。三个音频 Skill 共用本 checkout 的 `packages/audio-transcribe-contract`，使用锁定的本地依赖，不分别复制合同实现。
+Windows、Python 3.12、`uv` 和 Git；从本 Skill 目录执行命令。合同包从 GitHub 的固定 tag 安装，首次安装需要访问 GitHub，不要求其他 Skill 位于相邻目录。
 
 转写前运行 `scripts/check_dependencies.bat` 并读取 Provider 摘要。请求的 Provider 未就绪时，按[环境修复](references/ERROR-HANDLING.md#setup-与依赖)区分依赖、模型和权限问题；已有配置授权时执行适用的一次修复并复查，仍不可用则报告原因。
 

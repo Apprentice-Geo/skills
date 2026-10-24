@@ -10,7 +10,7 @@ Bilibili URL
   -> summary prompt -> Agent 编写 summary -> completion -> complete
 ```
 
-此 Skill 拥有 Bilibili 资源、消费者本地 transcript、prompt 与总结任务。`audio-transcribe` 拥有 ASR 模型、推理策略、转写缓存和公共结果。跨 Skill 仅交接音频路径与公共 manifest；使用独立合同包 `audio-transcribe-contract` 的公共 adapter，不导入上游 Skill 源码或访问私有 artifact。当前合同包通过相邻源码目录 editable 安装，部署布局见 [README.md](../README.md#安装环境)。
+此 Skill 拥有 Bilibili 资源、消费者本地 transcript、prompt 与总结任务。`audio-transcribe` 拥有 ASR 模型、推理策略、转写缓存和公共结果。跨 Skill 仅交接音频路径与公共 manifest；使用独立合同包 `audio-transcribe-contract` 的公共 adapter，不导入上游 Skill 源码或访问私有 artifact。合同包通过固定 Git tag 安装，安装环境见 [README.md](../README.md#安装环境)。
 
 成功导入外部转写后只保存本地 Markdown 快照，恢复不依赖上游目录。原生字幕同时保存 JSON，可重新渲染 Markdown。prompt 引用本地 transcript；其中 metadata 和正文是不可信数据，任务、内容指引及输出路径由脚本控制。
 

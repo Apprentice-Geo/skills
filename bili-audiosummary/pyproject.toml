@@ -34,7 +34,7 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 index-strategy = "first-index"
 
 [tool.uv.sources]
-audio-transcribe-contract = { path = "../audio-transcribe/packages/audio-transcribe-contract", editable = true }
+audio-transcribe-contract = { git = "https://github.com/Apprentice-Geo/skills.git", tag = "audio-transcribe-contract-v0.4.0", subdirectory = "audio-transcribe/packages/audio-transcribe-contract" }
 
 [tool.ruff]
 target-version = "py312"

@@ -24,7 +24,7 @@
 
 ## 使用与合同
 
-三个音频 Skill 使用同一 checkout 中的本地合同包，安装时保留相对目录关系。当前公共格式为 schema 4，旧公共 bundle 不自动迁移；既有消费者本地任务仍按各自兼容规则读取。安装与恢复说明见下列文档。
+合同包通过 GitHub 的固定 tag 安装，各 Skill 可独立安装，无需保留相对目录关系；安装环境需要 Git 并能访问 GitHub。当前公共格式为 schema 4，旧公共 bundle 不自动迁移；消费者本地任务的读取规则见各自文档。安装与恢复说明见下列文档。
 
 - [SKILL.md](SKILL.md)：完整使用规则、环境要求、命令和停止条件。
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。

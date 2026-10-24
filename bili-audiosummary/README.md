@@ -10,7 +10,7 @@
 
 ## 安装环境
 
-使用 Windows、Python 3.12 和 uv。当前 checkout 通过相邻路径 `../audio-transcribe/packages/audio-transcribe-contract` 安装本地合同包；三个音频 Skill 需保留在同一仓库布局。独立分发此 Skill 时，须同时提供合同包并调整依赖来源，或先发布对应版本；不能仅复制此目录后沿用不存在的远端版本。
+使用 Windows、Python 3.12、uv 和 Git。合同包通过 GitHub 固定 tag 安装，首次安装需要访问 GitHub；本 Skill 可独立安装，不要求与 `audio-transcribe` 保留相邻目录关系。
 
 ## 本地运行数据
 

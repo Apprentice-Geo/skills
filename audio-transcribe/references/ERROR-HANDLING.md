@@ -34,7 +34,7 @@ Windows 下的本地快照、发布和下载暂存目录使用随机名称加独
 ## Setup 与依赖
 
 - 使用 Python 3.12 和 `uv`，先运行只读检查器。已有环境配置授权时，对适用依赖失败执行一次对应 setup 并复查；模型缺失或安装校验失败时只安装所需模型并复查，不重复同步环境。复查仍失败则报告并停止自动修复。不得据此删除或替换现有 `.venv`。
-- 三个音频 Skill 从同一 checkout 使用本地合同包 0.4.0，依赖同步会安装 editable 包。保留相对目录关系；独立分发需要同时携带合同源码或先发布合同包并更新依赖来源。
+- 合同包 0.4.0 从 GitHub tag `audio-transcribe-contract-v0.4.0` 的 `audio-transcribe/packages/audio-transcribe-contract` 子目录安装，锁文件固定解析到的提交。拉取失败时检查 Git、GitHub 网络访问和 setup 日志，不改回本地路径或复制合同实现。
 - 从此 Skill 目录运行 `.\scripts\setup\setup_windows.bat --environment cpu|qwen3-asr`。默认 `cpu` 同步 CPU extra 并验证 `torch.version.cuda is None`；`qwen3-asr` 直接同步同名互斥 extra，复用模型安装器的连续导入与 CUDA 检查，不下载模型。Python bootstrap 接受相同 `--environment`。开发同步保留当前 Provider 的 extra 并安装开发依赖，禁止 `--all-extras`。
 - 必需依赖缺失、已安装包不一致或所请求 Qwen 使用 CPU build，适用对应环境同步；可选模块误触发或其他导入兼容异常保留原始原因，不盲目重装。CUDA build 已正确但 GPU runtime 不可用时诊断 GPU/driver，不进入依赖重装。项目文件缺失、Python 版本错误、子进程启动失败、权限或日志/报告写入失败分别诊断，不作为缺包处理。
 - `cpu` 与 `qwen3-asr` extra 互斥；切换环境时只指定目标 extra，禁止同时启用，也禁止使用 `--all-extras`。
