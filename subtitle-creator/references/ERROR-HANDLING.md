@@ -1,68 +1,39 @@
 # 错误处理
 
-## 运行目录与写入失败
-
-`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `SUBTITLE_CREATOR_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。活动日志确定可信 job 后仍可移入 job，删除日志保留在 cache 中。
-
-所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
-
-创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
-
-依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。日志移动失败时重新打开原日志并继续；原日志或移动后的日志无法重新打开时停止，报告真实路径和系统错误，不声称活动日志可用。检查器关键前置错误仍使用原有退出码。
-
-数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
-
-Windows 下的本地快照、发布和下载暂存目录使用随机名称加独占 `mkdir` 创建，继承父目录 ACL；不得使用 `mkdtemp`、`TemporaryDirectory` 或 `mkdir(mode=0o700)` 创建这类业务目录，否则可能排除沙箱身份并导致创建后写入失败。该规则不改变 Pytest 的沙箱外执行要求。已有目录访问失败时仍按真实路径诊断，不通过更改全局 ACL 或反复重试绕过。
-
-## 日志与终端输出
-
-每次 setup、dependency checker 和 workflow CLI 调用使用独立日志。Python 日志会话把同一条业务记录同时写入文件和指定终端：状态与结果写入 stdout，显式 warning 和 error 写入 stderr，调试明细、第三方 logger、Python warnings 及完整 traceback 仅写入文件。不得记录 transcript 正文、用户提供的源文本或上游模型对象。
-
-以下输出不属于 Python 日志会话：argparse 的 `--help` 和解析器自身输出、`.bat` 的 `where uv` 与路径切换检查，以及 `uv python install 3.12` 的提示、原始输出和失败输出。若 Python bootstrap 尚未启动，setup 失败时可以没有 setup 日志，也不得声称存在 `Full log`。
-
-dependency checker 将 JSON 原子发布到 `.cache/logs/`，并从同一份 report 生成日志记录。PASS 明细只进入文件，聚合结果和报告路径进入 stdout，WARN 与 FAIL 进入 stderr；退出码保持 `0`、`1`、`2` 三档语义。
-
-## Workflow 日志位置
-
-`open_subtitle_job`、`bind_transcription`、`transcript` 和 `generate_srt` 先在 `.cache/logs/` 创建日志。只有在命令成功获得并验证可信 job 路径后，才把活动日志移动到对应的 `results/<audio-id>/`；最终结果记录在移动后写入。移动失败时继续使用 cache 中的原日志，并在日志内记录 traceback，不改变命令结果。
-
-`remove_subtitle_job` 的日志始终保留在 `.cache/logs/`，避免日志随 job 目录删除或产生打开句柄冲突。任何 workflow 在获得可信 job 路径前失败时，日志也留在 cache。
-
-`open_subtitle_job` 成功时 stdout 为单行 JSON，字段为 `status`、`subtitle_job`、`audio_path`、`normalized_transcript`、`subtitle`；格式与恢复决策见 [打开任务](../SKILL.md#1-从音频打开任务)。摘要不修改 job、不生成字幕。`transcript show` 的正文 JSON 仅写 stdout，日志仅记录操作与分段数量，不记录正文；字段和参数见[分段命令](../SKILL.md#4-查看编辑与恢复分段)。编辑和 reset 不自动生成 SRT。其他命令保持一行结果：
-
-```text
-normalized_transcript: <absolute-path>
-subtitle: <absolute-path>
-removed_subtitle_job: <absolute-path>
-subtitle_job_absent: <absolute-path>
-```
-
-失败时 stdout 为空，stderr 包含简洁错误；日志可用时附带 `Full log` 路径。根据日志修复输入或环境后，从上一个成功状态重试；不得根据未发布的临时文件推断成功。
-
-
 ## 任务恢复
 
-- ID 或 context 格式错误、ID 不存在、`all` 与 context 组合、编辑空白文本：修正参数后重试；不得猜测 ID 或直接修改 JSON。单段 reset 和查看/编辑不能修复非法工作副本，需全部 reset。
+| 故障 | 处理 |
+| --- | --- |
+| ID、context、批量 JSON 或文本无效 | 修正参数重试；整批无部分提交，不猜测 ID。 |
+| 工作副本缺失、JSON 损坏、分段或时间轴误改 | 声明和基准可信时执行 `transcript reset --id all`。查看、编辑和单段 reset 不能修复此类损坏。 |
+| 基准缺失或 digest 不匹配 | 显式 `bind_transcription` 重新导入同音频 manifest；要求本地音频存在且身份不变。 |
+| job 身份、结构或路径越界 | 停止，不用 reset 或绑定绕过校验；明确重建时才删除任务。 |
+| 合法文本校正、SRT 缺失或陈旧 | 继续编辑或执行 `generate_srt`；打开任务会将不可用字幕返回为 `null`。 |
+| 编辑或绑定提交异常 | 重新打开确认磁盘状态，不凭异常判断未提交；job 不可读时停止，不猜测或删除快照。 |
+| 生成 SRT 失败 | 修复原因后重试生成；文件可能已写入但尚未发布，不凭存在就交付。 |
+| 提示某些段无法细分 | 检查警告中的原段 ID。原段缺少对应 item、合法但文字或时间无法对应、校正位置不兼容时，该段保留原分段并正常生成；不得猜测切点或自动重新绑定。 |
+| items 字段损坏、越界或时间重叠 | 工作副本损坏时全部 reset；基准损坏时按基准恢复规则显式重新绑定。合法但无法对应与结构损坏不同，不以回退掩盖损坏。 |
+| 生成阈值非正数、非有限数或字数非整数 | 修正 `--target-chars`、`--target-seconds`、`--min-gap`；不发布字幕或新参数。 |
 
-- 工作副本缺失、JSON 损坏或分段、时间轴被误改：若任务声明与基准可信，运行 `transcript reset --id all`，再使用其返回路径继续校正和生成。
-- 基准缺失或 digest 不匹配：reset 拒绝恢复；用 `bind_transcription` 重新导入有效且属于同一音频的 manifest。绑定仍要求本地音频存在且内容身份未改变。
-- job 身份、结构或产物路径越界：停止；不能通过 reset 或绑定绕过声明校验。明确需要重建时才删除单个任务。
-- 绑定、编辑或 reset 写入或校验失败：旧绑定和校正保持不变，并清理本次快照。提交异常或中断可能发生在 job 已切换之后：工具按磁盘声明判断，保留当前引用的快照并清理另一份；无法确认时保留两份并警告，原始异常仍抛出。恢复时先打开任务确认当前声明，不凭命令报错推断未提交；job 不可读时停止，不猜测或删除快照。清理失败会输出警告，原始发布结果不变；强制终止或清理失败留下的目录不能用于推断当前绑定。清理边界见[架构](ARCHITECTURE.md#控制流与数据边界)。
-- 生成 SRT 失败：job 不发布新声明；SRT 可能已写入，不能仅根据文件存在交付，修复原因后重新运行生成。每次生成都会覆盖文件，不复用已有字幕。
-- 旧 job schema `2` 可直接读取并保留校正；成功写入时使用 schema `3`，转写 JSON 格式不变。兼容边界见[架构](ARCHITECTURE.md#持久化兼容)。
+基准在编辑和 reset 期间不可变；工作副本合法且文本无变化时保留路径与字幕声明。批量修改先校验全部项目再提交一次。发布和安全清理边界见[架构](ARCHITECTURE.md#持久化和提交)。当前数据结构见[持久化结构](ARCHITECTURE.md#持久化结构)。
 
-## 环境修复分类
+无法细分的回退、尾部截断及毫秒零时长块的处理见[字幕渲染](SUBTITLE-RENDERING.md)。不得为了细分自动重新绑定而丢失校正；确实需要更换基准时才显式绑定。
 
-- 必需依赖缺失、已安装包不一致、合同包版本不符或公共 API 不完整：显式运行一次 setup 同步当前项目声明，再以 `--no-sync` 复查；仍失败时停止，不重复 setup。
-- 日志或报告写入失败、数据或 `.venv` 路径权限错误：按真实失败路径诊断，运行数据问题可显式指定可写数据目录；不以 setup 修复文件系统权限。
-- 项目文件缺失、声明不可读或无效：定位并修复项目文件，不把这些错误当作合同包缺失。
-- uv 不可用、Python 版本不符、子进程无法启动：诊断工具与解释器；不自动删除或替换现有 `.venv`。
-- baseline 损坏、工作副本缺失、非法时间轴属于任务输入错误；按[任务恢复](#任务恢复)选择 reset 或重新绑定，不运行 setup。合法文本编辑和陈旧 SRT 保持可恢复，打开输出 `subtitle: null`，通过 `generate_srt` 重建。
+## 环境与依赖
 
-## 合同包检查
+- 依赖缺失、已安装包不一致、公共合同包版本或 API 不符：运行 setup 同步项目声明，再以 `--no-sync` 检查；相同失败持续时根据日志诊断，不反复同步。
+- 日志、报告、数据目录或 `.venv` 写入失败：以实际失败路径和原始系统错误定位；数据写入可换可写 `--data-dir`，依赖同步仍要求 `.venv` 可写，不以 setup 修复文件系统权限。
+- 项目文件缺失或声明无效：修复项目文件；uv 不可用、Python 版本或子进程错误：诊断工具和解释器，不自动删除现有 `.venv`。
+- baseline、工作副本和时间轴错误属于任务数据问题，按上表恢复，不运行 setup。
 
-检查器和 setup 复用本 Skill 的 `scripts/contract_check.py`：从 `pyproject.toml` 读取合同包要求，通过当前解释器的 `importlib.metadata` 读取 distribution 版本，检查 `load_result`、`TranscriptionResult`、`ResultValidationError` 和 `PUBLIC_SCHEMA_VERSION=3`。版本不符、包缺失、声明不可读或无效、API 不完整时返回失败，不能报告 ready。JSON 检查项包含 expected、actual 和同步建议。
+检查器和 setup 复用 `contract_check.py`，根据 `pyproject.toml` 要求检查 distribution 版本和 `load_result`、`TranscriptionResult`、`ResultValidationError`、`PUBLIC_SCHEMA_VERSION=4`。缺 `packaging` 时仍报告 API 和其他检查结果。`uv pip check` 只验证已安装包之间的一致性，不能代替项目声明检查；实际绑定仍验证完整公共 bundle。
 
-缺少 `packaging` 时，检查器仍输出日志与 JSON 报告；`contract:version` 标记失败并给出依赖同步建议，公共 API 和其他检查继续执行。
+## 日志与文件系统
 
-`uv pip check` 仅检查已安装包之间的一致性，不证明它们满足当前项目声明。按本 Skill 环境策略显式同步后，使用 `uv run --no-sync python -m scripts.check_dependencies` 复查，避免自动同步掩盖旧包问题。实际接入转写时仍通过 `load_result()` 验证完整公共 bundle；能力检查不能代替该验证。
+每次 setup、检查和业务 CLI 使用独立日志，固定在 `<data-dir>/.cache/logs/`；详细 traceback、第三方 logger 和 Python warnings 只写文件，状态与结果写 stdout，warning/error 写 stderr。不记录 transcript、用户源文本或编辑正文。失败时仅在日志确实可用时报告 `Full log` 路径；参数解析失败可以没有日志。
+
+日志初始化失败就停止业务；报告发布失败也不能声称检查成功。按实际路径诊断权限，不自动归因于 ACL 或沙箱，不回退未知目录。setup 的 Python 日志开始前，uv 和 `.bat` 输出可能不受日志会话控制。
+
+Windows 业务暂存目录使用随机名称加独占 `mkdir` 并继承父目录 ACL，不能用 `mkdtemp`、`TemporaryDirectory` 或 `mkdir(mode=0o700)`，避免排除沙箱身份。该限制不改变仓库要求的 Pytest 沙箱外执行。
+
+数据目录及 uv 缓存配置见[环境与命令](OPERATIONS.md#环境配置)。切换数据目录不自动查找或迁移历史任务。

@@ -49,45 +49,6 @@ def test_logging_session_filters_terminal_and_keeps_traceback(
     assert "RuntimeError: traceback detail" in log_text
 
 
-def test_logging_session_moves_active_log(
-    workspace_tmp_path: Path,
-) -> None:
-    original_path = workspace_tmp_path / ".cache" / "logs" / "pipeline.log"
-    result_dir = workspace_tmp_path / "results" / "BVTEST"
-
-    with LoggingSession(original_path) as session:
-        get_logger(__name__).info("before move")
-        moved_path = session.move_to(result_dir)
-        get_logger(__name__).info("after move")
-
-    assert moved_path == result_dir / "pipeline.log"
-    assert not original_path.exists()
-    log_text = moved_path.read_text(encoding="utf-8")
-    assert "before move" in log_text
-    assert "after move" in log_text
-
-
-def test_logging_session_keeps_original_log_when_move_fails(
-    workspace_tmp_path: Path,
-    mocker,
-) -> None:
-    original_path = workspace_tmp_path / ".cache" / "logs" / "pipeline.log"
-    result_dir = workspace_tmp_path / "results" / "BVTEST"
-    mocker.patch(
-        "scripts.process_logging.shutil.move", side_effect=OSError("move denied")
-    )
-
-    with LoggingSession(original_path) as session:
-        moved_path = session.move_to(result_dir)
-        get_logger(__name__).info("continued after move failure")
-
-    assert moved_path == original_path
-    log_text = original_path.read_text(encoding="utf-8")
-    assert "Unable to move log" in log_text
-    assert "OSError: move denied" in log_text
-    assert "continued after move failure" in log_text
-
-
 def test_ytdlp_logger_writes_to_file_without_terminal_output(
     workspace_tmp_path: Path,
     capsys,

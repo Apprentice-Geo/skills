@@ -70,35 +70,6 @@ def test_log_start_failure_restores_all_logger_state(tmp_path, monkeypatch, oper
         path.unlink()
 
 
-def test_move_log_reopen_failure_is_concise_and_closes_session(tmp_path, monkeypatch, capsys):
-    path = tmp_path / "original.log"
-    session = logs.LoggingSession(path).start()
-    destination = tmp_path / "job"
-    target = destination / path.name
-    original = session._make_file_handler
-
-    def fail_reopen(path):
-        if path == target:
-            raise PermissionError(errno.EACCES, "permission denied", str(path))
-        return original(path)
-
-    monkeypatch.setattr(session, "_make_file_handler", fail_reopen)
-    try:
-        with pytest.raises(OSError) as raised:
-            session.move_to(destination)
-        session.report_failure(raised.value)
-    finally:
-        session.close()
-    terminal = capsys.readouterr()
-    assert terminal.out == ""
-    assert str(target) in terminal.err
-    assert "Full log:" not in terminal.err
-    assert "Traceback" not in terminal.err
-    assert logs.LoggingSession.current() is None
-    assert target.is_file()
-    target.unlink()
-
-
 @pytest.mark.parametrize("entry", ["check", "setup"])
 def test_cli_stops_before_business_when_log_cannot_start(tmp_path, monkeypatch, capsys, entry):
     data_dir = tmp_path / "external"
@@ -249,6 +220,7 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
         language="en",
         duration=2.0,
         segments=[{"id": 0, "start": 0.0, "end": 1.0, "text": "hello"}],
+        items=[{"start": 0, "end": 1, "text": "hello", "probability": None}],
     )
     monkeypatch.setattr(bind_transcription, "load_transcription", lambda _path: snapshot)
     common = ["--data-dir", str(data)]

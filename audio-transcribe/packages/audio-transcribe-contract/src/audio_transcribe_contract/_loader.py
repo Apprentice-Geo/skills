@@ -67,7 +67,7 @@ def load_result(path: str | Path) -> TranscriptionResult:
         language=request["language"],
         duration=duration,
     )
-    transcript = _validate_transcript(transcript_payload, duration, request["provider"])
+    transcript = _validate_transcript(transcript_payload, duration)
 
     return TranscriptionResult(
         manifest_path=manifest_path,

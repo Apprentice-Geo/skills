@@ -54,11 +54,15 @@ def correction_job(
     manifest = {"opaque": True}
 
     baseline = {
-        "schema_version": 2,
+        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",
         "duration": 360062,
+        "items": [
+            {"text": "第一段", "start": 0.0004, "end": 1.9995, "probability": None},
+            {"text": "Second line --> x", "start": 1.9995, "end": 360061.9995, "probability": None},
+        ],
         "segments": [
             {"id": 0, "start": 0.0004, "end": 1.9995, "text": "第一段"},
             {
@@ -75,7 +79,7 @@ def correction_job(
     normalized_path.write_bytes(json_bytes(baseline))
     job_path = job_dir / "subtitle_job.json"
     job = {
-        "schema_version": 3,
+        "schema_version": 4,
         "job_id": audio_id,
         "status": "transcription_bound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
@@ -86,6 +90,7 @@ def correction_job(
             "subtitle": None,
         },
         "changed_segment_ids": [],
+        "subtitle_options": None,
     }
     job_path.write_bytes(json_bytes(job))
     yield job_path, normalized_path, baseline_path, manifest_path, manifest
@@ -106,8 +111,8 @@ def test_generate_publishes_corrected_srt_and_keeps_transcription_bound_job(
     subtitle_path = job_path.parent / "subtitle.srt"
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
-    assert result.stderr == ""
-    logs = list(job_path.parent.glob("generate-srt-*.log"))
+    assert "cannot subdivide segment IDs [0]" in result.stderr
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-srt-*.log"))
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert (

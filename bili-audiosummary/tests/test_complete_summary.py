@@ -30,7 +30,7 @@ def test_complete_keeps_prompt_ready_when_summary_is_invalid(
     job_path, audio_path = make_needs_job(workspace_tmp_path)
     job, _manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("{{placeholder}}", encoding="utf-8")
+    summary_path.write_text(" \n", encoding="utf-8")
 
     current, result = complete_summary.complete_summary(job_path)
 
@@ -45,7 +45,10 @@ def test_complete_accepts_warning_and_is_idempotent(
     job_path, audio_path = make_needs_job(workspace_tmp_path)
     job, manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("# Summary\n\nEnglish only text.\n", encoding="utf-8")
+    summary_path.write_text(
+        "English only text, without fixed headings.",
+        encoding="utf-8",
+    )
     manifest_path.unlink()
 
     completed, result = complete_summary.complete_summary(job_path)
@@ -57,7 +60,7 @@ def test_complete_accepts_warning_and_is_idempotent(
     assert repeated_result.ok
 
 
-def test_continue_does_not_reload_upstream_or_rebuild_missing_prompt(
+def test_continue_restores_missing_prompt_without_upstream(
     workspace_tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     job_path, audio_path = make_needs_job(workspace_tmp_path)
@@ -66,11 +69,9 @@ def test_continue_does_not_reload_upstream_or_rebuild_missing_prompt(
     prompt_path.unlink()
     manifest_path.unlink()
 
-    assert continue_summary.continue_summary(job_path, manifest_path) == job
+    assert continue_summary.continue_summary(job_path) == job
     assert read_json(job_path)["status"] == "prompt_ready"
-    assert not prompt_path.is_file()
-    with pytest.raises(ValueError, match="prompt does not exist"):
-        complete_summary.complete_summary(job_path)
+    assert prompt_path.is_file()
 
 
 @pytest.mark.parametrize(
@@ -104,7 +105,7 @@ def test_complete_rejects_malformed_native_subtitle_transcript(
     summary_path.write_text("# 总结\n\n内容。\n", encoding="utf-8")
     job.update(
         {
-            "status": "prompt_ready",
+            "status": "complete",
             "transcript": {
                 "source": "bilibili_subtitle",
                 "path": transcript_path.name,
@@ -119,6 +120,7 @@ def test_complete_rejects_malformed_native_subtitle_transcript(
 
     with pytest.raises(ValueError, match="subtitle transcript"):
         complete_summary.complete_summary(job_path)
+    assert read_json(job_path)["status"] == "prompt_ready"
 
 
 def test_complete_main_moves_success_log_and_routes_warning_to_stderr(
@@ -127,7 +129,10 @@ def test_complete_main_moves_success_log_and_routes_warning_to_stderr(
     job_path, audio_path = make_needs_job(workspace_tmp_path)
     job, _manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("# Summary\n\nEnglish only text.\n", encoding="utf-8")
+    summary_path.write_text(
+        "English only text, without fixed headings.",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(complete_summary, "SKILL_ROOT", workspace_tmp_path)
 
     assert complete_summary.main([str(job_path)]) == 0
@@ -138,7 +143,9 @@ def test_complete_main_moves_success_log_and_routes_warning_to_stderr(
         f"Summary job is complete: {job_path.resolve()}\n"
     )
     assert terminal.err.startswith("- summary language does not match")
-    assert len(list(job_path.parent.glob("complete-*.log"))) == 1
+    assert (
+        len(list((workspace_tmp_path / ".cache" / "logs").glob("complete-*.log"))) == 1
+    )
 
 
 def test_complete_main_keeps_validation_failure_log_in_cache(
@@ -147,7 +154,7 @@ def test_complete_main_keeps_validation_failure_log_in_cache(
     job_path, audio_path = make_needs_job(workspace_tmp_path)
     job, _manifest_path = import_transcription(job_path, audio_path, monkeypatch)
     summary_path = job_path.parent / job["prompt"]["summary_path"]
-    summary_path.write_text("{{placeholder}}", encoding="utf-8")
+    summary_path.write_text(" \n", encoding="utf-8")
     monkeypatch.setattr(complete_summary, "SKILL_ROOT", workspace_tmp_path)
 
     assert complete_summary.main([str(job_path)]) == 1
@@ -159,3 +166,35 @@ def test_complete_main_keeps_validation_failure_log_in_cache(
         len(list((workspace_tmp_path / ".cache" / "logs").glob("complete-*.log"))) == 1
     )
     assert not list(job_path.parent.glob("complete-*.log"))
+
+
+@pytest.mark.parametrize("missing", ["source", "prompt"])
+def test_complete_reopens_finished_job_when_required_artifact_is_missing(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str,
+) -> None:
+    job_path, audio_path = make_needs_job(workspace_tmp_path)
+    job, _ = import_transcription(job_path, audio_path, monkeypatch)
+    from tests.test_validate_summary import valid_summary
+
+    summary_path = job_path.parent / job["prompt"]["summary_path"]
+    summary_path.write_text(
+        valid_summary("zh", "转写支持的完整总结。"), encoding="utf-8"
+    )
+    complete_summary.complete_summary(job_path)
+    artifact = (
+        job_path.parent / job["transcript"]["path"]
+        if missing == "source"
+        else job_path.parent / job["prompt"]["path"]
+    )
+    artifact.unlink()
+
+    with pytest.raises(ValueError, match="does not exist"):
+        complete_summary.complete_summary(job_path)
+
+    assert read_json(job_path)["status"] == "prompt_ready"
+    if missing == "prompt":
+        continue_summary.continue_summary(job_path)
+        completed, validation = complete_summary.complete_summary(job_path)
+        assert validation.ok and completed["status"] == "complete"

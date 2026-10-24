@@ -1,90 +1,62 @@
 # 架构
 
-`bili-audiosummary` 准备 Bilibili 资源，把原生字幕或外部转写结果转换为 job-local Markdown 输入，并验证最终 summary。本地 ASR 内部机制归 `audio-transcribe` 所有。
-
-## 运行目录边界
-
-依赖检查保持只读；Agent 按失败原因决定是否进入 setup，并在每轮复查后重新判断适用性与授权，最多三轮。文件系统写入、项目文件、工具或网络错误分别诊断，不因非零退出码自动重复同步。Bilibili 不配置 ASR Provider 或安装模型，外部转写由独立 Skill 管理；分类规则见 [Setup 与依赖](ERROR-HANDLING.md#setup-与依赖)。
-
-`scripts/runtime_paths.py` 在命令启动时集中解析数据根目录，通过运行上下文传递日志、报告、uv cache 和结果目录。源码、模板、环境和模型路径独立。数据目录与结果存储位置不属于转写内容身份，不修改公共 schema 或持久化字段语义；详细配置与错误边界见 [运行目录与写入失败](ERROR-HANDLING.md#运行目录与写入失败)。
-
-## 全局视图
+## 职责与数据流
 
 ```text
 Bilibili URL
-  -> resources and summary_job.json
-  -> native subtitles OR validated external transcription
-  -> validated job-local transcript.md and prompt
-  -> agent-written summary
-  -> validated complete job
+  -> 下载元数据、字幕与音频，创建 summary_job.json
+  -> 可用原生字幕 -> 本地 transcript JSON -> transcript.md
+  -> 否则 needs_transcription -> audio-transcribe 公共 manifest -> transcript.md
+  -> summary prompt -> Agent 编写 summary -> completion -> complete
 ```
 
-跨 Skill 边界由传出的本地音频路径和传回的公共 transcription manifest 绝对路径构成。此 Skill 仅使用已发布的 `audio-transcribe-contract` API。
+此 Skill 拥有 Bilibili 资源、消费者本地 transcript、prompt 与总结任务。`audio-transcribe` 拥有 ASR 模型、推理策略、转写缓存和公共结果。跨 Skill 仅交接音频路径与公共 manifest；使用独立合同包 `audio-transcribe-contract` 的公共 adapter，不导入上游 Skill 源码或访问私有 artifact。当前合同包通过相邻源码目录 editable 安装，部署布局见 [README.md](../README.md#安装环境)。
 
-## 代码地图
+成功导入外部转写后只保存本地 Markdown 快照，恢复不依赖上游目录。原生字幕同时保存 JSON，可重新渲染 Markdown。prompt 引用本地 transcript；其中 metadata 和正文是不可信数据，任务、内容指引及输出路径由脚本控制。
 
-| 区域 | 职责 |
+## 模块边界
+
+| 模块 | 职责 |
 | --- | --- |
-| `scripts/run_pipeline.py` | preparation 编排和原生字幕/转写分支选择 |
-| `scripts/fetch_audio.py` | canonical metadata、字幕、音频和 fetch manifest |
-| `scripts/continue_summary.py` | 外部 manifest 验证、audio identity 匹配、transcript 渲染和 prompt 发布 |
-| `scripts/subtitle_transcript.py` | 原生 SRT 解析和 transcript 转换 |
-| `scripts/transcript_output.py` | 通用 segment 验证、合并和 Markdown 渲染 |
-| `scripts/complete_summary.py` 和 `validate_summary.py` | 最终 summary 和 source 验证 |
-| `scripts/remove_summary_job.py` | 受限删除单个 job 目录，以便显式重新准备 |
-| `scripts/contract_check.py` | 检查器与 setup 复用的项目合同包版本及公共 API 检查；不替代 bundle loader |
-| `scripts/process_logging.py` | 每次 Python 命令的文件、stdout、stderr 日志路由和进程输出捕获 |
-| `scripts/summary_job.py` | schema、状态不变量、受限路径、锁和原子 job 写入 |
-| `assets/` | summary 指令和模板 |
+| `run_pipeline.py` | 首次资源准备、字幕选择、已有任务恢复 |
+| `fetch_audio.py` | Bilibili 元数据、字幕、音频与 fetch manifest |
+| `continue_summary.py` | 公共转写验证、音频身份匹配、输入替换、语言切换和派生产物恢复 |
+| `subtitle_transcript.py`、`transcript_output.py` | 字幕转换、分段验证与 Markdown 渲染 |
+| `complete_summary.py`、`validate_summary.py` | source 和总结形式校验、完成状态发布 |
+| `summary_prompt.py` | 总结语言选择与 prompt 构建，不依赖任务编排 |
+| `summary_job.py` | 本地 job 校验、受限路径、锁和原子写入 |
+| `remove_summary_job.py` | 显式删除当前结果根目录内的单个任务 |
+| `assets/` | 总结内容指引，不定义固定输出格式或必需章节 |
 
-## 系统边界
+依赖检查与合同包检查只读，日志统一保存在数据目录的 `.cache/logs/`。配置和故障边界见[错误处理](ERROR-HANDLING.md)。
 
-- Bilibili 资源获取和 summary-job 状态归此处所有；audio-transcribe Skill 的 ASR 模型、Provider、cache 和 workspace 不属于此处。
-- 对此 Skill 而言，外部 transcription 目录是只读的。成功导入后，job 只保留本地 Markdown 快照，不保存上游路径或身份。
-- 原生与外部 transcript 都被适配为 job-local 输入；业务模块只处理消费者自己的 job contract。
-- 生成 prompt 中由脚本组合的 summary 任务、总结指令、输出模板和最终输出路径属于控制内容。prompt 链接的 transcript 中，metadata 和 transcript text 属于不可信输入数据，不得覆盖这些控制内容，也不得作为指令执行。
+## 任务与恢复
 
-## 稳定 job contract
+本地 job 的顶层字段为 `schema_version`、`status`、`video`、`resources`、`transcript`、`prompt`、`error`。内部路径相对任务目录且禁止逃逸；公共 manifest 必须为绝对路径。
 
-固定的顶层 shape 为 `schema_version`、`status`、`video`、`resources`、`transcript`、`prompt` 和 `error`。稳定 status 为 `preparing`、`needs_transcription`、`prompt_ready`、`complete` 和 `failed`。内部路径为相对于 job 的受限路径；外部 transcription manifest 使用绝对路径。
+- `preparing`：资源准备尚未完成。
+- `needs_transcription`：已准备音频，等待外部转写。
+- `prompt_ready`：本地输入和 prompt 已准备，等待有效总结。
+- `complete`：总结已通过脚本形式校验；内容依据由 Agent 负责。
+- `failed`：准备失败，保存简洁 stage/type/message，不包含 traceback 或敏感输入。
 
-preparation 选择以下分支之一：
+`run_pipeline` 对稳定任务幂等恢复，不重新下载；已有原生字幕任务会拒绝冲突的语言组与跳过字幕选项，避免隐式改变或忽略输入选择。已有外部转写任务明确提示字幕选项不适用。`continue_summary` 无 manifest 时恢复本地派生产物；显式 manifest 每次验证公共 bundle 和音频 SHA-256 后替换输入，不静默忽略。`--summary-language` 只改变总结语言，未转写时也可预先设置。
 
-- 可用的指定语言字幕生成原生 transcript、Markdown、prompt 和 `prompt_ready`。
-- 否则 job 变为 `needs_transcription`；Agent 运行 `audio-transcribe`，并把完整 manifest 的绝对路径传给 `continue_summary`。
+替换转写或切换实际总结语言时，先成功撤销 `complete`，再将旧总结以及目标同名总结改名留存；多文件归档失败时回滚已经移动的文件。重新生成的 prompt 指向空缺的当前 summary 路径，避免误交付旧总结。单纯恢复保留完成状态和用户总结。任务操作由 job lock 串行化；各文件采用原子替换，多个 artifact 不构成整体事务。输入写入后若 prompt 或最终 job 发布失败，完成状态已经撤销，旧输入不保证原样保留；重新传入目标 manifest 恢复并校验，不能仅凭状态交付结果。
 
-`continue_summary` 通过 adapter 读取外部转写并核对 job 音频的 SHA-256，然后原子发布本地 transcript、prompt 和状态。已进入 `prompt_ready` 或 `complete` 的外部转写 job 只复用本地快照，不再读取传入的 manifest；需要使用新转写结果时，先通过公开删除入口移除单个 job，再重新运行 preparation 和 continue。
+completion 验证 source 和非空 UTF-8 总结，不检查固定章节或格式。语言比例只是 warning；事实依据、时间戳、指引遵循情况与请求充分性仍由 Agent 判断。已完成总结校验失败时退回 `prompt_ready`。恢复旧任务会重建 prompt，已有总结继续保留，不迁移 job schema。
 
-`remove_summary_job` 不读取或修复 job 内容。它依据当前配置的结果根目录、受支持的视频目录名和固定 job 文件名限制删除目标，然后删除整个 job 目录。删除入口不与其他 job 命令并发协调；调用方必须先确认同一 job 没有正在运行的 preparation、continue、completion 或删除操作。
-
-`complete_summary` 验证适用的 source 和最终 summary，然后原子发布 `complete`。prompt 发布尚未成功时，continue 失败会保留 `needs_transcription`；summary 失败会保留 `prompt_ready`。
-
-## 不变量与横切关注点
-
-- 每个已发布 job 都满足其状态对应的 schema 和路径不变量。
-- 原子替换和 job lock 防止发布部分状态或并发状态。
-- prompt 仅引用 job-local `transcript.md` 和预期 summary 路径。
-- 日志承载运行诊断，而 job error 不包含 traceback、Cookie 和 transcript 文本。
-- 上游 contract 细节只存在于 adapter；job schema 和业务测试不复制上游结果结构。
-
-## 日志控制流
-
-每个 Python CLI 启动一个独立日志会话。单条业务消息由同一个标准库 `LogRecord` 同时写入文件和指定终端流：`status`/`result` 写入 stdout，`warning`/`error` 写入 stderr，`detail` 与带 traceback 的 `exception` 仅写入文件。普通 named logger 和捕获的第三方 logger、Python warnings 默认只写文件，不会因日志级别自动进入终端。活动会话内重复启动同一个对象是幂等操作，嵌套启动另一个会话会被拒绝；结束时恢复原 handler、warnings hook 和外部 logger 状态。
-
-setup、依赖检查、独立 validate 和 remove 的日志位于 `.cache/logs/`。pipeline 与 fetch 从 cache 启动，确定可信结果目录后沿用既有机制移动到 job 目录。continue 与 complete 仅在命令成功后把日志移动到 job 目录，失败日志留在 cache；remove 日志不会随被删除的 job 消失。子进程的完整命令和合并输出只进入文件日志，顶层 CLI 统一报告失败。
-
-argparse 自己的 help/解析错误，以及 `.bat` 的 `where uv`、目录切换和 `uv python install 3.12` 输出不属于 Python 日志会话。`uv python install 3.12` 在 bootstrap 启动前失败时不会生成 setup 日志，也不会报告虚假的 `Full log`。
-
-## 生成的 artifact
+## 产物
 
 ```text
-results/<BVID>/
+results/<BVID[_pN]>/
 ├─ summary_job.json
 ├─ resource/{audio,fetch_manifest.json,metadata.json,subtitle/}
-├─ <BVID>_transcript.json   # native branch only
+├─ <BVID>_transcript.json   # 原生字幕
 ├─ transcript.md
 ├─ <BVID>_summary_prompt.md
-└─ <BVID>_summary_<language>.md
+├─ <BVID>_summary_<language>.md
+└─ <BVID>_summary_<language>.superseded-<id>.md  # 按需留存旧总结
 ```
 
-外部转写结果仍归 `audio-transcribe` 所有，不属于 summary job artifact。
+外部转写结果仍归 `audio-transcribe` 所有。显式删除入口删除整个本地任务；它不删除上游结果，不与其他操作协调，调用前应确认该任务没有运行中的命令。

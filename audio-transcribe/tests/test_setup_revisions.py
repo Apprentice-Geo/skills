@@ -26,7 +26,8 @@ def test_dependency_profiles_and_sources_are_explicit_and_mutually_exclusive() -
 
     uv = config["tool"]["uv"]
     assert uv["sources"]["audio-transcribe-contract"] == {
-        "path": "packages/audio-transcribe-contract"
+        "path": "packages/audio-transcribe-contract",
+        "editable": True,
     }
     assert uv["sources"]["torch"] == [
         {"index": "pytorch-cpu", "extra": "cpu"},

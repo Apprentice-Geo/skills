@@ -90,15 +90,20 @@ def _complete_summary_unlocked(
             f"cannot complete summary job from status {job['status']!r}"
         )
 
-    _validate_source(job_path, job)
+    try:
+        _validate_source(job_path, job)
 
-    prompt_path = resolve_local_path(job_path, job["prompt"]["path"], "prompt.path")
-    if not prompt_path.is_file():
-        raise JobValidationError(f"summary prompt does not exist: {prompt_path}")
-    summary_path = resolve_local_path(
-        job_path, job["prompt"]["summary_path"], "prompt.summary_path"
-    )
-    result = validate_summary(summary_path)
+        prompt_path = resolve_local_path(job_path, job["prompt"]["path"], "prompt.path")
+        if not prompt_path.is_file():
+            raise JobValidationError(f"summary prompt does not exist: {prompt_path}")
+        summary_path = resolve_local_path(
+            job_path, job["prompt"]["summary_path"], "prompt.summary_path"
+        )
+        result = validate_summary(summary_path)
+    except (OSError, ValueError):
+        if job["status"] == "complete":
+            publish_job(job_path, {**job, "status": "prompt_ready"})
+        raise
     if not result.ok:
         if job["status"] == "complete":
             job = {**job, "status": "prompt_ready"}
@@ -142,7 +147,6 @@ def main(argv: list[str] | None = None) -> int:
             )
             error(logger, "%s\nFull log: %s", message, session.log_path)
             return 1
-        session.move_to(resolved_job_path.parent)
         if validation.warnings:
             log_result(logger, "Summary validation passed with warnings:")
             for item in validation.warnings:

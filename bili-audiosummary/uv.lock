@@ -9,8 +9,8 @@ resolution-markers = [
 
 [[package]]
 name = "audio-transcribe-contract"
-version = "0.3.1"
-source = { git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.3.1#2f1119619e9050e414263eacd4ab56ceba2100cf" }
+version = "0.4.0"
+source = { editable = "../audio-transcribe/packages/audio-transcribe-contract" }
 
 [[package]]
 name = "bili-audiosummary"
@@ -34,7 +34,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "audio-transcribe-contract", git = "https://github.com/Apprentice-Geo/skills.git?subdirectory=audio-transcribe%2Fpackages%2Faudio-transcribe-contract&tag=audio-transcribe-contract-v0.3.1" },
+    { name = "audio-transcribe-contract", editable = "../audio-transcribe/packages/audio-transcribe-contract" },
     { name = "ffmpeg-binaries-compat" },
     { name = "packaging", specifier = ">=24" },
     { name = "yt-dlp", specifier = "==2026.3.17" },

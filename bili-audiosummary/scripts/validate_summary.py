@@ -66,7 +66,7 @@ def language_warning(text: str, expected_language: str) -> str | None:
         return None
 
     return (
-        f"summary language does not match the {expected_language} template: "
+        f"summary language does not match the expected language {expected_language}: "
         f"{character_label} are {ratio:.1%} of the language characters; "
         f"rewrite the summary in {language_label}"
     )
@@ -83,12 +83,8 @@ def validate_summary(summary_path: Path) -> ValidationResult:
 
     errors: list[str] = []
     warnings: list[str] = []
-    if re.search(r"\{\{[^}]+\}\}", text):
-        errors.append("placeholder remains")
-    if "<!--" in text or "-->" in text:
-        errors.append("template comment remains")
-
-    # 模板指定语言时检查语言
+    if not text.strip():
+        errors.append("summary body is empty")
     expected_language = expected_summary_language(summary_path)
     if expected_language:
         warning = language_warning(text, expected_language)

@@ -65,9 +65,9 @@ def check_contract(root: Path) -> list[dict[str, str]]:
             raise TypeError("Missing ResultValidationError exception type")
         if (
             type(getattr(contract, "PUBLIC_SCHEMA_VERSION", None)) is not int
-            or contract.PUBLIC_SCHEMA_VERSION != 3
+            or contract.PUBLIC_SCHEMA_VERSION != 4
         ):
-            raise ValueError("Unsupported PUBLIC_SCHEMA_VERSION; consumer requires public schema 3")
+            raise ValueError("Unsupported PUBLIC_SCHEMA_VERSION; consumer requires public schema 4")
     except Exception as exc:  # noqa: BLE001 - 将公共包导入故障转成失败检查项
         api_status, api_message = "fail", f"{type(exc).__name__}: {exc}"
     else:
@@ -76,7 +76,7 @@ def check_contract(root: Path) -> list[dict[str, str]]:
         {
             "id": "contract:api",
             "status": api_status,
-            "expected": "load_result, TranscriptionResult, ResultValidationError, PUBLIC_SCHEMA_VERSION=3",
+            "expected": "load_result, TranscriptionResult, ResultValidationError, PUBLIC_SCHEMA_VERSION=4",
             "actual": api_message,
             "message": api_message,
             "fix": fix if api_status == "fail" else "",

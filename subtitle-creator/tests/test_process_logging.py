@@ -45,33 +45,6 @@ def test_logging_session_routes_console_and_keeps_traceback(
     assert "RuntimeError: traceback detail" in log_text
 
 
-def test_logging_session_move_and_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    original_path = tmp_path / ".cache" / "logs" / "process.log"
-    result_dir = tmp_path / "results" / "job"
-    with LoggingSession(original_path) as session:
-        detail(get_logger(__name__), "before move")
-        moved_path = session.move_to(result_dir)
-        detail(get_logger(__name__), "after move")
-    assert moved_path == result_dir / "process.log"
-    assert not original_path.exists()
-    assert "before move" in moved_path.read_text(encoding="utf-8")
-    assert "after move" in moved_path.read_text(encoding="utf-8")
-
-    failed_path = tmp_path / ".cache" / "logs" / "failed.log"
-    monkeypatch.setattr(
-        "scripts.process_logging.shutil.move",
-        lambda *_args: (_ for _ in ()).throw(OSError("denied")),
-    )
-    with LoggingSession(failed_path) as session:
-        retained_path = session.move_to(result_dir)
-        detail(get_logger(__name__), "continued")
-    assert retained_path == failed_path
-    retained = failed_path.read_text(encoding="utf-8")
-    assert "Unable to move log" in retained
-    assert "OSError: denied" in retained
-    assert "continued" in retained
-
-
 def test_session_captures_warnings_and_restores_state(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

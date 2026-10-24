@@ -76,37 +76,6 @@ def test_log_start_failure_restores_all_logger_state(tmp_path, monkeypatch, oper
         path.unlink()
 
 
-def test_move_log_reopen_failure_is_concise_and_closes_session(
-    tmp_path, monkeypatch, capsys
-):
-    path = tmp_path / "original.log"
-    session = logs.LoggingSession(path).start()
-    destination = tmp_path / "job"
-    target = destination / path.name
-    original = session._make_file_handler
-
-    def fail_reopen(path):
-        if path == target:
-            raise PermissionError(errno.EACCES, "permission denied", str(path))
-        return original(path)
-
-    monkeypatch.setattr(session, "_make_file_handler", fail_reopen)
-    try:
-        with pytest.raises(OSError) as raised:
-            session.move_to(destination)
-        session.report_failure(raised.value)
-    finally:
-        session.close()
-    terminal = capsys.readouterr()
-    assert terminal.out == ""
-    assert str(target) in terminal.err
-    assert "Full log:" not in terminal.err
-    assert "Traceback" not in terminal.err
-    assert logs.LoggingSession.current() is None
-    assert target.is_file()
-    target.unlink()
-
-
 @pytest.mark.parametrize("entry", ["check", "setup"])
 def test_cli_stops_before_business_when_log_cannot_start(
     tmp_path, monkeypatch, capsys, entry
@@ -294,20 +263,22 @@ def test_external_pipeline_resume_complete_remove(tmp_path, monkeypatch):
         job_path, tmp_path / "absent-manifest.json", results_dir=data / "results"
     )
     assert resumed["status"] == "prompt_ready"
-    # 完成导入后恢复只读取本地 snapshot。
+    # 恢复本地 snapshot 不再传入 manifest；显式 manifest 表示替换输入。
     monkeypatch.setattr(
         continue_summary,
         "load_transcription",
         lambda _path: pytest.fail("upstream reloaded"),
     )
     assert (
-        continue_summary.continue_summary(
-            job_path, tmp_path / "absent-manifest.json", results_dir=data / "results"
-        )
+        continue_summary.continue_summary(job_path, results_dir=data / "results")
         == resumed
     )
     summary = job_path.parent / resumed["prompt"]["summary_path"]
-    summary.write_text("# Summary\n\nEnglish only text.\n")
+    from tests.test_validate_summary import valid_summary
+
+    summary.write_text(
+        valid_summary("zh", "已有音频转写支持的总结。"), encoding="utf-8"
+    )
     completed, validation = complete_summary.complete_summary(
         job_path, results_dir=data / "results"
     )

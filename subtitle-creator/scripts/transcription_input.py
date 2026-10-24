@@ -18,6 +18,7 @@ class TranscriptionInput:
     language: str
     duration: int | float
     segments: list[dict[str, Any]]
+    items: list[dict[str, Any]]
 
 
 def load_transcription(path: Path) -> TranscriptionInput:
@@ -32,4 +33,5 @@ def load_transcription(path: Path) -> TranscriptionInput:
         language=transcript["language"],
         duration=transcript["duration"],
         segments=[dict(segment) for segment in transcript["segments"]],
+        items=[dict(item) for item in transcript["items"]],
     )

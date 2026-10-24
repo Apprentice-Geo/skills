@@ -25,6 +25,7 @@ def bound_job(tmp_path, monkeypatch):
         language="zh",
         duration=2,
         segments=[{"id": 0, "start": 0, "end": 1, "text": "原始文本"}],
+        items=[{"start": 0, "end": 1, "text": "原始文本", "probability": None}],
     )
     monkeypatch.setattr(bind_transcription, "load_transcription", lambda _: transcription)
     normalized_path = bind_transcription.bind_transcription(job_path, manifest)
@@ -61,6 +62,28 @@ def test_reset_restores_bound_snapshot_without_audio_or_upstream(bound_job, dama
     subtitle_job.validate_job(job_path, job)
     assert generate_srt.generate_srt(job_path).is_file()
     assert transcript.operate("reset", job_path, "all").read_bytes() == baseline
+
+
+@pytest.mark.parametrize("field,value", [("start", False), ("end", True)])
+def test_reset_all_repairs_boolean_timestamps_when_text_is_unchanged(bound_job, field, value):
+    job_path, normalized_path, _audio, _manifest = bound_job
+    job = subtitle_job.load_job(job_path)
+    baseline = Path(job["artifacts"]["before_correction"]).read_bytes()
+    generate_srt.generate_srt(job_path)
+    normalized = subtitle_job.read_json_object(normalized_path)
+    normalized["segments"][0][field] = value
+    subtitle_job.atomic_write_json(normalized_path, normalized)
+    with pytest.raises(subtitle_job.SubtitleJobError, match="must be a JSON number"):
+        generate_srt.generate_srt(job_path)
+
+    restored = transcript.operate("reset", job_path, "all")
+
+    assert restored.read_bytes() == baseline
+    restored_job = subtitle_job.load_job(job_path)
+    assert restored_job["changed_segment_ids"] == []
+    assert restored_job["artifacts"]["subtitle"] is None
+    subtitle_job.validate_job(job_path, restored_job)
+    assert generate_srt.generate_srt(job_path).is_file()
 
 
 def test_reset_rejects_damaged_baseline_without_publishing(bound_job):
@@ -106,11 +129,11 @@ def test_reset_rejects_unbound_job_and_relative_path(tmp_path):
         transcript.operate("reset", Path("subtitle_job.json"), "all")
 
 
-def test_reset_cli_outputs_current_path_and_moves_log(bound_job, capsys):
+def test_reset_cli_outputs_current_path_and_keeps_log(bound_job, capsys):
     job_path, _normalized_path, _audio, _manifest = bound_job
     assert transcript.main(["reset", str(job_path), "--id", "all"]) == 0
     output = capsys.readouterr()
     job = subtitle_job.read_json_object(job_path)
     assert output.out == f"normalized_transcript: {job['artifacts']['normalized_transcript']}\n"
     assert output.err == ""
-    assert len(list(job_path.parent.glob("transcript-*.log"))) == 1
+    assert len(list((job_path.parents[2] / ".cache" / "logs").glob("transcript-*.log"))) == 1

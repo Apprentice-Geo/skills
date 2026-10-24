@@ -4,14 +4,14 @@
 
 `bili-audiosummary` 是面向 Bilibili 视频的音频总结 Agent Skill。它负责获取 Bilibili 资源、优先处理原生字幕、维护可恢复的 `summary_job.json`、生成总结 prompt 并校验最终总结。
 
-本项目不拥有 ASR 模型、Provider、Execution Policy、转写缓存或 benchmark。需要转写时，Agent 把本地音频路径交给独立 `audio-transcribe` Skill，再把其公开 manifest 绝对路径传回本项目的继续命令。本项目不得导入另一个 Skill 的源码，但可以依赖固定版本的公开 `audio-transcribe-contract` 包。
+本项目不拥有 ASR 模型、Provider、Execution Policy、转写缓存或 benchmark。需要转写时，Agent 把本地音频路径交给独立 `audio-transcribe` Skill，再把其公开 manifest 绝对路径传回本项目的继续命令。本项目不得导入另一个 Skill 的源码，但可以依赖独立的 `audio-transcribe-contract` 合同包及其公共 API。当前通过 `../audio-transcribe/packages/audio-transcribe-contract` editable 安装，三个音频 Skill 应保留同一 checkout 布局；独立分发前须提供合同包来源。
 
 主要入口与文档职责如下：
 
 - `SKILL.md`：Agent 的 prepare/inspect/continue/complete 编排流程与能力边界。
 - `README.md`：面向使用者的项目概述、使用边界、隐私与进一步阅读说明。
 - `scripts/`：资源准备、外部转写接入、字幕转换和总结完成；详细模块边界见 `references/ARCHITECTURE.md`。
-- `assets/`：总结模板与提示词资源。
+- `assets/`：总结内容指引与提示词资源。
 - `references/ARCHITECTURE.md`：模块职责、job 状态和 artifact 边界。
 - `references/ERROR-HANDLING.md`：故障定位、恢复与停止条件。
 - `tests/`：与公开状态转换和脚本行为对应的测试。

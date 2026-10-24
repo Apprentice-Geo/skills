@@ -16,7 +16,7 @@ def contract_project(tmp_path, monkeypatch):
         load_result=lambda path: path,
         TranscriptionResult=type("Result", (), {}),
         ResultValidationError=ValueError,
-        PUBLIC_SCHEMA_VERSION=3,
+        PUBLIC_SCHEMA_VERSION=4,
     )
     monkeypatch.setattr(contract_check.importlib, "import_module", lambda name: api)
     monkeypatch.setattr(contract_check.metadata, "version", lambda name: "0.3.0")

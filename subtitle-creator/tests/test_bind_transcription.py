@@ -31,12 +31,13 @@ def subtitle_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path
     job_path.write_bytes(
         json_bytes(
             {
-                "schema_version": 3,
+                "schema_version": 4,
                 "job_id": audio_id,
                 "status": "transcription_unbound",
                 "audio": {"path": str(audio_path.resolve()), "id": audio_id},
                 "artifacts": None,
                 "changed_segment_ids": [],
+                "subtitle_options": None,
             }
         )
     )
@@ -57,6 +58,10 @@ def sample_transcription(audio_id: str) -> TranscriptionInput:
             {"id": 1, "start": 1.2, "end": 2.5, "text": "第二\t\t段"},
             {"id": 2, "start": 2.5, "end": 3.0, "text": "   "},
         ],
+        items=[
+            {"start": 0, "end": 1.2, "text": "第一段文本", "probability": 0.9},
+            {"start": 1.2, "end": 2.5, "text": "第二段", "probability": None},
+        ],
     )
 
 
@@ -74,7 +79,7 @@ def test_bind_imports_local_transcription_bound_snapshot(
 
     baseline_path = Path(subtitle_job.read_json_object(job_path)["artifacts"]["before_correction"])
     expected = {
-        "schema_version": 2,
+        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",
@@ -83,6 +88,7 @@ def test_bind_imports_local_transcription_bound_snapshot(
             {"id": 0, "start": 0.0, "end": 1.2, "text": "第一段 文本"},
             {"id": 1, "start": 1.2, "end": 2.5, "text": "第二 段"},
         ],
+        "items": sample_transcription(audio_id).items,
     }
     assert json.loads(normalized_path.read_text(encoding="utf-8")) == expected
     assert normalized_path.read_bytes() == baseline_path.read_bytes()
@@ -288,7 +294,7 @@ def test_bind_rejects_invalid_replacement_without_changing_bound_job(
     subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path))
 
 
-def test_bind_cli_keeps_exact_result_and_moves_log(
+def test_bind_cli_keeps_exact_result_and_keeps_log(
     subtitle_task: tuple[Path, Path, Path, str],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -313,7 +319,7 @@ def test_bind_cli_keeps_exact_result_and_moves_log(
     )
     assert terminal.out == f"normalized_transcript: {normalized_path}\n"
     assert terminal.err == ""
-    logs = list(job_path.parent.glob("bind-transcription-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("bind-transcription-*.log"))
     assert len(logs) == 1
     assert terminal.out.strip() in logs[0].read_text(encoding="utf-8")
 

@@ -89,19 +89,6 @@ class Timeline:
         start, _end = self.speech_intervals[index]
         return start + speech_samples - self.prefix_speech[index]
 
-    def hard_coordinate_at_cumulative(self, speech_samples: int) -> int | None:
-        if speech_samples <= 0 or speech_samples >= self.total_speech:
-            return None
-        index = bisect_right(self.cumulative_ends, speech_samples)
-        if index >= len(self.speech_intervals):
-            return None
-        start, end = self.speech_intervals[index]
-        prefix = self.prefix_speech[index]
-        coordinate = start + speech_samples - prefix
-        if start < coordinate < end:
-            return coordinate
-        return None
-
 
 def normalize_speech_intervals(
     duration: int,

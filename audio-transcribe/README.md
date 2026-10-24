@@ -24,6 +24,8 @@
 
 ## 使用与合同
 
+三个音频 Skill 使用同一 checkout 中的本地合同包，安装时保留相对目录关系。当前公共格式为 schema 4，旧公共 bundle 不自动迁移；既有消费者本地任务仍按各自兼容规则读取。安装与恢复说明见下列文档。
+
 - [SKILL.md](SKILL.md)：完整使用规则、环境要求、命令和停止条件。
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：转写流程、缓存、身份和公开产物设计。
 - [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：安装、模型、Provider、缓存和产物错误处理。

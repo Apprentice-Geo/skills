@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
+from result_fixtures import resolved_request
 
 from scripts.asr.alignment import (
     ALIGNMENT_POLICY,
@@ -12,7 +13,12 @@ from scripts.asr.alignment import (
 )
 from scripts.asr.chunking import ChunkLayout, PlanningParameters, VadParameters
 from scripts.asr.merge import merge_chunk_transcripts
-from scripts.asr.pipeline_types import AsrPipelinePlan, ChunkTranscript, SourceIdentity
+from scripts.asr.pipeline_types import (
+    AsrPipelinePlan,
+    ChunkTranscript,
+    SourceIdentity,
+    validate_production_request,
+)
 from scripts.io_utils import canonical_sha256
 
 
@@ -136,3 +142,91 @@ def test_merge_preserves_sample_boundaries_and_adjacent_chunk_order(
     assert merged.items[0].end == end_sample / sample_rate
     assert merged.items[1].start == merged.items[0].end
     assert merged.items[1].end == plan.source.duration
+
+
+@pytest.mark.parametrize("mutation", ["missing", "unsupported"])
+def test_previous_boundary_strategy_invalidates_private_plan(mutation: str) -> None:
+    payload = _plan().canonical_payload()
+    if mutation == "missing":
+        del payload["planning_parameters"]["boundary_strategy"]
+    else:
+        payload["planning_parameters"]["boundary_strategy"] = "event-nodes-msre"
+    legacy_plan_id = canonical_sha256(payload)
+    assert legacy_plan_id != _plan().plan_id
+    with pytest.raises(ValueError, match="planning parameters|boundary strategy"):
+        AsrPipelinePlan.from_dict({"plan_id": legacy_plan_id, **payload})
+
+
+@pytest.mark.parametrize("provider", ["faster-whisper", "qwen3-asr"])
+def test_production_request_validates_supported_provider_configuration(
+    provider: str,
+) -> None:
+    request = resolved_request(provider)
+    validate_production_request(
+        {
+            **request["provider_identity"],
+            "alignment_policy": request["alignment_policy"],
+        },
+        request["execution_policy"],
+        VadParameters(**request["vad_parameters"]),
+        PlanningParameters(**request["planning_parameters"]),
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("policy", "qwen3-asr-cuda"),
+        ("num_workers", 0),
+        ("num_workers", True),
+        ("cpu_threads", 100),
+        ("group_size", 2),
+        ("retry_count", -1),
+    ],
+)
+def test_production_request_keeps_execution_invariants(field: str, value) -> None:
+    request = resolved_request()
+    request["execution_policy"][field] = value
+    with pytest.raises(ValueError):
+        validate_production_request(
+            {
+                **request["provider_identity"],
+                "alignment_policy": request["alignment_policy"],
+            },
+            request["execution_policy"],
+            VadParameters(),
+            PlanningParameters(),
+        )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("model", {}), ("beam_size", 0), ("word_timestamps", False)],
+)
+def test_production_request_keeps_model_and_timestamp_requirements(
+    field: str, value
+) -> None:
+    request = resolved_request()
+    identity = {
+        **request["provider_identity"],
+        "alignment_policy": request["alignment_policy"],
+    }
+    identity[field] = value
+    with pytest.raises(ValueError):
+        validate_production_request(
+            identity, request["execution_policy"], VadParameters(), PlanningParameters()
+        )
+
+
+def test_production_request_rejects_invalid_vad_range() -> None:
+    request = resolved_request()
+    with pytest.raises(ValueError, match="VAD"):
+        validate_production_request(
+            {
+                **request["provider_identity"],
+                "alignment_policy": request["alignment_policy"],
+            },
+            request["execution_policy"],
+            replace(VadParameters(), threshold=2),
+            PlanningParameters(),
+        )

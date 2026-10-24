@@ -58,6 +58,7 @@ def _read_normalized_transcript(manifest_path: Path, audio_id: str) -> dict[str,
         "language": transcription.language,
         "duration": transcription.duration,
         "segments": normalized_segments,
+        "items": transcription.items,
     }
 
 
@@ -117,7 +118,6 @@ def main(argv: list[str] | None = None) -> int:
                 Path(arguments.transcription_manifest),
                 results_dir=paths.results_dir,
             )
-            session.move_to(Path(arguments.subtitle_job_path).resolve().parent)
             result(get_logger(__name__), "normalized_transcript: %s", output_path)
             return 0
         except (OSError, SubtitleJobError, TypeError, ValueError) as error:
