@@ -14,6 +14,7 @@ This repository contains Agent Skills for personal use. The Skills reflect perso
 | `article-format-correction` | Correct the Markdown formatting of the article while preserving its meaning, structure, and the author's expressive style. |
 | `anti-sycophancy-review` | Review claims, plans, predictions, and interpretations without unsupported agreement. |
 | `coding-guidelines` | Apply personal guidelines for scope decisions, code reuse, verification, and reporting when implementing or reviewing code, diagnosing defects, and evaluating proposed changes. |
+| `doc-guidelines` | Organize project documentation as needed, define document responsibilities, and maintain current knowledge, working context, and historical archives. |
 
 ## References
 
