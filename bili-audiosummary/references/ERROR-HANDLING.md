@@ -93,6 +93,8 @@ uv run --no-sync python -m scripts.run_pipeline `
 
 Preparation 复用已有稳定任务，不重复下载。已有字幕任务会拒绝冲突的 `--language` 或 `--skip-subtitles`；如需音频输入，复用 `resources.audio` 转写后显式导入 manifest。只更换总结语言使用 `--summary-language`。
 
+本地 job 只接受[当前结构](ARCHITECTURE.md#任务与恢复)。包含旧 `schema_version` 或其他不兼容字段时停止，保留下载资源、转写和用户总结；不手动删字段绕过验证，不自动迁移或重建。
+
 ## 外部转写输入
 
 显式传入 manifest 可导入或替换转写：

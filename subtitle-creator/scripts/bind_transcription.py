@@ -16,7 +16,6 @@ from .process_logging import (
     result,
 )
 from .subtitle_job import (
-    SCHEMA_VERSION,
     SubtitleJobError,
     load_job,
     publish_transcript,
@@ -52,7 +51,6 @@ def _read_normalized_transcript(manifest_path: Path, audio_id: str) -> dict[str,
         raise SubtitleJobError("transcript has no non-empty segments after normalization")
 
     return {
-        "schema_version": SCHEMA_VERSION,
         "source": "audio_transcribe",
         "provider": transcription.provider,
         "language": transcription.language,

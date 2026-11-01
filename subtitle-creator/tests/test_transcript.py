@@ -271,6 +271,28 @@ def test_publish_failure_keeps_existing_results(task, monkeypatch, command, fail
     assert set(job_path.parent.glob("transcript-*/")) == directories
 
 
+@pytest.mark.parametrize("artifact", ["before_correction", "normalized_transcript"])
+def test_versioned_local_transcript_is_rejected_without_modifying_corrections(task, artifact):
+    job_path = task[0]
+    transcript.operate("edit", job_path, 0, text="用户校正")
+    job = subtitle_job.load_job(job_path)
+    path = Path(job["artifacts"][artifact])
+    value = subtitle_job.read_json_object(path, decimal_numbers=True)
+    value["schema_version"] = 3
+    subtitle_job.atomic_write_json(path, value)
+    if artifact == "before_correction":
+        job["artifacts"]["before_correction_sha256"] = subtitle_job.sha256_file(path)
+        subtitle_job.atomic_write_json(job_path, job)
+    before = {path: path.read_bytes() for path in job_path.parent.rglob("*") if path.is_file()}
+
+    with pytest.raises(subtitle_job.SubtitleJobError, match="invalid fields"):
+        transcript.operate("show", job_path, "all")
+
+    assert {
+        path: path.read_bytes() for path in job_path.parent.rglob("*") if path.is_file()
+    } == before
+
+
 def test_cli_external_data_logs_no_text(task, monkeypatch, capsys):
     job_path = task[0]
     data = job_path.parents[2]
@@ -286,7 +308,7 @@ def test_cli_external_data_logs_no_text(task, monkeypatch, capsys):
     assert capsys.readouterr().out.startswith("normalized_transcript: ")
     assert transcript.main(["reset", *common]) == 0
     capsys.readouterr()
-    assert subtitle_job.load_job(job_path)["schema_version"] == 4
+    assert "schema_version" not in subtitle_job.load_job(job_path)
     for log in (job_path.parents[2] / ".cache" / "logs").glob("transcript-*.log"):
         text = log.read_text(encoding="utf-8")
         assert secret not in text and "原文" not in text

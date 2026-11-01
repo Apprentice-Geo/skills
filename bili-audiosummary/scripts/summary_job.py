@@ -8,10 +8,8 @@ from typing import Any, Iterator
 
 from scripts.utils import read_json, write_json_atomic
 
-SCHEMA_VERSION = 2
 JOB_FILENAME = "summary_job.json"
 JOB_KEYS = {
-    "schema_version",
     "status",
     "video",
     "resources",
@@ -92,8 +90,6 @@ def _require_mapping(value: Any, field: str) -> dict[str, Any]:
 def validate_job(job_path: Path, payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict) or set(payload) != JOB_KEYS:
         raise JobValidationError("summary job has an invalid top-level shape")
-    if payload.get("schema_version") != SCHEMA_VERSION:
-        raise JobValidationError("unsupported summary job schema_version")
     status = payload.get("status")
     if status not in STABLE_STATUSES:
         raise JobValidationError("summary job has an invalid status")

@@ -89,7 +89,6 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
     job = read_json(result["job_path"])
     assert job == result["job"]
     assert set(job) == {
-        "schema_version",
         "status",
         "video",
         "resources",
@@ -311,7 +310,6 @@ def test_prepare_restores_existing_ready_job_without_refetch(
     )
     prompt_path.write_text("keep", encoding="utf-8")
     existing = {
-        "schema_version": 2,
         "status": status,
         "video": {
             "bvid": "BVTEST",
@@ -360,7 +358,6 @@ def test_prepare_page_job_does_not_touch_existing_base_ready_job(
     )
     base_job_path = workspace_tmp_path / "results" / "BVTEST" / "summary_job.json"
     existing = {
-        "schema_version": 2,
         "status": status,
         "video": {
             "bvid": "BVTEST",

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 import scripts.continue_summary as continue_summary
+from scripts.summary_job import JobValidationError
 from scripts.transcription_input import TranscriptionInput, TranscriptionInputError
 from scripts.utils import read_json, write_json
 
@@ -18,7 +19,6 @@ def make_needs_job(root: Path) -> tuple[Path, Path]:
     write_json(
         job_path,
         {
-            "schema_version": 2,
             "status": "needs_transcription",
             "video": {
                 "bvid": "BVTEST",
@@ -314,6 +314,33 @@ def completed_job_with_summary(
     job["status"] = "complete"
     write_json(job_path, job)
     return job_path, summary
+
+
+@pytest.mark.parametrize("damage", ["old_version", "unknown_field", "missing_field"])
+def test_incompatible_job_preserves_user_summary_and_artifacts(
+    workspace_tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    damage: str,
+) -> None:
+    job_path, _summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    job = read_json(job_path)
+    if damage == "old_version":
+        job["schema_version"] = 2
+    elif damage == "unknown_field":
+        job["extra"] = True
+    else:
+        del job["status"]
+    write_json(job_path, job)
+    before = {
+        path: path.read_bytes() for path in job_path.parent.rglob("*") if path.is_file()
+    }
+
+    with pytest.raises(JobValidationError, match="invalid top-level shape"):
+        continue_summary.continue_summary(job_path, summary_language="en")
+
+    assert {
+        path: path.read_bytes() for path in job_path.parent.rglob("*") if path.is_file()
+    } == before
 
 
 def test_failed_invalidation_does_not_move_summary_or_change_input(

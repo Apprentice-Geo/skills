@@ -54,7 +54,6 @@ def correction_job(
     manifest = {"opaque": True}
 
     baseline = {
-        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",
@@ -79,7 +78,6 @@ def correction_job(
     normalized_path.write_bytes(json_bytes(baseline))
     job_path = job_dir / "subtitle_job.json"
     job = {
-        "schema_version": 4,
         "job_id": audio_id,
         "status": "transcription_bound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},

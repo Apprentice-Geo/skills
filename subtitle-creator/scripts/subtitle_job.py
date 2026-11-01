@@ -15,8 +15,6 @@ from uuid import uuid4
 from scripts.process_logging import get_logger, warning
 from scripts.runtime_paths import RuntimePaths
 
-SCHEMA_VERSION = 3
-JOB_SCHEMA_VERSION = 4
 JOB_FILENAME = "subtitle_job.json"
 NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
@@ -24,7 +22,6 @@ SUBTITLE_FILENAME = "subtitle.srt"
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 JOB_KEYS = {
-    "schema_version",
     "job_id",
     "status",
     "audio",
@@ -158,11 +155,7 @@ def compare_normalized_correction(
     normalized: dict[str, Any],
 ) -> list[int]:
     for name, payload in (("before_correction", baseline), ("normalized_transcript", normalized)):
-        version = payload.get("schema_version")
-        if type(version) is not int or version != SCHEMA_VERSION:
-            raise SubtitleJobError(f"{name} has an unsupported schema_version")
         fields = {
-            "schema_version",
             "source",
             "provider",
             "language",
@@ -479,8 +472,6 @@ def validate_job_identity(
 ) -> None:
     if set(job) != JOB_KEYS:
         raise SubtitleJobError("subtitle job has an invalid top-level shape")
-    if type(job.get("schema_version")) is not int or job["schema_version"] != JOB_SCHEMA_VERSION:
-        raise SubtitleJobError("unsupported job schema_version")
     if job["subtitle_options"] is not None:
         validate_subtitle_options(job["subtitle_options"])
 

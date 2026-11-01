@@ -85,7 +85,7 @@
 - 只在数据会长期保存、生产者与消费者不能同步升级且旧数据不能安全重建的兼容边界保留显式 schema version。
 - 内部 policy 和 resolved configuration 记录实际生效字段；当这些字段已经参与 identity digest 时，不再增加独立版本号。
 - 临时或可再生的 workspace、cache、benchmark 和诊断数据使用严格的当前结构校验；不兼容数据应失效并重建，不维护迁移链。
-- 已发布公共 schema 中的字段不得在原 schema version 下删除或改变语义。清理其历史冗余字段时，必须通过新的外层公共 schema 明确隔离。
+- 删除已发布 schema 中的字段或改变其语义时，必须通过新的外层公共 schema 明确隔离，不得在原 schema version 下修改。
 
 ## 提交信息
 

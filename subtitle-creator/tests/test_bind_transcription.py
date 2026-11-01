@@ -31,7 +31,6 @@ def subtitle_task(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path
     job_path.write_bytes(
         json_bytes(
             {
-                "schema_version": 4,
                 "job_id": audio_id,
                 "status": "transcription_unbound",
                 "audio": {"path": str(audio_path.resolve()), "id": audio_id},
@@ -79,7 +78,6 @@ def test_bind_imports_local_transcription_bound_snapshot(
 
     baseline_path = Path(subtitle_job.read_json_object(job_path)["artifacts"]["before_correction"])
     expected = {
-        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",

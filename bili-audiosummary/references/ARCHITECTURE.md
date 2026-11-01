@@ -32,7 +32,7 @@ Bilibili URL
 
 ## 任务与恢复
 
-本地 job 的顶层字段为 `schema_version`、`status`、`video`、`resources`、`transcript`、`prompt`、`error`。内部路径相对任务目录且禁止逃逸；公共 manifest 必须为绝对路径。
+本地 job 不设独立版本号，顶层字段严格限定为 `status`、`video`、`resources`、`transcript`、`prompt`、`error`，并校验对应状态的数据和路径。包含旧 `schema_version` 或其他不兼容结构时拒绝读取，保留原文件，不自动迁移、删除或重建含用户总结的任务。内部路径相对任务目录且禁止逃逸；公共 manifest 必须为绝对路径，仍通过 `audio-transcribe-contract` 验证。
 
 - `preparing`：资源准备尚未完成。
 - `needs_transcription`：已准备音频，等待外部转写。
@@ -44,7 +44,7 @@ Bilibili URL
 
 替换转写或切换实际总结语言时，先成功撤销 `complete`，再将旧总结以及目标同名总结改名留存；多文件归档失败时回滚已经移动的文件。重新生成的 prompt 指向空缺的当前 summary 路径，避免误交付旧总结。单纯恢复保留完成状态和用户总结。任务操作由 job lock 串行化；各文件采用原子替换，多个 artifact 不构成整体事务。输入写入后若 prompt 或最终 job 发布失败，完成状态已经撤销，旧输入不保证原样保留；重新传入目标 manifest 恢复并校验，不能仅凭状态交付结果。
 
-completion 验证 source 和非空 UTF-8 总结，不检查固定章节或格式。语言比例只是 warning；事实依据、时间戳、指引遵循情况与请求充分性仍由 Agent 判断。已完成总结校验失败时退回 `prompt_ready`。恢复旧任务会重建 prompt，已有总结继续保留，不迁移 job schema。
+completion 验证 source 和非空 UTF-8 总结，不检查固定章节或格式。语言比例只是 warning；事实依据、时间戳、指引遵循情况与请求充分性仍由 Agent 判断。已完成总结校验失败时退回 `prompt_ready`。恢复符合当前结构的任务时会重建 prompt，已有总结继续保留。
 
 ## 产物
 

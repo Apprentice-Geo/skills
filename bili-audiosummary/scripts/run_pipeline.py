@@ -20,7 +20,6 @@ from scripts.runtime_options import FetchOptions, PipelineOptions
 from scripts.runtime_paths import add_data_dir_argument
 from scripts.summary_job import (
     JOB_FILENAME,
-    SCHEMA_VERSION,
     job_lock,
     load_job,
     publish_job,
@@ -106,7 +105,6 @@ def _job_base(
         Path(path).resolve() for path in fetch_result.get("audio_files") or []
     ]
     return {
-        "schema_version": SCHEMA_VERSION,
         "status": "preparing",
         "video": {
             "bvid": str(fetch_result["video_id"]),
@@ -161,7 +159,6 @@ def _preparing_job(
     except ValueError as exc:
         raise ValueError("Video result path escapes the results directory.") from exc
     return result_dir / JOB_FILENAME, {
-        "schema_version": SCHEMA_VERSION,
         "status": "preparing",
         "video": {
             "bvid": video_id,

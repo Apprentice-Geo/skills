@@ -30,6 +30,6 @@
 
 ## 持久化结构
 
-只接受 job schema `4` 和转写 JSON schema `3`，不迁移历史版本。job 必须包含可空的 `subtitle_options`；声明字幕时必须保存生成参数。转写必须包含不可编辑且完整保留公开字段的非空 `items`。缺少字段、未知版本或损坏 items 均拒绝；合法但不能对应的 items 按段回退。
+本地 job、转写基准和工作副本不设独立版本号，只接受当前精确字段结构，不迁移历史格式。包含旧 `schema_version`、缺少字段或损坏 items 的数据均拒绝，保留原文件；任务包含人工校正，不作为缓存自动删除或重建。job 必须包含可空的 `subtitle_options`；声明字幕时必须保存生成参数。转写必须包含不可编辑且完整保留公开字段的非空 `items`；合法但不能对应的 items 按段回退。上游公共转写仍通过 `audio-transcribe-contract` 验证，不受本地结构简化影响。
 
 已验证 transcript 使用递归 JSON 序列化，有限 `Decimal` 直接写成 JSON 数字，保留 duration 和时间戳精度，不经 `float`。基准与工作副本允许位于不同目录。

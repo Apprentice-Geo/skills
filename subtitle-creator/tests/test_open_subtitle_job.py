@@ -61,7 +61,6 @@ def test_create_publishes_content_addressed_job(audio: tuple[Path, str]) -> None
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8")) == {
-        "schema_version": 4,
         "job_id": audio_id,
         "status": "transcription_unbound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
@@ -100,7 +99,6 @@ def seed_transcription_bound_job(
     job_dir = RESULTS_DIR / audio_id
     job_dir.mkdir(parents=True)
     baseline = {
-        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "faster-whisper",
         "language": "zh",
@@ -116,7 +114,6 @@ def seed_transcription_bound_job(
     subtitle_path.write_bytes(subtitle_job.expected_srt_bytes(baseline))
     job_path = (job_dir / "subtitle_job.json").resolve()
     job = {
-        "schema_version": 4,
         "job_id": audio_id,
         "status": "transcription_bound",
         "audio": {"path": str(audio_path.resolve()), "id": audio_id},
@@ -258,7 +255,7 @@ def test_create_keeps_job_unpublished_when_atomic_replace_fails(
     assert list(job_dir.glob("*.tmp")) == []
 
 
-@pytest.mark.parametrize("version", [2, 3])
+@pytest.mark.parametrize("version", [2, 3, 4])
 @pytest.mark.parametrize("bound", [False, True])
 def test_open_rejects_old_job_without_modifying_artifacts(audio, version, bound):
     audio_path, _ = audio
@@ -268,9 +265,6 @@ def test_open_rejects_old_job_without_modifying_artifacts(audio, version, bound)
         job_path = open_subtitle_job.open_subtitle_job(str(audio_path))
     job = subtitle_job.read_json_object(job_path)
     job["schema_version"] = version
-    del job["subtitle_options"]
-    if version == 2:
-        job["status"] = "editable" if bound else "needs_transcription"
     subtitle_job.atomic_write_json(job_path, job)
     before = {path: path.read_bytes() for path in job_path.parent.iterdir() if path.is_file()}
 

@@ -21,7 +21,6 @@ def payload(text="甲乙丙", times=None, *, start="0", end="3", duration="4"):
     if times is None:
         times = [("甲", "0", "0.8"), ("乙", "1", "1.8"), ("丙", "2", "2.8")]
     return {
-        "schema_version": 3,
         "source": "audio_transcribe",
         "provider": "fake",
         "language": "zh",
@@ -328,13 +327,16 @@ def test_invalid_saved_options_are_rejected(task):
         generate_srt.generate_srt(job_path)
 
 
-@pytest.mark.parametrize("damage", ["old_version", "missing_items"])
+@pytest.mark.parametrize("damage", ["old_version", "missing_items", "unknown_field"])
 def test_rejects_old_or_incomplete_transcript(damage):
     value = payload()
-    del value["items"]
     if damage == "old_version":
-        value["schema_version"] = 2
-    with pytest.raises(SubtitleJobError, match="schema_version|invalid fields"):
+        value["schema_version"] = 3
+    elif damage == "missing_items":
+        del value["items"]
+    elif damage == "unknown_field":
+        value["extra"] = True
+    with pytest.raises(SubtitleJobError, match="invalid fields"):
         rendered_srt_segments(value)
 
 

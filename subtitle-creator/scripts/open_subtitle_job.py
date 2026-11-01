@@ -17,7 +17,6 @@ from .process_logging import (
 )
 from .subtitle_job import (
     JOB_FILENAME,
-    JOB_SCHEMA_VERSION,
     SubtitleJobError,
     atomic_write_json,
     load_job,
@@ -56,7 +55,6 @@ def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -
         return job_path
 
     job: dict[str, Any] = {
-        "schema_version": JOB_SCHEMA_VERSION,
         "job_id": audio_id,
         "status": "transcription_unbound",
         "audio": {"path": str(audio_path), "id": audio_id},
