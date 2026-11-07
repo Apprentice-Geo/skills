@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
+import scripts.complete_summary as complete_summary
+import scripts.continue_summary as continue_summary
+import scripts.prepare_audio as prepare_audio
 import scripts.run_pipeline as run_pipeline
+from scripts.runtime_paths import RuntimePaths
+from scripts.transcription_input import TranscriptionInput, TranscriptionInputError
 from scripts.utils import read_json, write_json, write_json_atomic
 
 
@@ -111,6 +116,251 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
     assert not result["job_path"].with_suffix(".json.tmp").exists()
 
 
+@pytest.mark.parametrize(
+    ("subtitle_text", "skip_subtitles", "expected_status"),
+    [
+        ("1\n00:00:00,000 --> 00:00:01,000\n字幕。\n", False, "prompt_ready"),
+        (None, False, "needs_transcription"),
+        ("", False, "needs_transcription"),
+        ("not srt", False, "needs_transcription"),
+        ("1\n00:00:00,000 --> 00:00:00,000\n字幕。\n", False, "needs_transcription"),
+        ("1\n00:00:02,000 --> 00:00:01,000\n字幕。\n", False, "needs_transcription"),
+        ("1\n00:00:00,000 --> 00:00:01,000\n字幕。\n", True, "needs_transcription"),
+    ],
+)
+def test_pipeline_fetches_audio_only_when_subtitles_are_unusable(
+    workspace_tmp_path, mocker, subtitle_text, skip_subtitles, expected_status
+):
+    initial = make_fetch_result(
+        workspace_tmp_path, subtitle_text=subtitle_text, audio=False
+    )
+    mocker.patch(
+        "scripts.fetch_audio.extract_metadata",
+        return_value={
+            "id": "BVTEST",
+            "title": "测试视频",
+            "webpage_url": "https://www.bilibili.com/video/BVTEST/",
+        },
+    )
+    subtitles = mocker.patch(
+        "scripts.fetch_audio.download_subtitles", return_value=initial["subtitle_files"]
+    )
+
+    def download(_url, directory, video_id, _options):
+        audio_path = directory / f"{video_id}.m4a"
+        audio_path.write_bytes(b"audio")
+        return [audio_path]
+
+    audio = mocker.patch("scripts.fetch_audio.download_audio", side_effect=download)
+    prepared = run_pipeline.run_pipeline(make_args(skip_subtitles=skip_subtitles))
+    job = prepared["job"]
+    assert job["status"] == expected_status
+    if expected_status == "prompt_ready":
+        audio.assert_not_called()
+        assert job["resources"]["audio"] is None
+        summary = prepared["job_path"].parent / job["prompt"]["summary_path"]
+        summary.write_text("字幕内容的中文总结。", encoding="utf-8")
+        completed, validation = complete_summary.complete_summary(prepared["job_path"])
+        assert validation.ok
+        assert completed["status"] == "complete"
+        restored = run_pipeline.run_pipeline(make_args())
+        assert restored["job"] == completed
+        audio.assert_not_called()
+    else:
+        audio.assert_called_once()
+        assert job["resources"]["audio"] == "resource/BVTEST.m4a"
+        manifest = read_json(initial["manifest_path"])
+        assert manifest["audio_files"] == [
+            (prepared["job_path"].parent / job["resources"]["audio"]).as_posix()
+        ]
+    if skip_subtitles:
+        subtitles.assert_not_called()
+
+
+def make_completed_subtitle_job(root, mocker, *, video_id="BVTEST"):
+    url = "https://www.bilibili.com/video/BVTEST/"
+    if "_p" in video_id:
+        url += f"?p={video_id.split('_p')[1]}"
+    fetched = make_fetch_result(
+        root,
+        subtitle_text="1\n00:00:00,000 --> 00:00:01,000\n字幕。\n",
+        audio=False,
+        video_id=video_id,
+        url=url,
+    )
+    mocker.patch("scripts.fetch_audio.run_fetch", return_value=fetched)
+    prepared = run_pipeline.run_pipeline(make_args(url=url))
+    job_path = prepared["job_path"]
+    summary_path = job_path.parent / prepared["job"]["prompt"]["summary_path"]
+    summary_path.write_text("保留现有的中文总结。", encoding="utf-8")
+    complete_summary.complete_summary(job_path)
+    return job_path, summary_path
+
+
+@pytest.mark.parametrize("video_id", ["BVTEST", "BVTEST_p2"])
+def test_prepare_audio_preserves_completed_input_until_transcription_import(
+    workspace_tmp_path, mocker, video_id
+):
+    job_path, summary_path = make_completed_subtitle_job(
+        workspace_tmp_path, mocker, video_id=video_id
+    )
+    before = read_json(job_path)
+    snapshots = {
+        path: path.read_bytes()
+        for path in job_path.parent.iterdir()
+        if path.suffix in {".json", ".md"} and path != job_path
+    }
+    cookies = workspace_tmp_path / "cookies.txt"
+
+    def download(url, directory, requested_video_id, options):
+        assert requested_video_id == video_id
+        assert url == before["video"]["url"]
+        assert options.cookies == cookies
+        audio_path = directory / f"{video_id}.m4a"
+        audio_path.write_bytes(b"audio")
+        return [audio_path]
+
+    audio = mocker.patch("scripts.fetch_audio.download_audio", side_effect=download)
+    job = prepare_audio.prepare_audio(job_path, cookies=cookies)
+    assert job == {
+        **before,
+        "resources": {**before["resources"], "audio": f"resource/{video_id}.m4a"},
+    }
+    assert all(path.read_bytes() == data for path, data in snapshots.items())
+    assert prepare_audio.prepare_audio(job_path) == job
+    audio.assert_called_once()
+
+    audio_path = job_path.parent / job["resources"]["audio"]
+    mocker.patch(
+        "scripts.continue_summary.load_transcription",
+        return_value=TranscriptionInput(
+            audio_id=continue_summary._file_sha256(audio_path),
+            language="zh",
+            duration=1.0,
+            segments=[{"id": 0, "start": 0.0, "end": 1.0, "text": "新转写。"}],
+        ),
+    )
+    updated = continue_summary.continue_summary(
+        job_path, (workspace_tmp_path / "manifest.json").resolve()
+    )
+    assert updated["status"] == "prompt_ready"
+    assert updated["transcript"]["source"] == "audio_transcribe"
+    assert not summary_path.exists()
+    archived = list(job_path.parent.glob("*.superseded-*.md"))
+    assert len(archived) == 1
+    assert archived[0].read_text(encoding="utf-8") == "保留现有的中文总结。"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("network unavailable"),
+        PermissionError("denied"),
+        run_pipeline.fetch_audio.CookieRequiredError("HTTP 412"),
+    ],
+)
+def test_prepare_audio_failure_preserves_completed_job(
+    workspace_tmp_path, mocker, failure
+):
+    job_path, summary_path = make_completed_subtitle_job(workspace_tmp_path, mocker)
+    before = job_path.read_bytes()
+    manifest_path = job_path.parent / "resource/fetch_manifest.json"
+    manifest_before = manifest_path.read_bytes()
+    mocker.patch("scripts.fetch_audio.download_audio", side_effect=failure)
+    with pytest.raises(type(failure)):
+        prepare_audio.prepare_audio(job_path)
+    assert job_path.read_bytes() == before
+    assert manifest_path.read_bytes() == manifest_before
+    assert summary_path.read_text(encoding="utf-8") == "保留现有的中文总结。"
+
+
+def test_import_without_prepared_audio_explains_next_step(workspace_tmp_path, mocker):
+    job_path, _ = make_completed_subtitle_job(workspace_tmp_path, mocker)
+    loader = mocker.patch("scripts.continue_summary.load_transcription")
+    with pytest.raises(TranscriptionInputError, match="scripts.prepare_audio"):
+        continue_summary.continue_summary(job_path, workspace_tmp_path.resolve())
+    loader.assert_not_called()
+
+
+@pytest.mark.parametrize("boundary", ["manifest", "job"])
+def test_prepare_audio_publish_failure_can_retry_without_replacing_summary(
+    workspace_tmp_path, mocker, boundary
+):
+    job_path, summary_path = make_completed_subtitle_job(workspace_tmp_path, mocker)
+    before = job_path.read_bytes()
+    audio_path = job_path.parent / "resource/BVTEST.m4a"
+    audio_path.write_bytes(b"audio")
+    downloader = mocker.patch(
+        "scripts.fetch_audio.download_audio", return_value=[audio_path]
+    )
+    operation = "write_json_atomic" if boundary == "manifest" else "publish_job"
+    failure = mocker.patch(
+        f"scripts.prepare_audio.{operation}", side_effect=PermissionError("denied")
+    )
+    with pytest.raises(PermissionError):
+        prepare_audio.prepare_audio(job_path)
+    assert job_path.read_bytes() == before
+    assert summary_path.read_text(encoding="utf-8") == "保留现有的中文总结。"
+    mocker.stop(failure)
+    mocker.stop(downloader)
+    # 重试复用已下载音频，无需再次访问网络。
+    network = mocker.patch(
+        "scripts.fetch_audio.make_base_options", side_effect=AssertionError
+    )
+    restored = prepare_audio.prepare_audio(job_path)
+    assert restored["status"] == "complete"
+    assert restored["resources"]["audio"] == "resource/BVTEST.m4a"
+    assert summary_path.is_file()
+    network.assert_not_called()
+
+
+def test_prepare_audio_main_reports_cookie_failure(workspace_tmp_path, mocker):
+    job_path, _ = make_completed_subtitle_job(workspace_tmp_path, mocker)
+    mocker.patch(
+        "scripts.fetch_audio.download_audio",
+        side_effect=run_pipeline.fetch_audio.CookieRequiredError("HTTP 412"),
+    )
+    assert prepare_audio.main([str(job_path)]) == 2
+
+
+def test_prepare_audio_rejects_job_outside_configured_results(workspace_tmp_path):
+    with pytest.raises(ValueError):
+        prepare_audio.prepare_audio(
+            workspace_tmp_path / "outside/summary_job.json",
+            paths=RuntimePaths.resolve(workspace_tmp_path / "data"),
+        )
+
+
+def test_prepare_audio_does_not_replace_missing_registered_audio(
+    workspace_tmp_path, mocker
+):
+    job_path, summary_path = make_completed_subtitle_job(workspace_tmp_path, mocker)
+    job = read_json(job_path)
+    job["resources"]["audio"] = "resource/missing.m4a"
+    write_json_atomic(job_path, job)
+    downloader = mocker.patch("scripts.fetch_audio.download_audio")
+    with pytest.raises(ValueError, match="Registered audio does not exist"):
+        prepare_audio.prepare_audio(job_path)
+    downloader.assert_not_called()
+    assert read_json(job_path) == job
+    assert summary_path.is_file()
+
+
+@pytest.mark.parametrize("status", ["preparing", "failed"])
+def test_prepare_audio_rejects_unstable_job(workspace_tmp_path, mocker, status):
+    fetched = make_fetch_result(workspace_tmp_path, audio=False)
+    job_path, job = run_pipeline._preparing_job(make_args())
+    if status == "failed":
+        job = run_pipeline._failed_job(job, "fetch", RuntimeError("failure"))
+    write_json_atomic(job_path, job)
+    downloader = mocker.patch("scripts.fetch_audio.download_audio")
+    with pytest.raises(ValueError, match="cannot prepare audio"):
+        prepare_audio.prepare_audio(job_path)
+    downloader.assert_not_called()
+    assert read_json(job_path) == job
+    assert fetched["manifest_path"].is_file()
+
+
 @pytest.mark.parametrize("page", ["0", "-1", "../secret"])
 def test_prepare_rejects_invalid_video_page(
     workspace_tmp_path: Path, page: str, monkeypatch
@@ -215,6 +465,7 @@ def test_prepare_failure_after_preparing_writes_failed_job(
     mocker.patch(
         "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
     )
+    mocker.patch("scripts.fetch_audio.download_audio", return_value=[])
 
     with pytest.raises(RuntimeError, match="No usable audio"):
         run_pipeline.run_pipeline(make_args())
@@ -223,7 +474,7 @@ def test_prepare_failure_after_preparing_writes_failed_job(
     job = read_json(job_path)
     assert job["status"] == "failed"
     assert job["error"] == {
-        "stage": "prepare_transcript",
+        "stage": "prepare_audio",
         "type": "RuntimeError",
         "message": "No usable audio file is available for external transcription.",
     }

@@ -65,6 +65,10 @@ def _validated_transcript_markdown(
     job: dict[str, Any],
     manifest_path: Path,
 ) -> tuple[TranscriptionInput, str]:
+    if job["resources"]["audio"] is None:
+        raise TranscriptionInputError(
+            "Prepare job audio with scripts.prepare_audio before importing transcription."
+        )
     transcription = load_transcription(manifest_path)
     audio_path = resolve_local_path(
         job_path, job["resources"]["audio"], "resources.audio"

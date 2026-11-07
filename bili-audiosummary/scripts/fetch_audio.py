@@ -315,7 +315,7 @@ def download_subtitles(
         path for path in subtitle_files if not is_usable_subtitle(path)
     ]
     if non_srt_subtitle_files:
-        raise RuntimeError("Subtitle download did not produce a valid SRT file.")
+        logger.warning("Subtitle download did not produce a valid SRT file.")
     return []
 
 

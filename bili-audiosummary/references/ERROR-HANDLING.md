@@ -1,6 +1,14 @@
 # 错误处理
 
-仅在 Bilibili 资源准备、job continue 或 summary completion 失败时使用此 reference。转写模型和 cache 失败归独立的 `audio-transcribe` Skill 处理。
+在选择受限环境的执行权限与数据目录，或诊断依赖检查、setup、Bilibili 资源准备、job continue 与 summary completion 失败时使用此 reference。转写模型和 cache 失败归独立的 `audio-transcribe` Skill 处理。
+
+## 执行权限与沙箱
+
+- 执行权限选择遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。已知沙箱不满足所需权限时，直接使用宿主允许的执行机制，不先在同一限制下反复尝试。宿主不允许所需权限时，报告具体受阻步骤；已有本地输入且权限足够时，可继续本地总结与校验。
+- setup 可能下载 Python 3.12，并通过 uv 访问包索引和 GitHub 固定 tag 合同依赖；需要相应网络权限，以及 Skill `.venv`、uv 缓存和 Python 安装位置的写入权限。仅放开 Bilibili 域名不足以完成 setup。
+- 首次资源准备需要访问 Bilibili 的页面、接口和字幕服务；字幕不可用、被明确跳过或后来补充音频时，还需访问音频 CDN。浏览器或搜索工具能打开视频页面，不代表命令行下载进程具有相同网络权限。可用字幕路径不下载音频，但仍须读取 job 确认已进入 `prompt_ready`。
+- 依赖检查会写入日志与 JSON 报告，并启动 uv、ffmpeg 和 ffprobe 子进程。继续与完成步骤使用本地输入，也会写日志、获取 job lock 或更新文件。网络权限、目录读写权限和子进程执行权限分别判断，不能把这些命令当作无需写权限的纯读取操作。
+- DNS、连接、代理或证书错误先结合原始日志与宿主限制判断；文件访问被拒绝先核对绝对失败路径。不把所有网络错误都归因于沙箱，不把网络或权限错误当作缺包，也不通过更换镜像、重装依赖或改用其他内容来源掩盖原始失败。
 
 ## 运行目录与写入失败
 
@@ -17,6 +25,8 @@
 ## 快速索引
 
 - [错误处理](#错误处理)
+  - [执行权限与沙箱](#执行权限与沙箱)
+  - [运行目录与写入失败](#运行目录与写入失败)
   - [快速索引](#快速索引)
   - [Setup 与依赖](#setup-与依赖)
   - [下载与网络失败](#下载与网络失败)
@@ -31,6 +41,7 @@
 ## Setup 与依赖
 
 - 依赖检查、setup 和复查的执行顺序与次数统一遵循 [SKILL.md 的环境策略](../SKILL.md#环境)。
+- `check_dependencies.bat` 在 Windows、项目文件、uv 或 `.venv\Scripts\python.exe` 前置检查失败时可能直接返回 `2`，不产生 Python 日志或 JSON 报告。先核对这些前置项；只有缺少环境或确认依赖问题才进入 setup，不虚构日志路径。
 - 必需依赖缺失、已安装包不一致、合同包版本不符或公共 API 不完整适用依赖同步。一次任务只执行一次 setup 和复查；仍失败时报告具体问题。
 - 日志/报告写入失败、数据或 `.venv` 权限错误不进入 setup，按真实路径诊断。项目文件缺失、合同声明不可读或无效先修复项目；工具不可用、Python 版本错误或子进程无法启动先诊断工具与解释器，不当作缺包处理。
 - Bilibili 网络、Cookie、输入文件和 job/artifact 错误按各自章节恢复，不反复 setup。此 Skill 不配置 ASR Provider、不安装模型；外部转写遵循 `audio-transcribe` 自身修复策略。
@@ -47,8 +58,10 @@
 
 - 检查完整日志，定位原始 yt-dlp、网络、超时或文件系统错误。
 - 重试前确认 Bilibili URL 可访问且受支持。
+- pipeline 在联网下载前就要求 URL 能解析出 `/video/BV.../`。`b23.tv` 短链接或旧式 av 地址应先解析到实际 BV 视频地址，保留所需的 `p` 参数；不能解析时请求完整视频地址，不把 URL 校验错误当作网络失败。当前 pipeline 不批量处理合集或全部分 P。
 - 不得用其他来源的内容替代失败的 Bilibili fetch。
 - 没有可用原生字幕或字幕被明确跳过时，必须提供音频。
+- 字幕可用时不下载备用音频；已有字幕任务后来需要音频时，按 [SKILL.md](../SKILL.md#恢复与重新总结) 使用 `scripts.prepare_audio`。准备失败不会撤销现有总结；修复原因后重试，不删除任务。已登记音频缺失时明确报错，不自动重下载后替换其身份。
 - job 进入 `preparing` 后发生致命错误，会生成带有简洁 `error.stage/type/message` 的 `failed`，且不存储 traceback 或 Cookie 内容。
 - 不得手动把 `failed` 改为其他状态。修复原因后重新运行 preparation，不得覆盖任何有效的现有 job。
 
@@ -73,8 +86,10 @@ uv run --no-sync python -m scripts.run_pipeline `
 
 - 仅可复用属于所请求 Bilibili language group 且能解析为非空 segment 的 `.srt` 文件。
 - start 与 end timestamp 相等的 cue 会被记录并跳过。其他有效 cue 仍可使用；如果没有剩余有效 cue，尝试其他字幕或回退到音频转写。
+- 倒置或重叠的时间戳使该字幕不可用，尝试其他字幕或回退到音频转写。字幕文件权限错误直接失败，不当作无字幕回退；HTTP 412 仍遵循 Cookie 规则。
 - 其他字幕文件不会阻止重新尝试下载目标语言字幕。
-- 空、格式错误或不可读的 cached SRT 应写入日志，并在可能时替换。
+- 空或格式错误的 cached SRT 应写入日志，并在可能时替换。
+- 下载结果只有非 SRT 字幕时记录 warning；没有可用 SRT 时由 pipeline 准备音频。
 - `--skip-subtitles` 会有意跳过 cached 字幕和下载字幕，并要求存在音频。
 - 如果没有有效字幕但存在音频，成功的 preparation 结束于 `needs_transcription`；这不是失败。
 - Bilibili `--language` 值不是 ASR language。不得把它传给 `audio-transcribe`。
@@ -91,7 +106,7 @@ uv run --no-sync python -m scripts.run_pipeline `
 
 拒绝 schema 错误、status 未知、固定顶层 key 缺失、nullability 无效、内部路径为绝对路径或存在相对路径逃逸的 job。不得手动修复 job JSON。
 
-Preparation 复用已有稳定任务，不重复下载。已有字幕任务会拒绝冲突的 `--language` 或 `--skip-subtitles`；如需音频输入，复用 `resources.audio` 转写后显式导入 manifest。只更换总结语言使用 `--summary-language`。
+Preparation 复用已有稳定任务，不重复下载。已有字幕任务会拒绝冲突的 `--language` 或 `--skip-subtitles`；如需音频输入，先用 `scripts.prepare_audio` 准备 `resources.audio`，转写后显式导入 manifest。只更换总结语言使用 `--summary-language`。
 
 本地 job 只接受[当前结构](ARCHITECTURE.md#任务与恢复)。包含旧 `schema_version` 或其他不兼容字段时停止，保留下载资源、转写和用户总结；不手动删字段绕过验证，不自动迁移或重建。
 
@@ -104,7 +119,7 @@ uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>
   --transcription-manifest "<absolute-manifest-path>"
 ```
 
-adapter 校验公共 bundle，并比较 job 音频的 SHA-256。读取或音频身份失败时保留当前输入与总结；不得编辑、删除或修复上游目录。通过验证后，旧总结改名留存，任务回到 `prompt_ready`。同一路径再次传入也表示显式重新导入。
+adapter 校验公共 bundle，并比较 job 音频的 SHA-256。`resources.audio` 为 `null` 时先用 `scripts.prepare_audio` 补充音频。读取或音频身份失败时保留当前输入与总结；不得编辑、删除或修复上游目录。通过验证后，旧总结改名留存，任务回到 `prompt_ready`。同一路径再次传入也表示显式重新导入。
 
 不传 manifest 时只恢复本地输入的派生产物。prompt 缺失可重建；原生字幕的 Markdown 可从本地 JSON 重建。外部转写的本地 Markdown 缺失时，需要重新提供 manifest。切语言使用 `--summary-language zh|en`，无需重新下载或转写。
 

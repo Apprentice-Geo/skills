@@ -122,6 +122,25 @@ def test_download_subtitles_turns_http_412_into_cookie_required_error(
         )
 
 
+def test_download_subtitles_without_valid_srt_allows_audio_fallback(
+    workspace_tmp_path, mocker
+):
+    subtitle_dir = workspace_tmp_path / "subtitle"
+    subtitle_dir.mkdir()
+    (subtitle_dir / "BVTEST.zh-Hans.vtt").write_text("WEBVTT", encoding="utf-8")
+    mocker.patch("scripts.fetch_audio.make_base_options", return_value={})
+    mocker.patch("scripts.fetch_audio.YoutubeDL")
+    assert (
+        fetch_audio.download_subtitles(
+            "https://www.bilibili.com/video/BVTEST/",
+            subtitle_dir,
+            "BVTEST",
+            make_args(workspace_tmp_path),
+        )
+        == []
+    )
+
+
 def test_download_audio_turns_http_412_into_cookie_required_error(
     workspace_tmp_path: Path,
     mocker,

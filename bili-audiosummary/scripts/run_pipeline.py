@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from scripts import fetch_audio, subtitle_transcript
 from scripts.continue_summary import _continue_summary_unlocked
+from scripts.prepare_audio import _prepare_job_audio_unlocked
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -56,7 +57,7 @@ def make_fetch_args(options: PipelineOptions) -> FetchOptions:
         paths=options.paths,
         cookies=options.cookies,
         playlist=False,
-        skip_audio=False,
+        skip_audio=True,
         skip_subtitles=options.skip_subtitles,
         language=options.language,
         write_auto_subs=True,
@@ -247,7 +248,8 @@ def _run_pipeline_unlocked(
             if transcript is not None and transcript["source"] == "bilibili_subtitle":
                 if options.skip_subtitles:
                     raise ValueError(
-                        "Existing job uses Bilibili subtitles. To replace them, transcribe "
+                        "Existing job uses Bilibili subtitles. To replace them, run "
+                        "scripts.prepare_audio if needed, then transcribe "
                         "resources.audio and pass --transcription-manifest to continue_summary."
                     )
                 payload = read_json(
@@ -322,11 +324,15 @@ def _run_pipeline_unlocked(
             )
 
         if subtitle_path is None:
-            audio_path = job["resources"]["audio"]
-            if audio_path is None:
-                raise RuntimeError(
-                    "No usable audio file is available for external transcription."
+            stage = "prepare_audio"
+            job = _prepare_job_audio_unlocked(
+                job_path, job, paths=options.paths, cookies=options.cookies
+            )
+            fetch_result["audio_files"] = [
+                resolve_local_path(
+                    job_path, job["resources"]["audio"], "resources.audio"
                 )
+            ]
             job = {**job, "status": "needs_transcription"}
         else:
             transcript_result = subtitle_transcript.subtitle_to_transcript(
