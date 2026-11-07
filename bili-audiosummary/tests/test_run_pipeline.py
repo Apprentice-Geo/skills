@@ -197,6 +197,28 @@ def make_completed_subtitle_job(root, mocker, *, video_id="BVTEST"):
     return job_path, summary_path
 
 
+def test_regenerate_subtitle_summary_reuses_local_input_without_audio(
+    workspace_tmp_path, mocker
+):
+    job_path, summary_path = make_completed_subtitle_job(workspace_tmp_path, mocker)
+    before = read_json(job_path)
+    source = job_path.parent / before["transcript"]["path"]
+    markdown = job_path.parent / "transcript.md"
+    snapshots = (source.read_bytes(), markdown.read_bytes())
+    audio = mocker.patch("scripts.fetch_audio.download_audio")
+    transcription = mocker.patch("scripts.continue_summary.load_transcription")
+
+    updated = continue_summary.continue_summary(job_path, regenerate_summary=True)
+
+    assert updated == {**before, "status": "prompt_ready"}
+    assert updated["resources"]["audio"] is None
+    assert (source.read_bytes(), markdown.read_bytes()) == snapshots
+    assert not summary_path.exists()
+    assert len(list(job_path.parent.glob("*.superseded-*.md"))) == 1
+    audio.assert_not_called()
+    transcription.assert_not_called()
+
+
 @pytest.mark.parametrize("video_id", ["BVTEST", "BVTEST_p2"])
 def test_prepare_audio_preserves_completed_input_until_transcription_import(
     workspace_tmp_path, mocker, video_id

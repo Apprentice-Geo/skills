@@ -12,15 +12,17 @@
 
 ## 运行目录与写入失败
 
-`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `BILI_AUDIOSUMMARY_DATA_DIR`，未配置时使用 Skill 根目录。布局保留 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；转写 workspace 跟随结果目录，字幕和总结的任务内 artifact 跟随各自 job。所有日志固定保存在 `.cache/logs/`，不随 job 移动或删除。
+`scripts/runtime_paths.py` 是本 Skill 的运行数据路径来源。CLI 的 `--data-dir` 优先于 `BILI_AUDIOSUMMARY_DATA_DIR`，未配置时使用 Skill 根目录。运行数据包括 `<data-dir>/.cache/logs/`、`<data-dir>/.cache/uv/` 和 `<data-dir>/results/`；字幕和总结的任务内 artifact 跟随各自 job。日志不随 job 移动或删除。
 
-所有命令启动时解析绝对路径，再传给业务入口。源码、提示词资源、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
+源码、提示词资源、`.venv`、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。外部转写 workspace、缓存和模型位置由 `audio-transcribe` 配置，本 Skill 不保证它们跟随数据目录变化。
 
-创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
+恢复、补充音频、重新总结或完成任务时，job 必须位于当前配置的 `<data-dir>/results/<BVID[_pN]>/summary_job.json`。即使传入 job 绝对路径，数据目录不匹配也会被拒绝。恢复历史任务应先把 `--data-dir` 或环境变量设回对应目录；切换数据目录不会自动查找或迁移任务。字幕 job 中已保存的绝对 artifact 路径也不会自动改写。
+
+创建目录或打开日志失败时，CLI 向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；日志未创建时不输出 `Full log`，不继续业务或安装依赖。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
 
 依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。检查器关键前置错误仍使用原有退出码，Bilibili CookieRequired 的专用退出码仍只用于 Cookie 错误。
 
-数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
+数据目录可写只解决运行数据写入，依赖同步还需要 `.venv` 可写。setup 不为初始化 cache 或日志顺便创建结果目录，也不安装转写模型。
 
 ## 快速索引
 
@@ -34,9 +36,11 @@
   - [字幕选择](#字幕选择)
   - [Job Status](#job-status)
   - [外部转写输入](#外部转写输入)
+  - [输入与总结替换失败](#输入与总结替换失败)
   - [Summary Completion](#summary-completion)
   - [日志](#日志)
   - [停止条件](#停止条件)
+  - [合同包检查](#合同包检查)
 
 ## Setup 与依赖
 
@@ -101,7 +105,7 @@ uv run --no-sync python -m scripts.run_pipeline `
 - `preparing`：preparation 在进入稳定状态前中断。重新运行，或诊断 preparation 日志。
 - `needs_transcription`：使用相对于 job 的音频路径调用 `audio-transcribe`，然后使用 manifest 绝对路径调用 `continue_summary`。
 - `prompt_ready`：写入或修复预期 summary，然后调用 `complete_summary`。
-- `complete`：completion 时 source 和 summary 有效。允许重复运行 completion；不得覆盖 job。
+- `complete`：已有总结通过了 completion；核对是否满足本次请求，满足时可重复校验后交付，需要重写时使用 `continue_summary --regenerate-summary`。不得手动覆盖 job。
 - `failed`：preparation 遇到致命错误。检查其中的简洁错误和完整日志。
 
 拒绝 schema 错误、status 未知、固定顶层 key 缺失、nullability 无效、内部路径为绝对路径或存在相对路径逃逸的 job。不得手动修复 job JSON。
@@ -121,9 +125,17 @@ uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>
 
 adapter 校验公共 bundle，并比较 job 音频的 SHA-256。`resources.audio` 为 `null` 时先用 `scripts.prepare_audio` 补充音频。读取或音频身份失败时保留当前输入与总结；不得编辑、删除或修复上游目录。通过验证后，旧总结改名留存，任务回到 `prompt_ready`。同一路径再次传入也表示显式重新导入。
 
-不传 manifest 时只恢复本地输入的派生产物。prompt 缺失可重建；原生字幕的 Markdown 可从本地 JSON 重建。外部转写的本地 Markdown 缺失时，需要重新提供 manifest。切语言使用 `--summary-language zh|en`，无需重新下载或转写。
+不传 manifest 时使用本地输入。单纯恢复可重建 prompt 和原生字幕 Markdown，不改写已有总结；外部转写的本地 Markdown 缺失时，需要重新提供 manifest。切语言使用 `--summary-language zh|en`；同语言按新要求重写使用 `--regenerate-summary`。两者均无需重新下载或转写；没有转写输入时不能要求重新总结。
 
-输入替换和语言切换会将旧总结与目标同名总结改名为 `.superseded-<id>.md`，保留用户内容；它们不再是当前可交付结果。归档失败会回滚已移动的总结；若连回滚也失败，文件仍保存在报告的备份路径。各文件并非整体事务：输入写入后若 prompt 或最终 job 发布失败，旧输入可能已经改变；重新传入目标 manifest 恢复，并在交付前完成校验。不要为这些操作删除整个任务。
+## 输入与总结替换失败
+
+输入替换、实际语言切换和 `--regenerate-summary` 均先撤销 `complete`，再将旧总结与目标同名总结归档为 `.superseded-<id>.md`；归档内容不能作为当前结果交付。
+
+- 撤销完成状态失败：不移动旧总结，也不替换输入。
+- 归档失败：回滚已经移动的总结。若回滚也失败，按错误报告中的备份路径保留并找回内容；不要删除任务。
+- 输入、prompt 或最终 job 发布失败：多个 artifact 不构成整体事务，旧输入不保证原样保留；任务可能已回到 `prompt_ready`，不能仅凭状态交付。
+
+按原操作恢复：替换转写时重新传入目标 manifest；切换语言时再次传入目标 `--summary-language`；使用当前转写重写时再次传入 `--regenerate-summary`。恢复后重新编写或检查总结，并通过 completion 再交付。仅重写或切换语言时，不为恢复而重新导入无关的上游转写。
 
 ## Summary Completion
 
@@ -154,18 +166,17 @@ summary 语言比例不足只产生 warning，命令仍以成功状态退出并�
 
 ## 停止条件
 
-出现以下情况时，停止执行，不得生成或完成 summary：
+以下情况禁止生成、完成或交付 summary；修复原因后可继续任务：
 
 - 事前已知请求所需的关键信息主要依赖画面，或读取 transcript 后确认其整体不足以支持请求；
 - 输入不是受支持的 Bilibili URL；
 - Bilibili 返回 `HTTP 412`，且没有有效 Cookie；
 - 既没有可用的原生字幕，也没有可用音频；
-- job 为 `preparing`、`needs_transcription` 或 `failed`；
 - job 未通过 schema 或路径验证，或无法安全读取必需的内部 artifact；
 - 无法安全解析必需的 prompt、transcript 或 summary 路径；
 - 转写在生成完整公共 manifest 前失败。
 
-禁止通过手动编辑 job status 绕过停止条件。
+job 为 `needs_transcription` 时，继续调用转写 Skill 并导入结果；`preparing` 或 `failed` 时诊断并恢复资源准备。这些状态表示总结输入尚未就绪，按 [Job Status](#job-status) 推进，不终止整个任务。禁止通过手动编辑 job status 绕过校验。
 
 
 ## 合同包检查

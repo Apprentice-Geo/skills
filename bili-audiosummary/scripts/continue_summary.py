@@ -48,6 +48,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Import or replace the transcript from an absolute public manifest path.",
     )
     parser.add_argument("--summary-language", choices=("zh", "en"))
+    parser.add_argument(
+        "--regenerate-summary",
+        action="store_true",
+        help="Archive the current summary and prepare to summarize the same transcript again.",
+    )
     add_data_dir_argument(parser)
     return parser.parse_args(argv)
 
@@ -134,6 +139,7 @@ def _continue_summary_unlocked(
     manifest_path: Path | None = None,
     *,
     summary_language: str | None = None,
+    regenerate_summary: bool = False,
 ) -> dict[str, Any]:
     if manifest_path is not None and not manifest_path.is_absolute():
         raise TranscriptionInputError(
@@ -158,6 +164,10 @@ def _continue_summary_unlocked(
         transcript = {"source": "audio_transcribe", "path": "transcript.md"}
         default_language = transcription.language
     elif transcript is None:
+        if regenerate_summary:
+            raise JobValidationError(
+                "Cannot regenerate a summary before a transcript is available."
+            )
         if summary_language is not None:
             job = {
                 **job,
@@ -184,8 +194,13 @@ def _continue_summary_unlocked(
     summary_path = (
         job_path.parent / f"{job['video']['bvid']}_summary_{selected_language}.md"
     )
-    invalidated = manifest_path is not None or (
-        job["prompt"] is not None and job["prompt"]["summary_path"] != summary_path.name
+    invalidated = (
+        regenerate_summary
+        or manifest_path is not None
+        or (
+            job["prompt"] is not None
+            and job["prompt"]["summary_path"] != summary_path.name
+        )
     )
     if invalidated:
         # 先撤销完成状态；状态发布失败时不移动用户总结或改变输入。
@@ -221,6 +236,7 @@ def continue_summary(
     manifest_path: Path | None = None,
     *,
     summary_language: str | None = None,
+    regenerate_summary: bool = False,
     results_dir: Path | None = None,
 ) -> dict[str, Any]:
     if manifest_path is not None and not manifest_path.is_absolute():
@@ -233,7 +249,10 @@ def continue_summary(
     job_path = job_path.resolve()
     with job_lock(job_path):
         return _continue_summary_unlocked(
-            job_path, manifest_path, summary_language=summary_language
+            job_path,
+            manifest_path,
+            summary_language=summary_language,
+            regenerate_summary=regenerate_summary,
         )
 
 
@@ -249,6 +268,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.job,
                 args.transcription_manifest,
                 summary_language=args.summary_language,
+                regenerate_summary=args.regenerate_summary,
                 results_dir=paths.results_dir,
             )
         except (OSError, ValueError) as exc:

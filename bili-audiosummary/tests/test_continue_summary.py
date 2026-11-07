@@ -316,6 +316,78 @@ def completed_job_with_summary(
     return job_path, summary
 
 
+@pytest.mark.parametrize("initial_status", ["prompt_ready", "complete"])
+def test_regenerate_archives_summary_and_keeps_transcript_and_language(
+    workspace_tmp_path, monkeypatch, initial_status
+):
+    job_path, summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    job = read_json(job_path)
+    job["status"] = initial_status
+    write_json(job_path, job)
+    transcript_path = job_path.parent / "transcript.md"
+    transcript_before = transcript_path.read_bytes()
+    monkeypatch.setattr(
+        continue_summary,
+        "load_transcription",
+        lambda _path: pytest.fail("regeneration must reuse the local transcript"),
+    )
+
+    assert continue_summary.main([str(job_path), "--regenerate-summary"]) == 0
+
+    updated = read_json(job_path)
+    assert updated == {**job, "status": "prompt_ready"}
+    assert transcript_path.read_bytes() == transcript_before
+    assert not summary.exists()
+    archived = list(job_path.parent.glob("*.superseded-*.md"))
+    assert len(archived) == 1
+    assert archived[0].read_text(encoding="utf-8") == "existing user summary"
+    assert (
+        continue_summary.continue_summary(job_path, regenerate_summary=True) == updated
+    )
+    assert list(job_path.parent.glob("*.superseded-*.md")) == archived
+
+
+def test_regenerate_requires_transcript_before_mutating_job(workspace_tmp_path):
+    job_path, _ = make_needs_job(workspace_tmp_path)
+    before = job_path.read_bytes()
+    with pytest.raises(JobValidationError, match="before a transcript is available"):
+        continue_summary.continue_summary(
+            job_path, summary_language="en", regenerate_summary=True
+        )
+    assert job_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("operation", ["publish", "archive", "prompt"])
+def test_regenerate_failure_preserves_old_summary_and_input(
+    workspace_tmp_path, monkeypatch, operation
+):
+    job_path, summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    transcript_path = job_path.parent / "transcript.md"
+    transcript_before = transcript_path.read_bytes()
+
+    def deny(*args, **kwargs):
+        raise PermissionError("operation denied")
+
+    if operation == "publish":
+        monkeypatch.setattr(continue_summary, "publish_job", deny)
+    elif operation == "archive":
+        monkeypatch.setattr(Path, "rename", deny)
+    else:
+        monkeypatch.setattr(continue_summary, "_write_prompt", deny)
+
+    with pytest.raises(PermissionError):
+        continue_summary.continue_summary(job_path, regenerate_summary=True)
+
+    assert transcript_path.read_bytes() == transcript_before
+    assert read_json(job_path)["status"] == (
+        "complete" if operation == "publish" else "prompt_ready"
+    )
+    preserved = (
+        summary if summary.exists() else next(job_path.parent.glob("*.superseded-*.md"))
+    )
+    assert preserved.read_text(encoding="utf-8") == "existing user summary"
+
+
 @pytest.mark.parametrize("damage", ["old_version", "unknown_field", "missing_field"])
 def test_incompatible_job_preserves_user_summary_and_artifacts(
     workspace_tmp_path: Path,

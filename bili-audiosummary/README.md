@@ -14,7 +14,7 @@
 
 ## 本地运行数据
 
-运行日志、报告、缓存和结果可保存在指定的可写数据目录，默认仍使用 Skill 根目录。切换位置不会自动迁移历史任务或模型；结果与日志可能含有私人内容和本地路径，分享前应检查。已有任务可保留下载资源恢复、切换总结语言或导入新转写，旧总结会改名留存。配置和操作见 [SKILL.md](SKILL.md)，写入错误与恢复影响见 [错误处理](references/ERROR-HANDLING.md#运行目录与写入失败)。
+运行日志、报告、缓存和结果可保存在指定的可写数据目录，默认仍使用 Skill 根目录。切换位置不会自动迁移历史任务；结果与日志可能含有私人内容和本地路径，分享前应检查。已有任务可复用资源恢复或按新要求重新总结；需要替换总结时，旧内容会改名留存。配置和操作见 [SKILL.md](SKILL.md)，写入错误与恢复影响见 [错误处理](references/ERROR-HANDLING.md#运行目录与写入失败)。
 
 ## 隐私与安全
 
@@ -31,14 +31,7 @@ Bilibili 返回 `HTTP 412` 或请求需要登录态时，可从已登录 Bilibil
 - Chrome：安装 [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)，打开已登录的 Bilibili 页面后导出，文件会保存到下载目录。
 - Edge：安装 [Cookie-Editor](https://microsoftedge.microsoft.com/addons/detail/cookieeditor/neaplmfkghagebokkhpjpoebhdledlfi)，打开已登录的 Bilibili 页面后选择 `Netscape` 格式导出，再将剪贴板内容保存为 `cookies.txt`。
 
-将文件放到 Skill 根目录并命名为 `cookies.txt`、`www.bilibili.com_cookies.txt` 或 `bilibili_cookies.txt`，pipeline 会自动检测。使用其他文件名或位置时，通过 `--cookies` 显式指定：
-
-```powershell
-uv run --no-sync python -m scripts.run_pipeline `
-  "<bilibili-url>" `
-  --language zh `
-  --cookies .\cookies.txt
-```
+导出文件的存放位置、自动检测文件名和 `--cookies` 配置统一见 [Cookie 故障处理](references/ERROR-HANDLING.md#http-412-与-cookie)。
 
 Cookie 失效或被拒绝时，重新从已登录的 Bilibili session 导出 Netscape 格式文件。
 
