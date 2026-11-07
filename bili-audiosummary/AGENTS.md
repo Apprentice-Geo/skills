@@ -24,7 +24,7 @@
 - 外部转写目录只读；其他 Skill 的结果只能通过公开 adapter 接入，业务模块和测试不得复制上游 schema 或验证实现。
 - 对于实验性代码或临时脚本，在确认增加到项目中前，不要为它们编写测试或同步文档。
 - `.cache/`、`.venv/`、`results/`、`tmp/`、cookie 文件和音频均为本地或生成内容，不应纳入提交。
-- 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `uv run python -m scripts.<module>` 形式运行。
+- 保持 Windows PowerShell 和 Python 3.12 兼容；仓库脚本应通过 `uv run --no-sync python -m scripts.<module>` 形式运行。
 
 ## 环境与常用命令
 
@@ -43,23 +43,25 @@ uv sync --python 3.12
 提交前运行检查：
 
 ```powershell
-uv run ruff check
-uv run pyright
-uv run ruff format --check .
+uv run --no-sync python -m ruff check
+uv run --no-sync python -m pyright
+uv run --no-sync python -m ruff format --check .
 git diff --cached --check
 ```
 
-运行完整测试：
+测试权限、临时目录、uv 缓存和清理统一遵循[根目录的测试执行环境规则](../AGENTS.md#测试执行环境)。以下命令展示测试范围；实际执行时按根规则配置环境，并追加 `--basetemp` 和 `-o cache_dir=...`，不自动同步依赖。
+
+运行完整常规测试：
 
 ```powershell
-uv run pytest
+uv run --no-sync python -m pytest -m "not live"
 ```
 
 优先针对改动范围运行聚焦测试，例如：
 
 ```powershell
-uv run pytest tests/test_run_pipeline.py
-uv run pytest tests/test_continue_summary.py tests/test_complete_summary.py
+uv run --no-sync python -m pytest tests/test_run_pipeline.py
+uv run --no-sync python -m pytest tests/test_continue_summary.py tests/test_complete_summary.py
 ```
 
 真实流程测试会访问 Bilibili，外部转写流程还依赖单独安装的 `audio-transcribe`。除非任务明确要求端到端验证，否则先使用常规单元测试和模拟边界完成验证。
@@ -68,7 +70,7 @@ uv run pytest tests/test_continue_summary.py tests/test_complete_summary.py
 
 - 修改 pipeline、资源获取、job 状态、外部 transcript 定位、总结校验或 setup 时，运行对应的 `tests/test_*.py`。
 - job 测试应覆盖合法和非法状态转换、路径逃逸、本地快照复用，以及 summary 的失败和成功。
-- 变更跨越多个模块或公共契约时，在聚焦测试通过后运行完整 `uv run pytest`。
+- 变更跨越多个模块或公共契约时，在聚焦测试通过后运行完整常规测试。
 - 测试临时文件使用 `tests/conftest.py` 提供的 `workspace_tmp_path`；不要重新引入固定的系统临时目录或仓库外测试目录。
 - 文档改动至少检查命令、路径、模块名、Markdown 链接和冲突标记。
 

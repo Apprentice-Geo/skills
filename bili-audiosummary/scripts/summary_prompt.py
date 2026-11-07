@@ -1,28 +1,23 @@
 from pathlib import Path
 
-from scripts.config import SUMMARY_INSTRUCTIONS_PATH
+from scripts.config import (
+    DEFAULT_SUMMARY_LANGUAGE,
+    SUMMARY_INSTRUCTIONS_PATH,
+    SUMMARY_LANGUAGES,
+)
 from scripts.utils import path_to_posix, write_text_atomic
 
 
 def normalize_summary_language(language: str | None) -> str:
-    if not language:
-        return "en"
+    if language is None:
+        return DEFAULT_SUMMARY_LANGUAGE
 
-    value = language.lower()
-    if value.startswith("ai-zh"):
-        return "zh"
-    if value.startswith("ai-en"):
-        return "en"
-    if value.startswith("zh"):
-        return "zh"
-    if value.startswith("en"):
-        return "en"
+    value = language.strip().lower()
+    if value not in SUMMARY_LANGUAGES:
+        raise ValueError(
+            f"summary language must be one of: {', '.join(SUMMARY_LANGUAGES)}"
+        )
     return value
-
-
-def select_summary_language(language: str | None) -> str:
-    normalized = normalize_summary_language(language)
-    return normalized if normalized in {"zh", "en"} else "en"
 
 
 def read_text(path: Path) -> str:
@@ -37,7 +32,7 @@ def write_summary_prompt(
 ) -> dict[str, Path]:
     result_dir = result_dir.resolve()
     transcript_markdown_path = transcript_markdown_path.resolve()
-    language = select_summary_language(summary_language)
+    language = normalize_summary_language(summary_language)
 
     prompt_path = result_dir / f"{video_id}_summary_prompt.md"
     summary_path = result_dir / f"{video_id}_summary_{language}.md"
@@ -52,7 +47,7 @@ def write_summary_prompt(
         "# 总结任务",
         "",
         "读取链接的转写数据，按用户请求和以下指引生成总结。",
-        f"总结语言：{'中文' if language == 'zh' else '英文'}。",
+        f"总结语言：{SUMMARY_LANGUAGES[language]}（{language}）。",
         "",
         "<!-- TRANSCRIPT DATA PATH BEGIN -->",
         "",

@@ -99,11 +99,19 @@ def probe_srt(
             path,
             report_zero_duration=report_zero_duration,
         )
+    except PermissionError:
+        raise
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
 
     if not segments:
         return None, "Subtitle SRT is empty or invalid."
+
+    previous_end = 0.0
+    for segment in segments:
+        if segment["start"] < previous_end or segment["end"] <= segment["start"]:
+            return None, "Subtitle SRT timestamps are invalid or overlapping."
+        previous_end = segment["end"]
 
     return segments, None
 

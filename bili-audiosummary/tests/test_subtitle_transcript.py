@@ -27,6 +27,26 @@ def test_probe_srt_rejects_invalid_srt(invalid_srt_path: Path) -> None:
     assert error == "Subtitle SRT is empty or invalid."
 
 
+def test_probe_srt_does_not_hide_permission_failure(sample_srt_path, mocker):
+    mocker.patch(
+        "scripts.subtitle_transcript.parse_srt", side_effect=PermissionError("denied")
+    )
+    with pytest.raises(PermissionError):
+        subtitle_transcript.probe_srt(sample_srt_path)
+
+
+def test_probe_srt_rejects_overlapping_cues(workspace_tmp_path):
+    path = workspace_tmp_path / "overlap.srt"
+    path.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nfirst\n\n"
+        "2\n00:00:01,000 --> 00:00:03,000\nsecond\n",
+        encoding="utf-8",
+    )
+    segments, error = subtitle_transcript.probe_srt(path)
+    assert segments is None
+    assert error == "Subtitle SRT timestamps are invalid or overlapping."
+
+
 def test_subtitle_to_transcript_skips_zero_duration_cue_and_warns(
     workspace_tmp_path: Path,
     manifest_payload: dict,

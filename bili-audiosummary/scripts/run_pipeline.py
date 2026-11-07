@@ -7,7 +7,9 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from scripts import fetch_audio, subtitle_transcript
+from scripts.config import SUMMARY_LANGUAGES
 from scripts.continue_summary import _continue_summary_unlocked
+from scripts.prepare_audio import _prepare_job_audio_unlocked
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -26,7 +28,7 @@ from scripts.summary_job import (
     relative_path,
     resolve_local_path,
 )
-from scripts.summary_prompt import normalize_summary_language, write_summary_prompt
+from scripts.summary_prompt import write_summary_prompt
 from scripts.utils import (
     normalize_bilibili_video_url,
     path_to_posix,
@@ -56,7 +58,7 @@ def make_fetch_args(options: PipelineOptions) -> FetchOptions:
         paths=options.paths,
         cookies=options.cookies,
         playlist=False,
-        skip_audio=False,
+        skip_audio=True,
         skip_subtitles=options.skip_subtitles,
         language=options.language,
         write_auto_subs=True,
@@ -217,8 +219,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--summary-language",
-        choices=("zh", "en"),
-        help="Language for the final summary. Defaults to transcript language.",
+        choices=SUMMARY_LANGUAGES,
+        help="Language for the final summary. Defaults to Chinese for a new job.",
     )
     parser.add_argument(
         "--skip-subtitles",
@@ -247,7 +249,8 @@ def _run_pipeline_unlocked(
             if transcript is not None and transcript["source"] == "bilibili_subtitle":
                 if options.skip_subtitles:
                     raise ValueError(
-                        "Existing job uses Bilibili subtitles. To replace them, transcribe "
+                        "Existing job uses Bilibili subtitles. To replace them, run "
+                        "scripts.prepare_audio if needed, then transcribe "
                         "resources.audio and pass --transcription-manifest to continue_summary."
                     )
                 payload = read_json(
@@ -256,10 +259,7 @@ def _run_pipeline_unlocked(
                 language = (
                     payload.get("language") if isinstance(payload, dict) else None
                 )
-                if (
-                    not language
-                    or normalize_summary_language(language) != options.language
-                ):
+                if language not in fetch_audio.resolve_subtitle_langs(fetch_args):
                     raise ValueError(
                         "Existing subtitle language does not match --language. "
                         "Use continue_summary to restore this input or change summary language; "
@@ -322,11 +322,15 @@ def _run_pipeline_unlocked(
             )
 
         if subtitle_path is None:
-            audio_path = job["resources"]["audio"]
-            if audio_path is None:
-                raise RuntimeError(
-                    "No usable audio file is available for external transcription."
+            stage = "prepare_audio"
+            job = _prepare_job_audio_unlocked(
+                job_path, job, paths=options.paths, cookies=options.cookies
+            )
+            fetch_result["audio_files"] = [
+                resolve_local_path(
+                    job_path, job["resources"]["audio"], "resources.audio"
                 )
+            ]
             job = {**job, "status": "needs_transcription"}
         else:
             transcript_result = subtitle_transcript.subtitle_to_transcript(
@@ -342,10 +346,7 @@ def _run_pipeline_unlocked(
                 result_dir=result_dir,
                 video_id=fetch_result["video_id"],
                 transcript_markdown_path=transcript_result["markdown_path"],
-                summary_language=(
-                    options.summary_language
-                    or transcript_result["payload"].get("language")
-                ),
+                summary_language=options.summary_language,
             )
             job = {
                 **job,

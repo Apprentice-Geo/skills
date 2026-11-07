@@ -10,6 +10,7 @@ from scripts.config import (
     DEFAULT_SUBTITLE_LANGUAGE,
 )
 from scripts.runtime_paths import RuntimePaths
+from scripts.summary_prompt import normalize_summary_language
 
 
 @dataclass
@@ -69,6 +70,10 @@ class PipelineOptions:
     language: str = DEFAULT_SUBTITLE_LANGUAGE
     summary_language: str | None = None
     skip_subtitles: bool = False
+
+    def __post_init__(self) -> None:
+        if self.summary_language is not None:
+            self.summary_language = normalize_summary_language(self.summary_language)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace | PipelineOptions) -> PipelineOptions:
