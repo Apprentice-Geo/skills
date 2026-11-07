@@ -125,7 +125,9 @@ uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>
 
 adapter 校验公共 bundle，并比较 job 音频的 SHA-256。`resources.audio` 为 `null` 时先用 `scripts.prepare_audio` 补充音频。读取或音频身份失败时保留当前输入与总结；不得编辑、删除或修复上游目录。通过验证后，旧总结改名留存，任务回到 `prompt_ready`。同一路径再次传入也表示显式重新导入。
 
-不传 manifest 时使用本地输入。单纯恢复可重建 prompt 和原生字幕 Markdown，不改写已有总结；外部转写的本地 Markdown 缺失时，需要重新提供 manifest。切语言使用 `--summary-language zh|en`；同语言按新要求重写使用 `--regenerate-summary`。两者均无需重新下载或转写；没有转写输入时不能要求重新总结。
+不传 manifest 时使用本地输入。单纯恢复可重建 prompt 和原生字幕 Markdown，不改写已有总结；外部转写的本地 Markdown 缺失时，需要重新提供 manifest。切语言使用 `--summary-language`，支持范围见 [SKILL.md](../SKILL.md#1-准备资源和任务)；同语言按新要求重写使用 `--regenerate-summary`。两者均无需重新下载或转写；没有转写输入时不能要求重新总结。
+
+旧任务使用集合外的总结语言时，继续命令会在改写产物前拒绝。显式指定受支持的 `--summary-language` 后继续，旧总结按语言切换规则归档；不手动编辑 job 或删除已有总结。
 
 ## 输入与总结替换失败
 
@@ -150,9 +152,7 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 - summary 文件缺失、为空或不是有效 UTF-8；
 - 适用的 transcript source 无效。
 
-summary 语言比例不足只产生 warning，命令仍以成功状态退出并把 job 改为 `complete`。warning 写入 stderr 和当次 complete 日志，不写入 `summary_job.json`。读取 warning，并根据总结指令判断是否需要修订。
-
-脚本不检查固定章节或格式；内容是否回应用户请求、有 transcript 支持、时间戳对应相关内容，以及是否误复制 prompt，均由 Agent 在 completion 前检查。适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。通过上述脚本校验的 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
+脚本不检查正文语言、固定章节或格式；总结语言是否符合任务、内容是否回应用户请求、有 transcript 支持、时间戳对应相关内容，以及是否误复制 prompt，均由 Agent 在 completion 前检查。适用时修复现有 summary，并重复运行 completion。原生字幕 job 仍验证其 transcript source。completion 期间不重新验证外部 transcription artifact。通过上述脚本校验的 summary 生成 `complete`；重复运行 completion 会成功，且不改写 job。
 
 ## 日志
 

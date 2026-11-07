@@ -39,7 +39,7 @@ def test_complete_keeps_prompt_ready_when_summary_is_invalid(
     assert read_json(job_path)["status"] == "prompt_ready"
 
 
-def test_complete_accepts_warning_and_is_idempotent(
+def test_complete_accepts_nonempty_utf8_and_is_idempotent(
     workspace_tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     job_path, audio_path = make_needs_job(workspace_tmp_path)
@@ -54,7 +54,7 @@ def test_complete_accepts_warning_and_is_idempotent(
     completed, result = complete_summary.complete_summary(job_path)
     repeated, repeated_result = complete_summary.complete_summary(job_path)
 
-    assert result.ok and result.warnings
+    assert result.ok
     assert completed["status"] == "complete"
     assert repeated == completed
     assert repeated_result.ok
@@ -123,7 +123,7 @@ def test_complete_rejects_malformed_native_subtitle_transcript(
     assert read_json(job_path)["status"] == "prompt_ready"
 
 
-def test_complete_main_moves_success_log_and_routes_warning_to_stderr(
+def test_complete_main_logs_success_without_checking_language(
     workspace_tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     job_path, audio_path = make_needs_job(workspace_tmp_path)
@@ -139,10 +139,9 @@ def test_complete_main_moves_success_log_and_routes_warning_to_stderr(
 
     terminal = capsys.readouterr()
     assert terminal.out == (
-        "Summary validation passed with warnings:\n"
-        f"Summary job is complete: {job_path.resolve()}\n"
+        f"Summary validation passed.\nSummary job is complete: {job_path.resolve()}\n"
     )
-    assert terminal.err.startswith("- summary language does not match")
+    assert terminal.err == ""
     assert (
         len(list((workspace_tmp_path / ".cache" / "logs").glob("complete-*.log"))) == 1
     )

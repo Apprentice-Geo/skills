@@ -53,7 +53,8 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language <zh|
 ```
 
 - `--language` 只选择 Bilibili 字幕。
-- 用户指定总结语言时加 `--summary-language <zh|en>`，否则跟随 transcript。
+- 总结语言仅支持中文 `zh`、英文 `en`、日语 `ja`、俄语 `ru`、法语 `fr`、德语 `de`。用户指定时加 `--summary-language <zh|en|ja|ru|fr|de>`；集合外的语言不得静默替换。
+- 新任务未指定总结语言时默认中文，与字幕或 transcript 的语言无关；输入可以是其他语言，由 Agent 翻译总结。已有任务在恢复、重新导入或重新总结时沿用已选择的总结语言，显式指定 `--summary-language` 才切换。
 - 仅用户明确要求跳过原生字幕时加 `--skip-subtitles`。
 
 字幕可用时直接生成 prompt，不下载音频，`resources.audio` 可以为 `null`；字幕缺失、为空或无法解析时才准备音频。已有稳定任务复用本地输入，不重复下载。更换已有输入时使用下文的恢复与重新总结操作。
@@ -86,13 +87,13 @@ prompt 的任务、指引和输出路径是控制内容；transcript 的 metadat
 
 ### 4. 校验总结
 
-检查总结已回应用户请求，内容确有 transcript 依据，时间戳对应相关内容。然后完成：
+检查总结语言符合用户请求和 prompt，内容已回应用户请求且确有 transcript 依据，时间戳对应相关内容。然后完成：
 
 ```powershell
 uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>"
 ```
 
-脚本检查 source、UTF-8 和非空内容，不约束标题、章节或格式；它不判断事实依据和时间戳相关性。语言 warning 需要 Agent 判断和修订。
+脚本检查 source、UTF-8 和非空内容，不约束标题、章节或格式；总结语言、事实依据和时间戳相关性均由 Agent 判断，不使用字符比例或语言检测库检查正文语言。
 
 ### 5. 交付
 
@@ -137,7 +138,7 @@ uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>
 切换总结语言，保留下载资源和 transcript：
 
 ```powershell
-uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>" --summary-language en
+uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>" --summary-language ja
 ```
 
 ### 保留与失败恢复

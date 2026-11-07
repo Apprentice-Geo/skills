@@ -116,6 +116,79 @@ def test_prepare_with_subtitle_writes_prompt_ready_job_atomically(
     assert not result["job_path"].with_suffix(".json.tmp").exists()
 
 
+@pytest.mark.parametrize("language", ["zh", "en", "ja", "ru", "fr", "de"])
+def test_pipeline_accepts_summary_language_independent_of_subtitles(
+    workspace_tmp_path, mocker, monkeypatch, language
+):
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        subtitle_text="1\n00:00:00,000 --> 00:00:01,000\n中文来源。\n",
+    )
+    downloader = mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_pipeline.py",
+            "https://www.bilibili.com/video/BVTEST/",
+            "--language",
+            "zh",
+            "--summary-language",
+            language,
+        ],
+    )
+
+    prepared = run_pipeline.run_pipeline(run_pipeline.parse_args())
+
+    job = prepared["job"]
+    assert downloader.call_args.args[0].language == "zh"
+    assert job["video"]["summary_language"] == language.lower()
+    assert job["prompt"]["summary_path"] == f"BVTEST_summary_{language.lower()}.md"
+    assert continue_summary.continue_summary(prepared["job_path"]) == job
+
+
+def test_english_subtitles_default_to_chinese_summary(workspace_tmp_path, mocker):
+    fetch_result = make_fetch_result(
+        workspace_tmp_path,
+        subtitle_text="1\n00:00:00,000 --> 00:00:01,000\nEnglish source.\n",
+    )
+    subtitle = fetch_result["subtitle_files"][0]
+    english_subtitle = subtitle.with_name("BVTEST.en-US.srt")
+    subtitle.rename(english_subtitle)
+    fetch_result["subtitle_files"] = [english_subtitle]
+    mocker.patch(
+        "scripts.run_pipeline.fetch_audio.run_fetch", return_value=fetch_result
+    )
+    args = make_args()
+    args.language = "en"
+
+    prepared = run_pipeline.run_pipeline(args)
+
+    assert prepared["job"]["prompt"]["summary_path"] == "BVTEST_summary_zh.md"
+    transcript = prepared["job_path"].parent / prepared["job"]["transcript"]["path"]
+    assert read_json(transcript)["language"] == "en-US"
+    assert continue_summary.continue_summary(prepared["job_path"]) == prepared["job"]
+
+
+@pytest.mark.parametrize("language", ["es", "pt-BR"])
+def test_pipeline_cli_rejects_unsupported_summary_languages(monkeypatch, language):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_pipeline.py",
+            "https://www.bilibili.com/video/BVTEST/",
+            "--language",
+            "zh",
+            "--summary-language",
+            language,
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        run_pipeline.parse_args()
+    assert exc.value.code == 2
+
+
 @pytest.mark.parametrize(
     ("subtitle_text", "skip_subtitles", "expected_status"),
     [
@@ -687,7 +760,7 @@ def test_format_duration(seconds: float, expected: str) -> None:
     assert run_pipeline.format_duration(seconds) == expected
 
 
-@pytest.mark.parametrize("conflict", ["language", "skip_subtitles"])
+@pytest.mark.parametrize("conflict", ["language", "skip_subtitles", "invalid_language"])
 def test_existing_subtitle_job_rejects_conflicting_input_selection(
     workspace_tmp_path: Path,
     mocker,
@@ -707,6 +780,12 @@ def test_existing_subtitle_job_rejects_conflicting_input_selection(
     arguments = make_args()
     if conflict == "language":
         arguments.language = "en"
+    elif conflict == "invalid_language":
+        arguments.language = "en"
+        transcript_path = first["job_path"].parent / before["transcript"]["path"]
+        payload = read_json(transcript_path)
+        payload["language"] = "not a tag"
+        write_json(transcript_path, payload)
     else:
         arguments.skip_subtitles = True
 

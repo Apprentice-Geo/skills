@@ -12,7 +12,6 @@ from scripts.process_logging import (
     error,
     filesystem_cli,
     get_logger,
-    warning,
 )
 from scripts.process_logging import result as log_result
 from scripts.runtime_paths import RuntimePaths, add_data_dir_argument
@@ -147,12 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             error(logger, "%s\nFull log: %s", message, session.log_path)
             return 1
-        if validation.warnings:
-            log_result(logger, "Summary validation passed with warnings:")
-            for item in validation.warnings:
-                warning(logger, "- %s", item)
-        else:
-            log_result(logger, "Summary validation passed.")
+        log_result(logger, "Summary validation passed.")
         log_result(
             logger,
             "Summary job is %s: %s",

@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from scripts import fetch_audio, subtitle_transcript
+from scripts.config import SUMMARY_LANGUAGES
 from scripts.continue_summary import _continue_summary_unlocked
 from scripts.prepare_audio import _prepare_job_audio_unlocked
 from scripts.process_logging import (
@@ -27,7 +28,7 @@ from scripts.summary_job import (
     relative_path,
     resolve_local_path,
 )
-from scripts.summary_prompt import normalize_summary_language, write_summary_prompt
+from scripts.summary_prompt import write_summary_prompt
 from scripts.utils import (
     normalize_bilibili_video_url,
     path_to_posix,
@@ -218,8 +219,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--summary-language",
-        choices=("zh", "en"),
-        help="Language for the final summary. Defaults to transcript language.",
+        choices=SUMMARY_LANGUAGES,
+        help="Language for the final summary. Defaults to Chinese for a new job.",
     )
     parser.add_argument(
         "--skip-subtitles",
@@ -258,10 +259,7 @@ def _run_pipeline_unlocked(
                 language = (
                     payload.get("language") if isinstance(payload, dict) else None
                 )
-                if (
-                    not language
-                    or normalize_summary_language(language) != options.language
-                ):
+                if language not in fetch_audio.resolve_subtitle_langs(fetch_args):
                     raise ValueError(
                         "Existing subtitle language does not match --language. "
                         "Use continue_summary to restore this input or change summary language; "
@@ -348,10 +346,7 @@ def _run_pipeline_unlocked(
                 result_dir=result_dir,
                 video_id=fetch_result["video_id"],
                 transcript_markdown_path=transcript_result["markdown_path"],
-                summary_language=(
-                    options.summary_language
-                    or transcript_result["payload"].get("language")
-                ),
+                summary_language=options.summary_language,
             )
             job = {
                 **job,

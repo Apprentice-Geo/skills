@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import re
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from scripts.config import SKILL_ROOT
+from scripts.config import SKILL_ROOT, SUMMARY_LANGUAGES
 from scripts.process_logging import (
     LoggingSession,
     create_timestamped_log_path,
@@ -25,7 +24,10 @@ from scripts.summary_job import (
     require_configured_job_path,
     resolve_local_path,
 )
-from scripts.summary_prompt import select_summary_language, write_summary_prompt
+from scripts.summary_prompt import (
+    normalize_summary_language,
+    write_summary_prompt,
+)
 from scripts.transcript_output import render_markdown, write_markdown_from_json
 from scripts.transcription_input import (
     TranscriptionInput,
@@ -47,7 +49,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Import or replace the transcript from an absolute public manifest path.",
     )
-    parser.add_argument("--summary-language", choices=("zh", "en"))
+    parser.add_argument("--summary-language", choices=SUMMARY_LANGUAGES)
     parser.add_argument(
         "--regenerate-summary",
         action="store_true",
@@ -98,14 +100,14 @@ def _validated_transcript_markdown(
 def _write_prompt(
     job_path: Path,
     job: dict[str, Any],
-    transcript_language: str | None,
+    summary_language: str,
 ) -> dict[str, str]:
     result_dir = job_path.resolve().parent
     prompt = write_summary_prompt(
         result_dir=result_dir,
         video_id=job["video"]["bvid"],
         transcript_markdown_path=result_dir / "transcript.md",
-        summary_language=job["video"].get("summary_language") or transcript_language,
+        summary_language=summary_language,
     )
     return {
         "path": relative_path(prompt["prompt_path"], result_dir),
@@ -147,12 +149,22 @@ def _continue_summary_unlocked(
         )
     job_path = job_path.resolve()
     job = load_job(job_path)
-    if summary_language not in {None, "zh", "en"}:
-        raise ValueError("summary language must be zh or en")
+    if summary_language is not None:
+        summary_language = normalize_summary_language(summary_language)
     if job["status"] not in {"needs_transcription", "prompt_ready", "complete"}:
         raise JobValidationError(
             f"cannot continue summary job from status {job['status']!r}"
         )
+
+    # 恢复和重新导入沿用已发布的总结语言，新任务使用默认语言。
+    published_language = None
+    if job["prompt"] is not None:
+        published_language = Path(job["prompt"]["summary_path"]).stem.removeprefix(
+            f"{job['video']['bvid']}_summary_"
+        )
+    selected_language = normalize_summary_language(
+        summary_language or job["video"].get("summary_language") or published_language
+    )
 
     markdown_path = job_path.parent / "transcript.md"
     transcript = job["transcript"]
@@ -162,7 +174,6 @@ def _continue_summary_unlocked(
             job_path, job, manifest_path.resolve()
         )
         transcript = {"source": "audio_transcribe", "path": "transcript.md"}
-        default_language = transcription.language
     elif transcript is None:
         if regenerate_summary:
             raise JobValidationError(
@@ -183,14 +194,6 @@ def _continue_summary_unlocked(
             raise JobValidationError(f"transcript does not exist: {source_path}")
         if transcript["source"] == "bilibili_subtitle":
             write_markdown_from_json(source_path, markdown_path)
-        # 已发布的总结语言是默认语言的唯一来源，不重新读取上游。
-        match = re.search(r"_summary_(zh|en)\.md$", job["prompt"]["summary_path"])
-        default_language = match.group(1) if match else None
-
-    language = (
-        summary_language or job["video"].get("summary_language") or default_language
-    )
-    selected_language = select_summary_language(language)
     summary_path = (
         job_path.parent / f"{job['video']['bvid']}_summary_{selected_language}.md"
     )
@@ -219,7 +222,7 @@ def _continue_summary_unlocked(
         write_text_atomic(markdown_path, markdown)
     if summary_language is not None:
         job = {**job, "video": {**job["video"], "summary_language": summary_language}}
-    prompt = _write_prompt(job_path, job, default_language)
+    prompt = _write_prompt(job_path, job, selected_language)
     updated = {
         **job,
         "status": "prompt_ready" if invalidated else job["status"],

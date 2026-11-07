@@ -272,8 +272,10 @@ def test_language_change_preserves_transcript_and_archives_both_summary_paths(
     ) == ["existing en", "old zh"]
 
 
-@pytest.mark.parametrize("explicit_language, expected", [(None, "en"), ("zh", "zh")])
-def test_reimport_follows_new_transcript_language_unless_explicitly_selected(
+@pytest.mark.parametrize(
+    "explicit_language, expected", [(None, "zh"), ("en", "en"), ("de", "de")]
+)
+def test_reimport_keeps_summary_language_when_transcript_language_changes(
     workspace_tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     explicit_language: str | None,
@@ -288,12 +290,146 @@ def test_reimport_follows_new_transcript_language_unless_explicitly_selected(
     continue_summary.continue_summary(
         job_path, manifest, summary_language=explicit_language
     )
-    payload = replace(payload, language="en")
+    payload = replace(payload, language="ja")
 
     job = continue_summary.continue_summary(job_path, manifest)
 
     assert job["prompt"]["summary_path"] == f"BVTEST_summary_{expected}.md"
-    assert job["video"]["summary_language"] == explicit_language
+    assert job["video"]["summary_language"] == (
+        explicit_language.lower() if explicit_language else None
+    )
+
+
+@pytest.mark.parametrize(
+    "language",
+    ["en", "ja", "pt-BR", None, "und", "unknown", "not a tag"],
+)
+def test_default_summary_is_chinese_regardless_of_transcript_language(
+    workspace_tmp_path, monkeypatch, language
+):
+    from dataclasses import replace
+
+    from scripts.complete_summary import complete_summary
+
+    job_path, audio = make_needs_job(workspace_tmp_path)
+    payload = replace(
+        transcription(continue_summary._file_sha256(audio)), language=language
+    )
+    monkeypatch.setattr(continue_summary, "load_transcription", lambda _path: payload)
+    job = continue_summary.continue_summary(
+        job_path, (workspace_tmp_path / "manifest.json").resolve()
+    )
+    assert job["video"]["summary_language"] is None
+    assert job["prompt"]["summary_path"] == "BVTEST_summary_zh.md"
+    summary = job_path.parent / job["prompt"]["summary_path"]
+    summary.write_text("中文总结。", encoding="utf-8")
+    completed, validation = complete_summary(job_path)
+    assert validation.ok
+    prompt = job_path.parent / job["prompt"]["path"]
+    prompt.unlink()
+    monkeypatch.setattr(
+        continue_summary,
+        "load_transcription",
+        lambda _path: pytest.fail("restoration must use the local snapshot"),
+    )
+
+    assert continue_summary.continue_summary(job_path) == completed
+    assert summary.read_text(encoding="utf-8") == "中文总结。"
+    assert "总结语言：中文（zh）。" in prompt.read_text(encoding="utf-8")
+    assert not list(job_path.parent.glob("*.superseded-*.md"))
+
+    regenerated = continue_summary.continue_summary(job_path, regenerate_summary=True)
+    assert regenerated == {**completed, "status": "prompt_ready"}
+    assert not summary.exists()
+    assert len(list(job_path.parent.glob("*.superseded-*.md"))) == 1
+
+
+def test_switch_language_with_cli_archives_completed_summary(
+    workspace_tmp_path, monkeypatch
+):
+    job_path, summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    transcript = (job_path.parent / "transcript.md").read_bytes()
+
+    assert continue_summary.main([str(job_path), "--summary-language", "ru"]) == 0
+
+    switched = read_json(job_path)
+    assert switched["status"] == "prompt_ready"
+    assert switched["video"]["summary_language"] == "ru"
+    assert switched["prompt"]["summary_path"] == "BVTEST_summary_ru.md"
+    assert (job_path.parent / "transcript.md").read_bytes() == transcript
+    assert not summary.exists()
+    assert len(list(job_path.parent.glob("*.superseded-*.md"))) == 1
+    assert continue_summary.continue_summary(job_path) == switched
+
+
+@pytest.mark.parametrize("language", ["../fr", "pt-BR", "es"])
+def test_invalid_summary_language_does_not_modify_job(
+    workspace_tmp_path, monkeypatch, language
+):
+    job_path, summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    before = job_path.read_bytes()
+    with pytest.raises(ValueError, match="summary language must be one of"):
+        continue_summary.continue_summary(job_path, summary_language=language)
+    assert job_path.read_bytes() == before
+    assert summary.read_text(encoding="utf-8") == "existing user summary"
+
+
+@pytest.mark.parametrize("language", ["en", "fr"])
+def test_existing_summary_language_survives_restore_and_reimport(
+    workspace_tmp_path, monkeypatch, language
+):
+    job_path, summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    job = read_json(job_path)
+    previous_summary = summary.with_name(f"BVTEST_summary_{language}.md")
+    summary.rename(previous_summary)
+    job["prompt"]["summary_path"] = previous_summary.name
+    assert job["video"]["summary_language"] is None
+    write_json(job_path, job)
+
+    assert continue_summary.continue_summary(job_path) == job
+    assert previous_summary.read_text(encoding="utf-8") == "existing user summary"
+    assert not list(job_path.parent.glob("*.superseded-*.md"))
+
+    imported = continue_summary.continue_summary(
+        job_path, (workspace_tmp_path / "manifest.json").resolve()
+    )
+    assert imported["prompt"]["summary_path"] == previous_summary.name
+    assert imported["status"] == "prompt_ready"
+    assert len(list(job_path.parent.glob("*.superseded-*.md"))) == 1
+
+
+@pytest.mark.parametrize("explicit_language", [None, "pt-br"])
+def test_unsupported_existing_language_requires_explicit_supported_selection(
+    workspace_tmp_path, monkeypatch, explicit_language
+):
+    job_path, summary = completed_job_with_summary(workspace_tmp_path, monkeypatch)
+    job = read_json(job_path)
+    old_summary = summary.with_name("BVTEST_summary_pt-br.md")
+    summary.rename(old_summary)
+    job["video"]["summary_language"] = explicit_language
+    job["prompt"]["summary_path"] = old_summary.name
+    write_json(job_path, job)
+    before = job_path.read_bytes()
+
+    with pytest.raises(ValueError, match="summary language must be one of"):
+        continue_summary.continue_summary(job_path)
+    assert job_path.read_bytes() == before
+    assert old_summary.read_text(encoding="utf-8") == "existing user summary"
+
+    updated = continue_summary.continue_summary(job_path, summary_language="zh")
+    assert updated["status"] == "prompt_ready"
+    assert updated["prompt"]["summary_path"] == "BVTEST_summary_zh.md"
+    assert not old_summary.exists()
+    assert len(list(job_path.parent.glob("*.superseded-*.md"))) == 1
+
+
+@pytest.mark.parametrize("language", ["es", "pt-BR"])
+def test_continue_cli_rejects_unsupported_summary_languages(language):
+    with pytest.raises(SystemExit) as exc:
+        continue_summary.parse_args(
+            ["summary_job.json", "--summary-language", language]
+        )
+    assert exc.value.code == 2
 
 
 def completed_job_with_summary(

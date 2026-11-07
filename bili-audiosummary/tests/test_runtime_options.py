@@ -1,5 +1,7 @@
 import argparse
 
+import pytest
+
 from scripts.runtime_options import FetchOptions, PipelineOptions
 
 
@@ -20,3 +22,11 @@ def test_pipeline_options_keep_summary_language_independent() -> None:
 
     assert options.language == "en"
     assert options.summary_language == "zh"
+
+
+@pytest.mark.parametrize("language", ["es", "pt-BR", "und", ""])
+def test_pipeline_options_reject_unsupported_summary_languages(language: str) -> None:
+    with pytest.raises(ValueError, match="summary language must be one of"):
+        PipelineOptions(
+            url="https://www.bilibili.com/video/BVTEST/", summary_language=language
+        )

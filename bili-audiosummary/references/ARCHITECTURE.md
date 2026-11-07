@@ -54,7 +54,9 @@ Bilibili URL
 
 准备音频、继续和完成操作由同一 job lock 串行化。job 等状态文件采用原子替换，多个 artifact 不构成整体事务；补充音频中断时可能留下未登记的已下载音频。具体恢复行为见[下载与网络失败](ERROR-HANDLING.md#下载与网络失败)和[输入与总结替换失败](ERROR-HANDLING.md#输入与总结替换失败)。
 
-completion 验证 source 和非空 UTF-8 总结，不检查固定章节或格式。语言比例只是 warning；事实依据、时间戳、指引遵循情况与请求充分性仍由 Agent 判断。已完成总结校验失败时退回 `prompt_ready`。恢复符合当前结构的任务时会重建 prompt，已有总结继续保留。
+总结语言使用固定集合，支持范围与默认规则见 [SKILL.md](../SKILL.md#1-准备资源和任务)，语言集合与默认值统一维护在 `scripts/config.py`。脚本不检测正文语言；Agent 负责按任务生成并核对目标语言。显式语言保存在 `video.summary_language`；未显式选择时，恢复和重新导入均从已发布的总结文件名读取语言，新任务使用默认语言，不根据 transcript 选择语言。
+
+completion 验证 source 和非空 UTF-8 总结，不检查固定章节或格式。总结语言、事实依据、时间戳、指引遵循情况与请求充分性均由 Agent 判断。已完成总结校验失败时退回 `prompt_ready`。恢复符合当前结构的任务时会重建 prompt，已有总结继续保留。
 
 ## 产物
 

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import scripts.validate_summary as validate_summary
 
 
@@ -50,34 +52,7 @@ def test_validate_summary_accepts_matching_languages(
     assert validate_summary.validate_summary(english_summary).ok
 
 
-def test_language_warning_at_threshold() -> None:
-    assert validate_summary.language_warning("中文内容完全正确ab", "zh") is None
-    assert validate_summary.language_warning("abcdefgh中文", "en") is None
-
-
-def test_language_warning_below_threshold() -> None:
-    assert validate_summary.language_warning("中文内容完全正确abc", "zh") == (
-        "summary language does not match the expected language zh: Chinese characters are "
-        "72.7% of the language characters; rewrite the summary in Chinese"
-    )
-
-
-def test_language_warning_ignores_code_and_links() -> None:
-    assert (
-        validate_summary.language_warning(
-            "这是完整内容。 [来源](https://example.com/english/path) "
-            "`english_code`\n```python\nprint('english code')\n```",
-            "zh",
-        )
-        is None
-    )
-
-
-def test_language_warning_without_characters() -> None:
-    assert "0.0%" in (validate_summary.language_warning("123", "en") or "")
-
-
-def test_validate_summary_keeps_language_check_optional_for_other_filenames(
+def test_validate_summary_accepts_nonempty_content_without_language_characters(
     workspace_tmp_path: Path,
 ) -> None:
     summary = workspace_tmp_path / "summary.md"
@@ -105,19 +80,25 @@ def test_validate_summary_rejects_non_utf8_file(workspace_tmp_path: Path) -> Non
     assert result.errors == ["summary file is not valid UTF-8"]
 
 
-def test_validate_summary_reports_language_warning_separately_from_errors(
+@pytest.mark.parametrize(
+    "body",
+    [
+        "日本語の要約。",
+        "Résumé en français.",
+        "ملخص باللغة العربية.",
+        "中文和 English 混排。",
+    ],
+)
+def test_validate_summary_leaves_language_judgment_to_agent(
     workspace_tmp_path: Path,
+    body: str,
 ) -> None:
     summary = workspace_tmp_path / "BVTEST_summary_zh.md"
-    summary.write_text("English text\n", encoding="utf-8")
+    summary.write_text(body, encoding="utf-8")
 
     result = validate_summary.validate_summary(summary)
 
     assert result.ok and result.errors == []
-    assert result.warnings == [
-        "summary language does not match the expected language zh: Chinese characters are "
-        "0.0% of the language characters; rewrite the summary in Chinese",
-    ]
 
 
 def test_main_prints_pass_message_for_valid_summary(
@@ -155,7 +136,7 @@ def test_main_reports_empty_summary(
     assert "Full log:" in terminal.err
 
 
-def test_main_warns_about_summary_language_without_failing(
+def test_main_does_not_infer_language_from_filename(
     workspace_tmp_path: Path,
     capsys,
     monkeypatch,
@@ -168,10 +149,8 @@ def test_main_warns_about_summary_language_without_failing(
 
     assert exit_code == 0
     terminal = capsys.readouterr()
-    assert terminal.out == "Summary validation passed with warnings:\n"
-    assert terminal.err.startswith(
-        "- summary language does not match the expected language en:"
-    )
+    assert terminal.out == "Summary validation passed.\n"
+    assert terminal.err == ""
 
 
 def test_main_logs_runtime_read_error_without_terminal_traceback(
@@ -211,4 +190,4 @@ def test_validation_accepts_summary_without_fixed_sections(
     summary = workspace_tmp_path / "BVTEST_summary_zh.md"
     summary.write_text("- 用户只需要这一条核心结论。\n", encoding="utf-8")
     result = validate_summary.validate_summary(summary)
-    assert result.ok and not result.warnings
+    assert result.ok
