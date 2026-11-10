@@ -38,6 +38,7 @@ Cookie 失效或被拒绝时，重新从已登录的 Bilibili session 导出 Net
 ## 进一步阅读
 
 - [SKILL.md](SKILL.md)：完整使用规则、准备、继续、完成流程和停止条件。
+- [references/OPERATIONS.md](references/OPERATIONS.md)：已有任务的恢复、补充音频、更换转写、重新总结和语言切换。
 - [references/ARCHITECTURE.md](references/ARCHITECTURE.md)：任务状态、模块边界和产物设计。
 - [references/ERROR-HANDLING.md](references/ERROR-HANDLING.md)：下载、Cookie、字幕、转写接入和总结校验错误处理。
 - [AGENTS.md](AGENTS.md)：开发维护、测试和代码规范。

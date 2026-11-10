@@ -8,13 +8,11 @@
 
 所有命令启动时解析绝对路径，再传给业务入口。源码、模板、`.venv`、已安装模型、第三方库及系统临时目录不因数据目录设置而迁移。显式 `UV_CACHE_DIR` 优先；直接使用 `uv run` 时应在启动 uv 前设置它。历史任务在原目录继续可用；切换根目录不自动查找或迁移其他目录的任务，字幕 job 已保存的绝对 artifact 路径语义不变。
 
-创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。日志初始化失败恢复 logger、warnings hook 和 handler 状态。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
+创建目录或打开日志失败时，最外层 CLI 直接向 stderr 输出操作、绝对失败路径、异常类型和原始系统错误，退出码为 `1`；明确日志未创建，不输出 `Full log`，不继续业务或安装依赖，不回退到未知目录。根据失败路径选择显式可写的数据目录再执行；不能仅凭访问被拒绝就断定是 Windows ACL 或沙箱，也不能把文件系统错误当作缺包并运行 setup。
 
 依赖检查通过但 JSON 报告发布失败时仍返回 `1`，单独报告发布失败；只有已建立的日志才输出 `Full log`，没有成功发布的报告不得输出成功报告路径。检查器关键前置错误仍使用原有退出码。
 
-数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。setup 不为初始化 cache 或日志顺便创建模型或结果目录。
-
-Windows 下的本地快照、发布和下载暂存目录使用随机名称加独占 `mkdir` 创建，继承父目录 ACL；不得使用 `mkdtemp`、`TemporaryDirectory` 或 `mkdir(mode=0o700)` 创建这类业务目录，否则可能排除沙箱身份并导致创建后写入失败。该规则不改变 Pytest 的沙箱外执行要求。已有目录访问失败时仍按真实路径诊断，不通过更改全局 ACL 或反复重试绕过。
+数据目录可写只解决运行数据写入。依赖同步需要 `.venv` 可写，模型安装需要模型目录可写；应分别根据真实失败路径诊断。已有目录访问失败时不通过更改全局 ACL 或反复重试绕过。
 
 ## 快速索引
 
@@ -44,11 +42,9 @@ Windows 下的本地快照、发布和下载暂存目录使用随机名称加独
 
 ### 连续导入兼容
 
-安装器、检查器和运行时复用 `scripts/import_compat.py`，在依赖导入前后仅移除已知 SpeechBrain 可选旧路径的懒加载别名，保留真实模块和其他异常。自动语言检测在语言模型加载前处理别名；Qwen 加载入口同样处理，覆盖显式语言和自动检测路径。不得把安装可选 `k2` 当作通用修复。
+各模块独立检查通过但 `provider:qwen3-asr:combined-imports` 失败时，Qwen 仍未 ready；依据组合检查的原始异常和日志诊断，不忽略该失败。
 
-检查器保留各模块的独立子进程探测，并额外在同一进程按语言识别依赖、Qwen 依赖的顺序探测。组合失败时 Qwen 不能 ready，即使独立探测全部通过。探测失败保留正在导入的模块、异常类型、缺失模块名和原始异常链，完整 traceback 写入已建立的日志。
-
-必需依赖缺失、可选模块误触发或兼容异常分别诊断；不能把任意 ImportError 或子进程启动失败归为缺包。CUDA build 与 GPU runtime 由独立 PyTorch 检查项区分，驱动或 GPU 问题不会由安装可选模块解决。
+必需依赖缺失、可选模块误触发或兼容异常分别诊断；不能把任意 ImportError 或子进程启动失败归为缺包，也不得把安装可选 `k2` 当作通用修复。CUDA build 与 GPU runtime 由独立 PyTorch 检查项区分，驱动或 GPU 问题不会由安装可选模块解决。
 
 ## 模型安装
 
@@ -67,13 +63,11 @@ uv run --no-sync python -m scripts.setup.install_model --model qwen3-asr
 
 Qwen 模型安装会在下载语言识别模型、ASR 模型或 aligner 前验证 `torch.version.cuda` 非空且 `torch.cuda.is_available()` 为 true。若 `pytorch:build` 显示 CPU build，重新同步 `qwen3-asr` extra；若已经是 CUDA build 但 `provider:qwen3-asr:cuda` 仍为 warning，先修复 NVIDIA driver、GPU 可见性或 runtime，不得开始模型下载。切回默认 CPU 环境时重新运行 `.\scripts\setup\setup_windows.bat`。
 
-安装校验要求 `.model_identity.json` 是无重复键且仅包含字符串 repo/revision 的 JSON 对象，并与固定配置完全匹配；必需文件与权重必须存在且非空，indexed safetensors 的索引和全部分片必须合法且位于模型目录内。setup 复用、依赖检查、自动 Provider 候选检查和运行时使用相同规则。模型加载仍负责识别文件内容是否可用。
+安装校验检查 `.model_identity.json` 是否与固定模型身份匹配，以及必需文件、权重和分片是否完整；模型加载仍负责识别文件内容是否可用。
 
 marker 缺失、损坏、不匹配或模型文件不完整时，按环境策略安装所请求的模型，安装器跳过已有效的模型；不为模型问题重复 setup。禁止推测 revision 或手工补写 marker。显式 Provider 未 ready 时停止转写，但已有环境配置授权可执行适用修复与复查；解析完成后的加载或推理失败不切换 Provider。自动选择排除不合格候选。模型加载前复核；完整 cache 不能绕过请求身份前的模型检查。Whisper 自定义路径同样必须匹配固定身份；Qwen 的 ASR 与 aligner 独立校验。
 
 这只证明目录具有匹配安装记录及基本文件结构，不证明安装后每个模型字节未变。项目不计算全量/抽样权重摘要，不以 mtime 或文件大小指纹冒充内容身份。运行期间不得替换模型目录。consumer loader 只验证 bundle，不访问模型。
-
-prepared model 必须携带加载时绑定的身份和配置摘要；缺失或不匹配时停止，不能用当前磁盘 marker 为未知内存模型补认身份。
 
 省略 `--language` 时必须使用语言识别模型。如果该模型缺失，通过 setup 安装模型，或传入明确的 `--language` 重新运行。
 
@@ -113,23 +107,18 @@ prepared model 必须携带加载时绑定的身份和配置摘要；缺失或�
 
 - 如果 faster-whisper 未安装或其本地 `model.bin` 缺失，安装或修复 faster-whisper 后再重试。
 - 如果缺少 Qwen3-ASR 依赖、CUDA、ASR weight 或 forced-aligner weight，安装或修复 Qwen3-ASR 后再重试。
-- 如果 Provider 返回意外的结果 shape，先检查固定的依赖版本和 adapter，再考虑更改公共 artifact schema。
-- 不得在公共 artifact 中存储第三方模型对象、原始 Provider response 或大型内部 metadata。
-- Provider chunk 文本不执行改写。在合并后的 workspace/公共边界，对所有语言应用 NFKC，仅对 `zh` 应用 OpenCC `t2s`。
+- 如果 Provider 返回意外的结果 shape，先核对固定依赖版本并保留错误日志；需要修改 adapter 或公共合同的开发任务，参见[开发实现约束](DEVELOPMENT.md)。
 
 ## Alignment 与空结果
 
 - 完整转写必须包含非空文本和 timestamp item。
-- 保留 Provider candidate 的原始时间精度。原本 zero-duration 的 item 连同且仅连同归其所有的字符文本一起移除；正时长的亚毫秒 item 保留。没有 owner 的标点和空白应予以保留，除非 accepted chunk 因此只剩这些内容而变为空。
 - 单个 accepted chunk 可以为空，并在合并时忽略。如果所有 chunk 合并后得到空 transcript，停止执行。
-- 拒绝包含负数、非有限、重叠、递减、反向或超出 duration 时间的 timestamp。accepted item 和公共 item 必须满足 `0 <= start < end <= duration` 和 `start >= previous_end`。
-- 拒绝文本为空的 timestamp item。
-- 拒绝 `[0, 1]` 之外的非 null probability，以及任何非有限 probability。
-- 拒绝 probability 非 null 的 Qwen3-ASR timestamp item。
+- 时间戳、probability 或文字归属校验失败时，保留原始错误并停止；先检查 Provider 和依赖，不能通过修改产物或放宽校验继续。
 - 保留由标点驱动的分段行为。如果句子输出看起来有误，检查 alignment item 和 segmentation 规则，不得手动编辑已发布的 `transcript.json`。
 - alignment 验证失败时，不得发布 `manifest.json`。
 - 如果文本规范化失败，或规范化后的文本与 item 不再对齐，停止执行，不得回退到未规范化的公共文本。
-- 除[架构说明](ARCHITECTURE.md#alignment-与规范化)定义的 Qwen adapter 尾部误差处理和合法时间的浮点偏移边界处理外，不得裁剪超出范围的 end time；不得把格式错误的 workspace/公共字段强制转换为字符串或浮点数。
+
+排查或修改 alignment 实现时，阅读[接受与规范化约束](DEVELOPMENT.md#alignment-接受与规范化)；正常转写由脚本执行校验。
 
 ## 公共 Artifact 验证
 
@@ -150,8 +139,6 @@ manifest 或正文缺失、损坏时，优先严格读取 workspace snapshot；s
 - manifest 元数据有效且身份匹配：重建 SHA-256 相同时精确恢复，保留原 manifest 字节；不同时允许重新发布，仅更新 `artifact_sha256.transcript`，保留原 artifact 相对路径和其他元数据。SHA-256 覆盖整个正文文件，包括元数据、segments、items 和 JSON 字节格式。
 - manifest 缺失或无效：允许使用当前音频、resolved request 和合法 snapshot 重新发布；不承诺复现历史结果字节。
 
-workspace snapshot 已包含规范化文本，公共转换不再次运行 OpenCC。chunk 重建仍执行完整合并和规范化。新接受 candidate 的 zero-duration cleanup 发出聚合警告；chunk cache 不保存 cleanup report，恢复不重放历史警告。pipeline 不新写或删除历史 `progress.json`、`metrics.json`。
-
 发布前在临时 staging 目录验证完整两文件 candidate；loader 仍严格检查候选正文与候选 manifest 的 digest 一致。重建失败或 candidate 无效时保留已有公共文件。正式正文替换后才安装 manifest；安装失败时尝试恢复原正文。强制终止或磁盘持续故障可能阻断回滚，下次运行必须重新验证，不以部分文件判断成功。临时 staging 目录不属于公共入口。
 
 result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock 上，删除锁文件前先检查运行中的转写进程。详细协议见 [架构](ARCHITECTURE.md#公共-contract-与发布)。
@@ -163,9 +150,7 @@ result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock �
 - 失败时，CLI 输出 `Transcription failed: ...` 并以非零状态退出。
 - 报告失败时，应包含精确命令、简洁错误、可用的结果或日志路径，以及是否存在完整 manifest。
 - 报告中不得包含 transcript 文本、其他 workflow 的 Cookie 内容、原始模型对象或不必要的敏感本地路径。
-- 可以使用精确的 logger/message-prefix filter 过滤已知的嘈杂第三方警告。不得抑制未知警告或异常。
 - CLI 每次调用在数据目录的 `.cache/logs/` 建立日志，包括解码和请求解析失败；`--results-dir` 不移动它。Python API 未指定日志路径时保留结果目录内的 `transcribe.log`：cache hit 不改写首次日志，已有 manifest 的恢复尝试追加，日志缺失时可重新创建。日志不属于公共结果合同。
-- 成功安装后才记录发布诊断：相同 digest 的精确恢复为 INFO；不同 digest 的重新发布为 WARNING，包含 `audio_id`、`config_digest` 和旧/新 digest；无有效原 manifest 的发布为 INFO。诊断不包含转写文本，失败不记录发布成功，不增加公共审计字段。
 
 ## 停止条件
 

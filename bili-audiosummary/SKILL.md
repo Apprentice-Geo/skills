@@ -57,7 +57,7 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language <zh|
 - 新任务未指定总结语言时默认中文，与字幕或 transcript 的语言无关；输入可以是其他语言，由 Agent 翻译总结。已有任务在恢复、重新导入或重新总结时沿用已选择的总结语言，显式指定 `--summary-language` 才切换。
 - 仅用户明确要求跳过原生字幕时加 `--skip-subtitles`。
 
-字幕可用时直接生成 prompt，不下载音频，`resources.audio` 可以为 `null`；字幕缺失、为空或无法解析时才准备音频。已有稳定任务复用本地输入，不重复下载。更换已有输入时使用下文的恢复与重新总结操作。
+字幕可用时直接生成 prompt，不下载音频，`resources.audio` 可以为 `null`；字幕缺失、为空或无法解析时才准备音频。已有稳定任务复用本地输入，不重复下载。更换已有输入时阅读[恢复与重新总结](references/OPERATIONS.md)。
 
 ### 2. 依据任务状态继续
 
@@ -67,7 +67,7 @@ uv run --no-sync python -m scripts.run_pipeline "<bilibili-url>" --language <zh|
 | --- | --- |
 | `needs_transcription` | 调用转写 Skill，并导入其公共 manifest。 |
 | `prompt_ready` | 按本次用户请求编写总结。 |
-| `complete` | 核对现有总结是否满足本次请求；满足时校验后交付，需要重写时使用下文的 `--regenerate-summary`。 |
+| `complete` | 核对现有总结是否满足本次请求；满足时校验后交付，需要重写时按[重新总结](references/OPERATIONS.md#按新要求重新总结)操作。 |
 | `preparing`、`failed` | 按[错误处理](references/ERROR-HANDLING.md#job-status)诊断并恢复资源准备。 |
 
 需要转写时，相对 job 目录解析 `resources.audio`，交给已安装的 `audio-transcribe` Skill，再导入它返回的公共 manifest：
@@ -101,54 +101,10 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 ## 恢复与重新总结
 
-### 恢复本地产物
+恢复缺失产物、补充音频、更换转写、按新要求重写或切换语言时，阅读[操作参考](references/OPERATIONS.md)，按所需操作继续并复用已有资源，避免重复下载；普通恢复无需删除任务。
 
-恢复缺失 prompt；原生字幕任务同时可从本地 JSON 恢复 Markdown：
+- 单纯恢复不改写总结；显式重新导入转写、切换实际总结语言或重新总结会归档旧总结并回到 `prompt_ready`。旧总结不能作为当前产物交付。
+- 中途失败时保留备份，按[输入与总结替换失败](references/ERROR-HANDLING.md#输入与总结替换失败)恢复并校验后再交付。
+- 只有明确需要删除整个任务时才使用 `scripts.remove_summary_job`；它会删除下载资源和用户总结，普通恢复无需删除。
 
-```powershell
-uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>"
-```
-
-### 补充音频并更换转写
-
-已有字幕任务需要改用音频转写时，先补充准备音频：
-
-```powershell
-uv run --no-sync python -m scripts.prepare_audio "<absolute-summary-job-path>"
-```
-
-需要登录态时加 `--cookies "<absolute-cookie-file-path>"`，Cookie 配置见[错误处理](references/ERROR-HANDLING.md#http-412-与-cookie)。
-
-- 准备音频会登记 `resources.audio`，保留当前输入、总结和完成状态；失败时不撤销当前总结。
-- 读取更新后的 job，将音频交给 `audio-transcribe`，再按默认流程导入其公共 manifest。
-- 已有字幕任务会拒绝冲突的字幕语言或 `--skip-subtitles`；已有外部转写任务继续使用转写输入，字幕选项不再适用。
-
-### 按新要求重新总结
-
-用户改变关注点、篇幅或格式，而转写和总结语言保持不变时：
-
-```powershell
-uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>" --regenerate-summary
-```
-
-该操作复用当前转写、归档旧总结并回到 `prompt_ready`。随后按本次用户请求重新编写总结、校验和交付，无需重新下载或转写。尚无转写输入时，先完成转写和导入。
-
-### 切换总结语言
-
-切换总结语言，保留下载资源和 transcript：
-
-```powershell
-uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>" --summary-language ja
-```
-
-### 保留与失败恢复
-
-- **重新导入转写**：显式传入 `--transcription-manifest`，总会校验并重新导入输入。
-- **替换转写、切换实际总结语言或重新总结**：旧总结归档为 `.superseded-<id>.md`，任务回到 `prompt_ready`；旧总结不能作为当前产物交付。
-- **单纯恢复**：不改写总结。
-- **外部转写的本地 Markdown 缺失**：重新导入 manifest。
-- **中途失败**：按[输入与总结替换失败](references/ERROR-HANDLING.md#输入与总结替换失败)恢复；保留备份，恢复并校验后再交付。
-
-### 删除任务
-
-只有明确需要删除整个任务时才使用 `scripts.remove_summary_job`，它会删除下载资源和用户总结；恢复、换转写和换语言均不需要删除。内部职责与数据流见[架构](references/ARCHITECTURE.md)。
+内部职责与数据流见[架构](references/ARCHITECTURE.md)。

@@ -54,27 +54,12 @@ uv run --no-sync python -m scripts.bind_transcription "<absolute-job-path>" --tr
 
 ```powershell
 uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id 3 --context 2
-uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id all
-uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --start 60 --end 90
 uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits-file "<edits.json>"
 ```
 
-批量修改文件使用 UTF-8 JSON 数组；每项仅含从 `0` 开始的整数 `id` 与完整替换 `text`：
+批量修改格式、查看全部或时间范围、单段编辑与 reset 的命令和参数组合见[分段命令约定](references/OPERATIONS.md#分段命令约定)，使用对应操作前阅读。整批校验成功才提交，失败不部分写入。
 
-```json
-[{"id":3,"text":"校正后的完整文本"},{"id":7,"text":"另一处分段校正"}]
-```
-
-整批校验成功才一次提交；重复 ID、越界 ID、空白文本均拒绝，失败不部分写入。单段修改仍可用 `--id 3 --text '<完整替换文本>'`，不能与 `--edits-file` 混用。`show` 返回 `target_id` 和 `segments`，`--id all` 不接受 `--context`。按时间查询时成对提供 `--start`、`--end`，单位为秒，可含小数，要求 `0 <= start < end`；返回与 `[start, end)` 重叠的完整分段，不裁剪文本或时间轴，`target_id` 为 `null`，无匹配时返回空数组。时间范围不能与 `--id` 或 `--context` 混用。
-
-恢复一段或全部文本：
-
-```powershell
-uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id 3
-uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id all
-```
-
-编辑与 reset 复用不可变基准；仅当当前工作副本合法且文本无变化时保留路径和有效字幕。文本改变或全部 reset 修复损坏、缺失的工作副本时，发布新工作副本并使字幕失效。命令返回 `normalized_transcript: <absolute-path>`；它们不生成 SRT。
+编辑和 reset 复用不可变基准，不生成 SRT；文本改变或修复工作副本后，原字幕会失效，需要重新生成。
 
 ### 3. 生成并交付
 
@@ -84,7 +69,7 @@ uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>"
 
 从当前工作副本重新生成字幕，保留校正，返回 `subtitle: <absolute-path>`。交付这个文件，并说明仍有疑义的校正。
 
-首次生成默认使用 24 个非空白 Unicode 码点（含标点）、6 秒两个软目标，以及 0.2 秒最小停顿；达到任一目标后，在首个合格 item 边界切分。没有合格停顿或单 item 过长时允许超过目标，切点不保证语言学上的词语完整。可用 `--target-chars`、`--target-seconds`、`--min-gap` 覆盖；后续省略的参数复用上次生成值。尾部固定按 1.1 倍延长，并受下一条起点和音频时长限制。
+需要调整字数、时长或停顿阈值时，阅读[生成参数](references/OPERATIONS.md#生成参数)；省略的参数复用上次生成值，首次生成使用默认值。切分和尾部延长的具体行为见[字幕渲染](references/SUBTITLE-RENDERING.md)。
 
 校正和查看仍针对原分段 ID。校正不满足文字位置兼容条件或 items 无法对应时，受影响段保持原分段并警告 ID；不得通过自动重新绑定补齐 items，以免丢失校正。详细规则见[字幕渲染](references/SUBTITLE-RENDERING.md)，参数与示例见[生成参数](references/OPERATIONS.md#生成参数)。
 

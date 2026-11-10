@@ -14,6 +14,7 @@
 - `assets/`：总结内容指引与提示词资源。
 - `references/ARCHITECTURE.md`：模块职责、job 状态和 artifact 边界。
 - `references/ERROR-HANDLING.md`：故障定位、恢复与停止条件。
+- `references/OPERATIONS.md`：已有任务的恢复、输入更换、重新总结与语言切换操作。
 - `tests/`：与公开状态转换和脚本行为对应的测试。
 
 ## 开发边界

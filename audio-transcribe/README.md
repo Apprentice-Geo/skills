@@ -33,4 +33,5 @@
 ## 开发与维护
 
 - [AGENTS.md](AGENTS.md)：开发维护、测试和代码规范。
+- [references/DEVELOPMENT.md](references/DEVELOPMENT.md)：暂存目录、依赖兼容、模型身份、alignment 和发布诊断的开发约束。
 - [benchmark/README.md](benchmark/README.md)：benchmark 方法、固定测试数据、开发验证和报告说明；普通转写用户无需阅读。

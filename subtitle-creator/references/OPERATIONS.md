@@ -19,11 +19,32 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 ## 分段命令约定
 
-命令见 [SKILL.md](../SKILL.md#2-查看并按需校正)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。校正和查看使用原分段 ID，与 SRT 切分后的序号无关。
+查看、校正和恢复文本时使用以下命令；正常工作流和保护边界见 [SKILL.md](../SKILL.md#核心规则)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。校正和查看使用原分段 ID，与 SRT 切分后的序号无关。
+
+```powershell
+uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id 3 --context 2
+uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id all
+uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --start 60 --end 90
+```
 
 按时间查看使用 `show --start <seconds> --end <seconds>`，两项必须同时提供，接受有限非负小数，且起点小于终点。仅返回满足 `segment.start < end` 且 `segment.end > start` 的完整分段；不重新分段、裁剪文字或修改时间轴。超出音频范围时返回其中有交集的分段，无匹配时成功返回空数组。不能与 `--id` 或 `--context` 混用。
 
 批量 edit 接收非空 JSON 数组，每项字段严格为 `id`、`text`；拒绝重复或不存在的 ID、额外字段和纯空白文本。文本原样保存，包括引号、空白和换行。允许部分项目与当前文本相同；全部无变化则不提交。`--edits-file` 与 `--id`、`--text` 互斥。
+
+批量文件使用 UTF-8，`text` 为对应分段的完整替换文本：
+
+```json
+[{"id":3,"text":"校正后的完整文本"},{"id":7,"text":"另一处分段校正"}]
+```
+
+```powershell
+uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits-file "<edits.json>"
+uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --id 3 --text '<完整替换文本>'
+uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id 3
+uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id all
+```
+
+整批 edit 校验成功才一次提交，失败不部分写入。编辑与 reset 复用不可变基准；仅当当前工作副本合法且文本无变化时保留路径和有效字幕。文本改变或全部 reset 修复损坏、缺失的工作副本时，发布新工作副本并使字幕失效。命令返回 `normalized_transcript: <absolute-path>`，不生成 SRT。
 
 `show` 输出单行 JSON：
 

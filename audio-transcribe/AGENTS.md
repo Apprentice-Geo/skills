@@ -14,6 +14,7 @@
 - `README.md`：面向使用者的项目概述、使用边界、隐私和进一步阅读入口。
 - `references/ARCHITECTURE.md`：pipeline、result identity、cache 和公开 artifact 合同的唯一详细说明。
 - `references/ERROR-HANDLING.md`：setup、模型、Provider、cache、artifact 和停止条件的唯一详细说明。
+- [references/DEVELOPMENT.md](references/DEVELOPMENT.md)：暂存目录、日志初始化、依赖兼容、模型身份、alignment 与发布诊断的开发实现约束。
 - `benchmark/README.md`：benchmark 的方法、数据、reference、运行、恢复、报告和维护规则的唯一详细说明。
 - `scripts/`、`packages/` 和 `tests/`：当前可观察行为及其验证证据。
 
@@ -23,7 +24,7 @@
 
 - 修改前读取当前实现、相关测试和对应权威文档；不要依据旧说明、阶段性计划或记忆推断当前行为。
 - 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 及直接相关的长期文档。
-- 保持 Windows PowerShell 和 Python 3.12 兼容。运行仓库 Python 模块时，应使用 `uv run --no-sync python -m <module>` 或长期文档记录的等价命令；开发工具使用下文记录的 `uv run <tool>` 形式。
+- 保持 Windows PowerShell 和 Python 3.12 兼容。运行仓库 Python 模块和开发工具时，应使用 `uv run --no-sync python -m <module>` 或长期文档记录的等价命令；不因验证自动同步依赖。
 - `.cache/`、`.venv/`、`.pytest_cache/`、`.pytest-tmp/`、`.ruff_cache/`、`models/`、`results/`、`tmp/`、`benchmark/data/`、`benchmark/tmp/`、`benchmark/reports/` 和本地音频均为本地或生成内容，不应纳入提交。
 - 相同规则应只有一个详细来源。AGENTS.md 可以保留高风险边界的简短摘要，但不得复制易变化的字段、schema、算法步骤或错误枚举。
 
@@ -37,6 +38,8 @@
 | Provider、execution policy、模型 revision 或 setup | `references/ARCHITECTURE.md`、`references/ERROR-HANDLING.md` | `tests/test_asr_providers_and_policies.py`、`tests/test_setup_revisions.py`、`tests/test_check_dependencies.py` 及相关 pipeline 测试 |
 | benchmark runner、worker、指标、数据、reference、报告或恢复 | `benchmark/README.md` | 按 `benchmark/README.md` 的维护规则选择聚焦测试 |
 | 纯文档 | 对应长期文档 | 检查命令、路径、模块名、Markdown 链接和冲突标记，并运行 `git diff --check` |
+
+修改暂存目录、日志初始化、依赖导入兼容、模型身份校验、alignment 接受或恢复与发布诊断实现时，按[开发实现约束](references/DEVELOPMENT.md)的对应章节读取已验证的易错点；普通转写、安装和恢复任务无需加载该文档。
 
 任何可能改变 transcript 字节或 timestamp 的 resolved behavior 都必须纳入结果身份。修改这类行为时，以 `references/ARCHITECTURE.md` 的 identity contract 为准，并通过上述 result identity、pipeline 或 Provider 测试中受影响的 identity assertions 验证，不在本文件重复列举其组成字段。
 
@@ -54,14 +57,19 @@ uv sync --python 3.12 --extra cpu
 
 `cpu` 与 `qwen3-asr` extra 互斥，开发同步禁止使用 `--all-extras`。Qwen 环境的安装与切换命令见 `SKILL.md`。
 
-静态检查和完整测试：
+静态检查：
 
 ```powershell
-uv run ruff check
-uv run pyright
-uv run ruff format --check .
-uv run pytest
+uv run --no-sync python -m ruff check
+uv run --no-sync python -m pyright
+uv run --no-sync python -m ruff format --check .
 git diff --check
+```
+
+测试执行权限、独立运行目录、临时目录、uv 与 Pytest 缓存及清理统一遵循[根目录的测试执行环境规则](../AGENTS.md#测试执行环境)。以下命令仅展示完整测试范围；实际执行时按根规则配置环境，并追加 `--basetemp` 和 `-o cache_dir=...`。
+
+```powershell
+uv run --no-sync python -m pytest
 ```
 
 setup、模型安装和真实转写命令见 `SKILL.md` 与 `references/ERROR-HANDLING.md`；benchmark 命令见 `benchmark/README.md`。
