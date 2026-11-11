@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from scripts import generate_srt
+from scripts import generate_srt, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -138,7 +138,7 @@ def test_generate_always_rewrites_unchanged_srt_without_audio(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
+    job_path, normalized_path, baseline_path, _manifest_path, _manifest = correction_job
     assert run_generate(job_path.resolve()).returncode == 0
     job = json.loads(job_path.read_text(encoding="utf-8"))
     Path(job["audio"]["path"]).unlink()
@@ -147,15 +147,32 @@ def test_generate_always_rewrites_unchanged_srt_without_audio(
     subtitle_bytes = subtitle_path.read_bytes()
 
     writes = []
+    reads = []
+    renders = []
     original_write = generate_srt._atomic_write
+    original_read = subtitle_job.read_json_object
+    original_render = subtitle_job.rendered_srt_segments
 
     def record_write(path, content):
         writes.append(path)
         original_write(path, content)
 
+    def record_read(path, **kwargs):
+        reads.append(path)
+        return original_read(path, **kwargs)
+
+    def record_render(*args, **kwargs):
+        renders.append(True)
+        return original_render(*args, **kwargs)
+
     monkeypatch.setattr(generate_srt, "_atomic_write", record_write)
+    monkeypatch.setattr(subtitle_job, "read_json_object", record_read)
+    monkeypatch.setattr(subtitle_job, "rendered_srt_segments", record_render)
     reused = run_generate(job_path.resolve())
     assert writes == [subtitle_path]
+    assert reads.count(baseline_path) == 1
+    assert reads.count(normalized_path) == 1
+    assert len(renders) == 1
 
     assert reused.returncode == 0
     assert reused.stdout == f"subtitle: {subtitle_path}\n"
@@ -310,6 +327,21 @@ def test_generate_rebuilds_damaged_srt(
     assert subtitle_path.read_bytes() != b"tampered"
     job = json.loads(job_path.read_text(encoding="utf-8"))
     assert job["status"] == "transcription_bound"
+
+
+def test_generate_rejects_incorrect_written_subtitle(correction_job, monkeypatch):
+    job_path = correction_job[0]
+    original_job = job_path.read_bytes()
+
+    def write_incorrect_subtitle(path, _content):
+        path.write_bytes(b"incorrect output")
+
+    monkeypatch.setattr(generate_srt, "_atomic_write", write_incorrect_subtitle)
+
+    with pytest.raises(subtitle_job.SubtitleJobError, match="subtitle artifact timeline or text"):
+        generate_srt.generate_srt(job_path)
+
+    assert job_path.read_bytes() == original_job
 
 
 def test_generate_publishes_job_last(

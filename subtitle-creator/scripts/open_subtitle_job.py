@@ -17,10 +17,10 @@ from .process_logging import (
 )
 from .subtitle_job import (
     JOB_FILENAME,
+    JobTranscripts,
     SubtitleJobError,
     atomic_write_json,
     load_job,
-    read_json_object,
     sha256_file,
     subtitle_matches_normalized,
     validate_job,
@@ -32,7 +32,9 @@ class ArgumentParser(argparse.ArgumentParser):
         raise SubtitleJobError(message)
 
 
-def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -> Path:
+def _open_subtitle_job(
+    audio_argument: str, *, results_dir: Path | None = None
+) -> tuple[Path, dict[str, Any], JobTranscripts | None]:
     audio_path = Path(audio_argument).resolve()
     if not audio_path.is_file():
         raise SubtitleJobError(f"audio path is not a regular file: {audio_path}")
@@ -46,13 +48,15 @@ def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -
         # damaged derived subtitle. Generation validates the source artifacts and
         # rebuilds those derived values after the caller dispatches on job status.
         try:
-            validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
+            transcripts = validate_job(
+                job_path, job, results_dir=results_dir, allow_stale_derived=True
+            )
         except SubtitleJobError as error:
             raise SubtitleJobError(f"invalid subtitle job {job_path}: {error}") from error
         if job["audio"]["path"] != str(audio_path):
             job["audio"]["path"] = str(audio_path)
             atomic_write_json(job_path, job)
-        return job_path
+        return job_path, job, transcripts
 
     job: dict[str, Any] = {
         "job_id": audio_id,
@@ -63,6 +67,11 @@ def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -
         "subtitle_options": None,
     }
     atomic_write_json(job_path, job)
+    return job_path, job, None
+
+
+def open_subtitle_job(audio_argument: str, *, results_dir: Path | None = None) -> Path:
+    job_path, _, _ = _open_subtitle_job(audio_argument, results_dir=results_dir)
     return job_path
 
 
@@ -80,19 +89,19 @@ def main(argv: list[str] | None = None) -> int:
     session = LoggingSession(create_workflow_log_path("open-subtitle-job", paths)).start()
     try:
         try:
-            job_path = open_subtitle_job(arguments.audio_path, results_dir=paths.results_dir)
-            job = load_job(job_path)
-            validate_job(job_path, job, results_dir=paths.results_dir, allow_stale_derived=True)
+            job_path, job, transcripts = _open_subtitle_job(
+                arguments.audio_path, results_dir=paths.results_dir
+            )
             artifacts = job["artifacts"]
             normalized_path = artifacts["normalized_transcript"] if artifacts else None
             subtitle_path = artifacts["subtitle"] if artifacts else None
             if (
                 subtitle_path is not None
-                and normalized_path is not None
+                and transcripts is not None
                 and not subtitle_matches_normalized(
                     Path(subtitle_path),
-                    read_json_object(Path(normalized_path), decimal_numbers=True),
-                    read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True),
+                    transcripts.normalized,
+                    transcripts.baseline,
                     job["subtitle_options"],
                 )
             ):

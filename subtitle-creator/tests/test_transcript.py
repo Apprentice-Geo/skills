@@ -340,6 +340,33 @@ def test_segment_operations_allow_unavailable_subtitle(task, damage):
     subtitle_job.validate_job(job_path, subtitle_job.load_job(job_path))
 
 
+@pytest.mark.parametrize("command", ["show", "edit", "reset"])
+def test_segment_operations_do_not_read_or_render_old_subtitle(task, monkeypatch, command):
+    job_path = task[0]
+    subtitle = generate_srt.generate_srt(job_path)
+    original_read = Path.read_bytes
+
+    def reject_subtitle_read(path):
+        if path == subtitle:
+            raise PermissionError("old subtitle must not be read")
+        return original_read(path)
+
+    def reject_render(*_args, **_kwargs):
+        pytest.fail("segment operations must not render subtitles")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_subtitle_read)
+    monkeypatch.setattr(subtitle_job, "rendered_srt_segments", reject_render)
+
+    output = transcript.operate(command, job_path, 0, text="校正")
+
+    if command == "show":
+        assert isinstance(output, dict)
+        assert output["target_id"] == 0
+    else:
+        assert isinstance(output, Path)
+        assert output.is_file()
+
+
 @pytest.mark.parametrize("command,target", [("edit", 0), ("reset", 0), ("reset", "all")])
 def test_unchanged_operation_keeps_paths_and_valid_subtitle(task, command, target):
     job_path = task[0]

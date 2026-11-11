@@ -180,6 +180,36 @@ def test_create_recovers_existing_transcription_bound_job_from_audio(
     )
 
 
+def test_open_reuses_validated_sources_and_renders_subtitle_once(audio, monkeypatch):
+    audio_path, _ = audio
+    job_path, normalized_path, subtitle_path = seed_transcription_bound_job(audio, "valid")
+    baseline_path = Path(subtitle_job.load_job(job_path)["artifacts"]["before_correction"])
+    reads = []
+    renders = []
+    original_read = subtitle_job.read_json_object
+    original_render = subtitle_job.rendered_srt_segments
+
+    def record_read(path, **kwargs):
+        reads.append(path)
+        return original_read(path, **kwargs)
+
+    def record_render(*args, **kwargs):
+        renders.append(True)
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(subtitle_job, "read_json_object", record_read)
+    monkeypatch.setattr(subtitle_job, "rendered_srt_segments", record_render)
+
+    result = run_create(audio_path)
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["subtitle"] == str(subtitle_path)
+    assert reads.count(job_path) == 1
+    assert reads.count(baseline_path) == 1
+    assert reads.count(normalized_path) == 1
+    assert len(renders) == 1
+
+
 @pytest.mark.parametrize("damage", ["timeline", "baseline"])
 def test_create_summary_rejects_invalid_transcription_bound_sources(audio, damage):
     audio_path, _ = audio

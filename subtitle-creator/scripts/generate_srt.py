@@ -22,10 +22,8 @@ from .subtitle_job import (
     SUBTITLE_FILENAME,
     SubtitleJobError,
     atomic_write_json,
-    compare_normalized_correction,
     expected_srt_bytes,
     load_job,
-    read_json_object,
     validate_job,
     validate_subtitle_options,
 )
@@ -95,15 +93,11 @@ def generate_srt(
         raise SubtitleJobError(f"subtitle job is not a regular file: {job_path}")
 
     job = load_job(job_path)
-    validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
-    if job["status"] != "transcription_bound":
+    transcripts = validate_job(job_path, job, results_dir=results_dir, allow_stale_derived=True)
+    if transcripts is None:
         raise SubtitleJobError("subtitle job has no bound transcription")
 
     artifacts = job["artifacts"]
-    baseline = read_json_object(Path(artifacts["before_correction"]), decimal_numbers=True)
-    normalized_path = Path(artifacts["normalized_transcript"])
-    normalized = read_json_object(normalized_path, decimal_numbers=True)
-    changed_ids = compare_normalized_correction(baseline, normalized)
     options = dict(job["subtitle_options"] or DEFAULT_SUBTITLE_OPTIONS)
     if target_chars is not None:
         options["target_chars"] = target_chars
@@ -114,13 +108,18 @@ def generate_srt(
             options[field] = Decimal(str(value))
     options = validate_subtitle_options(options)
     subtitle_path = (job_path.parent / SUBTITLE_FILENAME).resolve()
-    expected_subtitle = expected_srt_bytes(normalized, baseline, options, warn=True)
+    expected_subtitle = expected_srt_bytes(
+        transcripts.normalized, transcripts.baseline, options, warn=True
+    )
     _atomic_write(subtitle_path, expected_subtitle)
+    if subtitle_path.read_bytes() != expected_subtitle:
+        raise SubtitleJobError(
+            "subtitle artifact timeline or text does not match normalized transcript"
+        )
 
-    job["changed_segment_ids"] = changed_ids
+    job["changed_segment_ids"] = transcripts.changed_segment_ids
     job["subtitle_options"] = options
     artifacts["subtitle"] = str(subtitle_path)
-    validate_job(job_path, job, results_dir=results_dir)
     atomic_write_json(job_path, job)
     return subtitle_path
 

@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 from pathlib import Path
@@ -39,6 +40,13 @@ DEFAULT_SUBTITLE_OPTIONS = {
 
 class SubtitleJobError(ValueError):
     """Raised when an input or persisted subtitle job is invalid."""
+
+
+@dataclass
+class JobTranscripts:
+    baseline: dict[str, Any]
+    normalized: dict[str, Any]
+    changed_segment_ids: list[int]
 
 
 def sha256_file(path: Path) -> str:
@@ -531,7 +539,7 @@ def validate_job(
     *,
     results_dir: Path | None = None,
     allow_stale_derived: bool = False,
-) -> None:
+) -> JobTranscripts | None:
     validate_job_identity(job_path, job, results_dir=results_dir)
     if job["status"] == "transcription_unbound":
         return
@@ -556,24 +564,24 @@ def validate_job(
     expected_changed_ids = compare_normalized_correction(baseline, normalized)
     normalized_srt_segments(baseline)
     normalized_srt_segments(normalized)
-    if changed_ids != expected_changed_ids and not allow_stale_derived:
+    transcripts = JobTranscripts(baseline, normalized, expected_changed_ids)
+    if allow_stale_derived:
+        return transcripts
+    if changed_ids != expected_changed_ids:
         raise SubtitleJobError("changed_segment_ids does not match normalized transcript")
     recorded_subtitle = artifacts.get("subtitle")
     if recorded_subtitle is None:
-        return
+        return transcripts
     subtitle_path = require_job_artifact_path(recorded_subtitle, "artifacts.subtitle", job_dir)
-    if not subtitle_path.is_file() and not allow_stale_derived:
+    if not subtitle_path.is_file():
         raise SubtitleJobError("subtitle artifact is missing")
-    if (
-        subtitle_path.is_file()
-        and not subtitle_matches_normalized(
-            subtitle_path, normalized, baseline, job["subtitle_options"]
-        )
-        and not allow_stale_derived
+    if not subtitle_matches_normalized(
+        subtitle_path, normalized, baseline, job["subtitle_options"]
     ):
         raise SubtitleJobError(
             "subtitle artifact timeline or text does not match normalized transcript"
         )
+    return transcripts
 
 
 def publish_transcript(
