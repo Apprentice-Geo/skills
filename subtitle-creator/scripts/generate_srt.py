@@ -19,10 +19,9 @@ from .process_logging import (
 )
 from .subtitle_job import (
     DEFAULT_SUBTITLE_OPTIONS,
-    SUBTITLE_FILENAME,
     SubtitleJobError,
     atomic_write_json,
-    expected_srt_bytes,
+    expected_subtitle_bytes,
     load_job,
     validate_job,
     validate_subtitle_options,
@@ -85,6 +84,7 @@ def generate_srt(
     target_chars: int | None = None,
     target_seconds: Decimal | float | None = None,
     min_gap: Decimal | float | None = None,
+    output_format: str | None = None,
 ) -> Path:
     if not job_path.is_absolute():
         raise SubtitleJobError("subtitle job path must be absolute")
@@ -107,9 +107,18 @@ def generate_srt(
                 raise SubtitleJobError(f"{field} must be a number")
             options[field] = Decimal(str(value))
     options = validate_subtitle_options(options)
-    subtitle_path = (job_path.parent / SUBTITLE_FILENAME).resolve()
-    expected_subtitle = expected_srt_bytes(
-        transcripts.normalized, transcripts.baseline, options, warn=True
+    if output_format is None:
+        recorded = artifacts["subtitle"]
+        output_format = Path(recorded).suffix.lower().removeprefix(".") if recorded else "srt"
+    if output_format not in {"srt", "json"}:
+        raise SubtitleJobError("subtitle format must be srt or json")
+    subtitle_path = (job_path.parent / f"subtitle.{output_format}").resolve()
+    expected_subtitle = expected_subtitle_bytes(
+        transcripts.normalized,
+        transcripts.baseline,
+        options,
+        output_format=output_format,
+        warn=True,
     )
     _atomic_write(subtitle_path, expected_subtitle)
     if subtitle_path.read_bytes() != expected_subtitle:
@@ -126,11 +135,14 @@ def generate_srt(
 
 @filesystem_cli
 def main(argv: list[str] | None = None) -> int:
-    parser = ArgumentParser(description="Generate and publish an SRT subtitle.")
+    parser = ArgumentParser(description="Generate and publish JSON or SRT subtitles.")
     parser.add_argument("subtitle_job_path", help="Absolute path to subtitle_job.json.")
     parser.add_argument("--target-chars", type=_positive_chars, help="非空白码点软目标，默认 24。")
     parser.add_argument("--target-seconds", type=_positive_seconds, help="时长软目标，默认 6 秒。")
     parser.add_argument("--min-gap", type=_positive_seconds, help="最小停顿，默认 0.2 秒。")
+    parser.add_argument(
+        "--format", choices=("srt", "json"), help="输出格式；省略时沿用当前产物格式，首次默认 srt。"
+    )
     add_data_dir_argument(parser)
     try:
         arguments = parser.parse_args(argv)
@@ -147,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_chars=arguments.target_chars,
                 target_seconds=arguments.target_seconds,
                 min_gap=arguments.min_gap,
+                output_format=arguments.format,
             )
             result(get_logger(__name__), "subtitle: %s", subtitle_path)
             return 0

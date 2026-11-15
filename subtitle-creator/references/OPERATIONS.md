@@ -19,7 +19,7 @@ $env:UV_CACHE_DIR = "$env:SUBTITLE_CREATOR_DATA_DIR\.cache\uv"
 
 ## 分段命令约定
 
-查看、校正和恢复文本时使用以下命令；正常工作流和保护边界见 [SKILL.md](../SKILL.md#核心规则)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。校正和查看使用原分段 ID，与 SRT 切分后的序号无关。
+查看、校正和恢复文本时使用以下命令；正常工作流和保护边界见 [SKILL.md](../SKILL.md#核心规则)。ID 必须为当前 transcript 中从 `0` 开始的整数，不支持范围；`show/reset` 支持 `all`。`--context N` 仅用于查看单个 ID，返回前后各最多 N 段，首尾自动截断。校正和查看使用原分段 ID，与字幕导出后的序号无关。
 
 ```powershell
 uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id 3 --context 2
@@ -44,7 +44,7 @@ uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id 3
 uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id all
 ```
 
-整批 edit 校验成功才一次提交，失败不部分写入。编辑与 reset 复用不可变基准；仅当当前工作副本合法且文本无变化时保留路径和有效字幕。文本改变或全部 reset 修复损坏、缺失的工作副本时，发布新工作副本并使字幕失效。命令返回 `normalized_transcript: <absolute-path>`，不生成 SRT。
+整批 edit 校验成功才一次提交，失败不部分写入。编辑与 reset 复用不可变基准；仅当当前工作副本合法且文本无变化时保留路径和有效字幕。文本改变或全部 reset 修复损坏、缺失的工作副本时，发布新工作副本并使字幕失效。命令返回 `normalized_transcript: <absolute-path>`，不生成字幕。
 
 `show` 输出单行 JSON：
 
@@ -57,16 +57,17 @@ uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id a
 ## 生成参数
 
 ```powershell
-uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --target-chars 24 --target-seconds 6 --min-gap 0.2
+uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --format json --target-chars 24 --target-seconds 6 --min-gap 0.2
 ```
 
 | 参数 | 约束 | 首次默认值 |
 | --- | --- | --- |
+| `--format` | `json` 或 `srt`，直接输出所选格式 | 沿用当前产物格式，无产物时 `srt` |
 | `--target-chars` | 正整数，计数非空白 Unicode 码点，含标点 | `24` |
 | `--target-seconds` | 有限正数，单位秒 | `6` |
 | `--min-gap` | 有限正数，单位秒 | `0.2` |
 
-后续生成时，未显式提供的参数复用上次记录值；只覆盖一个参数也会保留其他值。尾部倍数固定为 `1.1`，没有可调参数。阈值为软目标，切点不保证词语完整；分段、校正回退及取整规则见[字幕渲染](SUBTITLE-RENDERING.md)。生成后的打开与有效性检查也使用保存的参数，不以默认值重新解释字幕。
+后续生成时，未显式提供的参数复用上次记录值；只覆盖一个参数也会保留其他值。两种格式都不延长尾部，阅读停留由视频项目处理。旧任务的 `tail_factor=1.1` 可读取，生成后移除，不丢失文本校正。阈值为软目标，切点不保证词语完整；分段、校正回退及取整规则见[字幕渲染](SUBTITLE-RENDERING.md)。生成后的打开与有效性检查也使用保存的参数，不以默认值重新解释字幕。
 
 ## 删除任务
 
@@ -76,4 +77,4 @@ uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --target-c
 uv run --no-sync python -m scripts.remove_subtitle_job "<absolute-job-path>"
 ```
 
-只接受当前数据目录下 `results/<audio-sha256>/subtitle_job.json` 的绝对路径，删除整个任务目录，包括校正、基准和字幕；需要保留时先备份。目标不存在时也成功。恢复从音频重新打开任务；普通校正、reset、更换转写或修复 SRT 无需删除。
+只接受当前数据目录下 `results/<audio-sha256>/subtitle_job.json` 的绝对路径，删除整个任务目录，包括校正、基准和字幕；需要保留时先备份。目标不存在时也成功。恢复从音频重新打开任务；普通校正、reset、更换转写或修复字幕无需删除。

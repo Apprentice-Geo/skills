@@ -19,7 +19,6 @@ from scripts.runtime_paths import RuntimePaths
 JOB_FILENAME = "subtitle_job.json"
 NORMALIZED_FILENAME = "normalized_transcript.json"
 BEFORE_CORRECTION_FILENAME = "normalized_transcript.before_correction.json"
-SUBTITLE_FILENAME = "subtitle.srt"
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 JOB_KEYS = {
@@ -34,7 +33,6 @@ DEFAULT_SUBTITLE_OPTIONS = {
     "target_chars": 24,
     "target_seconds": Decimal(6),
     "min_gap": Decimal("0.2"),
-    "tail_factor": Decimal("1.1"),
 }
 
 
@@ -248,18 +246,26 @@ def _validate_items(payload: dict[str, Any]) -> None:
 
 
 def validate_subtitle_options(options: Any) -> dict[str, Any]:
-    if not isinstance(options, dict) or set(options) != set(DEFAULT_SUBTITLE_OPTIONS):
+    if not isinstance(options, dict):
+        raise SubtitleJobError("subtitle_options has invalid fields")
+    options = dict(options)
+    # Earlier jobs stored a reading-tail policy. Keep their corrections and
+    # segmentation settings; display extension now belongs to the video project.
+    legacy_tail = options.pop("tail_factor", Decimal("1.1"))
+    if isinstance(legacy_tail, float):
+        legacy_tail = Decimal(str(legacy_tail))
+    if _decimal_number(legacy_tail, "tail_factor") != Decimal("1.1"):
+        raise SubtitleJobError("legacy tail_factor must be 1.1")
+    if set(options) != set(DEFAULT_SUBTITLE_OPTIONS):
         raise SubtitleJobError("subtitle_options has invalid fields")
     if type(options["target_chars"]) is not int or options["target_chars"] <= 0:
         raise SubtitleJobError("target_chars must be a positive integer")
     options = dict(options)
-    for field in ("target_seconds", "min_gap", "tail_factor"):
+    for field in ("target_seconds", "min_gap"):
         if isinstance(options[field], float):
             options[field] = Decimal(str(options[field]))
         if _decimal_number(options[field], field) <= 0:
             raise SubtitleJobError(f"{field} must be finite and positive")
-    if options["tail_factor"] != Decimal("1.1"):
-        raise SubtitleJobError("tail_factor must be 1.1")
     return options
 
 
@@ -412,7 +418,6 @@ def rendered_srt_segments(
             sorted(fallback),
         )
 
-    duration = Decimal(normalized["duration"])
     while True:
         flattened = [
             (group_index, block_index, block)
@@ -420,15 +425,13 @@ def rendered_srt_segments(
             for block_index, block in enumerate(group)
         ]
         result = []
-        for index, (group_index, block_index, (start, end, text)) in enumerate(flattened):
-            next_start = flattened[index + 1][2][0] if index + 1 < len(flattened) else duration
-            extended_end = min(start + (end - start) * options["tail_factor"], next_start, duration)
-            start_ms, end_ms = _milliseconds(start), _milliseconds(extended_end)
+        for group_index, block_index, (start, end, text) in flattened:
+            start_ms, end_ms = _milliseconds(start), _milliseconds(end)
             if end_ms <= start_ms:
                 group = blocks_by_segment[group_index]
                 if len(group) == 1:
                     raise SubtitleJobError("segment is empty after millisecond rounding")
-                # 撤销切点，优先并入前块；首块则并入后块。始终从未延长时间重算。
+                # 撤销切点，优先并入前块；首块则并入后块。保留未延长的时间。
                 merge_index = max(0, block_index - 1)
                 left, right = group[merge_index : merge_index + 2]
                 group[merge_index : merge_index + 2] = [(left[0], right[1], left[2] + right[2])]
@@ -461,14 +464,41 @@ def expected_srt_bytes(
     return ("\n\n".join(blocks) + "\n").encode("utf-8-sig")
 
 
+def expected_subtitle_bytes(
+    normalized: dict[str, Any],
+    baseline: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+    *,
+    output_format: str = "srt",
+    warn: bool = False,
+) -> bytes:
+    if output_format == "srt":
+        return expected_srt_bytes(normalized, baseline, options, warn=warn)
+    if output_format != "json":
+        raise SubtitleJobError("subtitle format must be srt or json")
+    cues = [
+        {"id": str(index), "text": text, "startMs": start, "endMs": end}
+        for index, (start, end, text) in enumerate(
+            rendered_srt_segments(normalized, baseline, options, warn=warn), start=1
+        )
+    ]
+    return (json.dumps({"version": 1, "cues": cues}, ensure_ascii=False, indent=2) + "\n").encode(
+        "utf-8"
+    )
+
+
 def subtitle_matches_normalized(
     subtitle_path: Path,
     normalized: dict[str, Any],
     baseline: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
 ) -> bool:
-    return subtitle_path.is_file() and subtitle_path.read_bytes() == expected_srt_bytes(
-        normalized, baseline, options
+    output_format = subtitle_path.suffix.lower().removeprefix(".")
+    return (
+        output_format in {"srt", "json"}
+        and subtitle_path.is_file()
+        and subtitle_path.read_bytes()
+        == expected_subtitle_bytes(normalized, baseline, options, output_format=output_format)
     )
 
 

@@ -1,6 +1,6 @@
 ---
 name: subtitle-creator
-description: 从本地音频创建或恢复 SRT 字幕，依据源文本校正错字，并按细粒度时间戳间的停顿切分过长字幕。校正保留基准分段和时间轴，需要语音转写时调用 audio-transcribe。
+description: 从本地音频创建或恢复 JSON／SRT 字幕，依据源文本校正错字，并按细粒度时间戳间的停顿切分过长字幕。校正保留基准分段和时间轴，需要语音转写时调用 audio-transcribe。
 compatibility: Windows。需要 uv、Python 3.12 和 Git；首次安装需访问 GitHub 下载合同包。
 license: Apache-2.0
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 ## 适用范围与成功条件
 
-从本地音频创建或恢复 SRT；可用用户提供的源文本校正错字、同音词和专名。需要转写时调用 `audio-transcribe`，本 Skill 不下载音频、不运行 ASR、不翻译、不修改基准分段。生成时仅按[字幕渲染规则](references/SUBTITLE-RENDERING.md)切分过长字幕并延长尾部，不增加段内换行，不运行额外模型。
+从本地音频创建或恢复 JSON／SRT 字幕；可用用户提供的源文本校正错字、同音词和专名。需要转写时调用 `audio-transcribe`，本 Skill 不下载音频、不运行 ASR、不翻译、不修改基准分段。生成时仅按[字幕渲染规则](references/SUBTITLE-RENDERING.md)切分过长字幕，保留未作阅读延长的时间戳，不增加段内换行，不运行额外模型。
 
 交付必须来自成功执行 `generate_srt` 的 `subtitle: <absolute-path>`，或打开任务返回的非空 `subtitle`。文件残留、转写已绑定或编辑成功都不能代替字幕生成成功。
 
@@ -59,18 +59,22 @@ uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits
 
 批量修改格式、查看全部或时间范围、单段编辑与 reset 的命令和参数组合见[分段命令约定](references/OPERATIONS.md#分段命令约定)，使用对应操作前阅读。整批校验成功才提交，失败不部分写入。
 
-编辑和 reset 复用不可变基准，不生成 SRT；文本改变或修复工作副本后，原字幕会失效，需要重新生成。
+编辑和 reset 复用不可变基准，不生成字幕；文本改变或修复工作副本后，原字幕会失效，需要重新生成。
 
 ### 3. 生成并交付
 
 ```powershell
-uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>"
+uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --format json
 ```
 
-从当前工作副本重新生成字幕，保留校正，返回 `subtitle: <absolute-path>`。交付这个文件，并说明仍有疑义的校正。
+从当前工作副本直接生成最终断句后的 JSON，保留校正，返回 `subtitle: <absolute-path>`。交付这个文件，并说明仍有疑义的校正。
 
-需要调整字数、时长或停顿阈值时，阅读[生成参数](references/OPERATIONS.md#生成参数)；省略的参数复用上次生成值，首次生成使用默认值。切分和尾部延长的具体行为见[字幕渲染](references/SUBTITLE-RENDERING.md)。
+需要 SRT 时使用 `--format srt`；省略格式沿用当前产物格式，没有产物时默认 SRT。JSON 与 SRT 共用断句结果，不需要先生成另一种格式。
+
+需要调整字数、时长或停顿阈值时，阅读[生成参数](references/OPERATIONS.md#生成参数)；省略的参数复用上次生成值，首次生成使用默认值。切分及未延长时间戳的具体行为见[字幕渲染](references/SUBTITLE-RENDERING.md)。
 
 校正和查看仍针对原分段 ID。校正不满足文字位置兼容条件或 items 无法对应时，受影响段保持原分段并警告 ID；不得通过自动重新绑定补齐 items，以免丢失校正。详细规则见[字幕渲染](references/SUBTITLE-RENDERING.md)，参数与示例见[生成参数](references/OPERATIONS.md#生成参数)。
+
+阅读停留的延长由视频项目处理，不改写这里的基准时间。转写时间戳用于制作定位，存在合理误差；不要为追求声学边界完全一致而自动重转写或增加严格门禁。
 
 更多参数、删除任务见[环境与命令](references/OPERATIONS.md)；持久化规则见[架构](references/ARCHITECTURE.md)。
