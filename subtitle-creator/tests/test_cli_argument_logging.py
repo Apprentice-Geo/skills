@@ -5,7 +5,7 @@ import pytest
 
 from scripts import (
     bind_transcription,
-    generate_srt,
+    generate_subtitle,
     open_subtitle_job,
     remove_subtitle_job,
     transcript,
@@ -19,7 +19,7 @@ CliMain = Callable[[list[str] | None], int]
     [
         open_subtitle_job.main,
         bind_transcription.main,
-        generate_srt.main,
+        generate_subtitle.main,
         remove_subtitle_job.main,
         transcript.main,
     ],
@@ -42,7 +42,7 @@ def test_help_does_not_start_logging_session(
     [
         open_subtitle_job.main,
         bind_transcription.main,
-        generate_srt.main,
+        generate_subtitle.main,
         remove_subtitle_job.main,
         transcript.main,
     ],

@@ -77,7 +77,7 @@ def _atomic_write(path: Path, content: bytes) -> None:
             temporary_path.unlink(missing_ok=True)
 
 
-def generate_srt(
+def generate_subtitle(
     job_path: Path,
     *,
     results_dir: Path | None = None,
@@ -150,10 +150,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     paths = RuntimePaths.resolve(arguments.data_dir)
-    session = LoggingSession(create_workflow_log_path("generate-srt", paths)).start()
+    session = LoggingSession(create_workflow_log_path("generate-subtitle", paths)).start()
     try:
         try:
-            subtitle_path = generate_srt(
+            subtitle_path = generate_subtitle(
                 Path(arguments.subtitle_job_path),
                 results_dir=paths.results_dir,
                 target_chars=arguments.target_chars,

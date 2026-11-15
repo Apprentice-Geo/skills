@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from scripts import generate_srt, subtitle_job
+from scripts import generate_subtitle, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -26,7 +26,7 @@ def run_generate(job_path: Path | str) -> subprocess.CompletedProcess[str]:
     stdout = io.StringIO()
     stderr = io.StringIO()
     with redirect_stdout(stdout), redirect_stderr(stderr):
-        returncode = generate_srt.main([str(job_path)])
+        returncode = generate_subtitle.main([str(job_path)])
     return subprocess.CompletedProcess(
         args=[str(job_path)],
         returncode=returncode,
@@ -110,7 +110,7 @@ def test_generate_publishes_corrected_srt_and_keeps_transcription_bound_job(
     assert result.returncode == 0
     assert result.stdout == f"subtitle: {subtitle_path.resolve()}\n"
     assert "cannot subdivide segment IDs [0]" in result.stderr
-    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-srt-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-subtitle-*.log"))
     assert len(logs) == 1
     assert result.stdout.strip() in logs[0].read_text(encoding="utf-8")
     assert (
@@ -149,9 +149,9 @@ def test_generate_always_rewrites_unchanged_srt_without_audio(
     writes = []
     reads = []
     renders = []
-    original_write = generate_srt._atomic_write
+    original_write = generate_subtitle._atomic_write
     original_read = subtitle_job.read_json_object
-    original_render = subtitle_job.rendered_srt_segments
+    original_render = subtitle_job.rendered_subtitle_segments
 
     def record_write(path, content):
         writes.append(path)
@@ -165,9 +165,9 @@ def test_generate_always_rewrites_unchanged_srt_without_audio(
         renders.append(True)
         return original_render(*args, **kwargs)
 
-    monkeypatch.setattr(generate_srt, "_atomic_write", record_write)
+    monkeypatch.setattr(generate_subtitle, "_atomic_write", record_write)
     monkeypatch.setattr(subtitle_job, "read_json_object", record_read)
-    monkeypatch.setattr(subtitle_job, "rendered_srt_segments", record_render)
+    monkeypatch.setattr(subtitle_job, "rendered_subtitle_segments", record_render)
     reused = run_generate(job_path.resolve())
     assert writes == [subtitle_path]
     assert reads.count(baseline_path) == 1
@@ -245,7 +245,7 @@ def test_generate_rejects_changes_outside_segment_text(
         (0, 1, " \t\n"),
     ],
 )
-def test_generate_rejects_invalid_srt_segment(
+def test_generate_rejects_invalid_subtitle_segment(
     correction_job: tuple[Path, Path, Path, Path, dict[str, Any]],
     start: object,
     end: object,
@@ -306,7 +306,7 @@ def test_generate_rejects_baseline_digest_mismatch(
     assert result.stdout == ""
     assert result.stderr.startswith("Error: ")
     assert "Full log:" in result.stderr
-    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-srt-*.log"))
+    logs = list((job_path.parents[2] / ".cache" / "logs").glob("generate-subtitle-*.log"))
     assert len(logs) == 1
     assert "Traceback (most recent call last)" in logs[0].read_text(encoding="utf-8")
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
@@ -336,10 +336,10 @@ def test_generate_rejects_incorrect_written_subtitle(correction_job, monkeypatch
     def write_incorrect_subtitle(path, _content):
         path.write_bytes(b"incorrect output")
 
-    monkeypatch.setattr(generate_srt, "_atomic_write", write_incorrect_subtitle)
+    monkeypatch.setattr(generate_subtitle, "_atomic_write", write_incorrect_subtitle)
 
     with pytest.raises(subtitle_job.SubtitleJobError, match="subtitle artifact timeline or text"):
-        generate_srt.generate_srt(job_path)
+        generate_subtitle.generate_subtitle(job_path)
 
     assert job_path.read_bytes() == original_job
 
@@ -349,16 +349,16 @@ def test_generate_publishes_job_last(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job_path, _normalized_path, _baseline_path, _manifest_path, _manifest = correction_job
-    original_write = generate_srt.atomic_write_json
+    original_write = generate_subtitle.atomic_write_json
 
     def fail_job_write(path: Path, value: dict[str, Any]) -> None:
         if path == job_path:
             raise OSError("fail publish")
         original_write(path, value)
 
-    monkeypatch.setattr(generate_srt, "atomic_write_json", fail_job_write)
+    monkeypatch.setattr(generate_subtitle, "atomic_write_json", fail_job_write)
     with pytest.raises(OSError, match="fail publish"):
-        generate_srt.generate_srt(job_path.resolve())
+        generate_subtitle.generate_subtitle(job_path.resolve())
 
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
     assert (job_path.parent / "subtitle.srt").exists()

@@ -11,9 +11,9 @@ metadata:
 
 ## 适用范围与成功条件
 
-从本地音频创建或恢复 JSON／SRT 字幕；可用用户提供的源文本校正错字、同音词和专名。需要转写时调用 `audio-transcribe`，本 Skill 不下载音频、不运行 ASR、不翻译、不修改基准分段。生成时仅按[字幕渲染规则](references/SUBTITLE-RENDERING.md)切分过长字幕，保留未作阅读延长的时间戳，不增加段内换行，不运行额外模型。
+从本地音频创建或恢复 JSON／SRT 字幕；可用用户提供的源文本校正错字、同音词和专名。需要转写时调用 `audio-transcribe`，本 Skill 不下载音频、不运行 ASR、不翻译、不修改基准分段。生成时仅按[字幕渲染规则](references/SUBTITLE-RENDERING.md)切分过长字幕，沿用原始转写时间戳，不增加段内换行，不运行额外模型。
 
-交付必须来自成功执行 `generate_srt` 的 `subtitle: <absolute-path>`，或打开任务返回的非空 `subtitle`。文件残留、转写已绑定或编辑成功都不能代替字幕生成成功。
+交付必须来自成功执行 `generate_subtitle` 的 `subtitle: <absolute-path>`，或打开任务返回的非空 `subtitle`。文件残留、转写已绑定或编辑成功都不能代替字幕生成成功。
 
 ## 环境
 
@@ -64,17 +64,17 @@ uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits
 ### 3. 生成并交付
 
 ```powershell
-uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --format json
+uv run --no-sync python -m scripts.generate_subtitle "<absolute-job-path>" --format json
 ```
 
 从当前工作副本直接生成最终断句后的 JSON，保留校正，返回 `subtitle: <absolute-path>`。交付这个文件，并说明仍有疑义的校正。
 
 需要 SRT 时使用 `--format srt`；省略格式沿用当前产物格式，没有产物时默认 SRT。JSON 与 SRT 共用断句结果，不需要先生成另一种格式。
 
-需要调整字数、时长或停顿阈值时，阅读[生成参数](references/OPERATIONS.md#生成参数)；省略的参数复用上次生成值，首次生成使用默认值。切分及未延长时间戳的具体行为见[字幕渲染](references/SUBTITLE-RENDERING.md)。
+需要调整字数、时长或停顿阈值时，阅读[生成参数](references/OPERATIONS.md#生成参数)；省略的参数复用上次生成值，首次生成使用默认值。切分及时间戳的具体行为见[字幕渲染](references/SUBTITLE-RENDERING.md)。
 
 校正和查看仍针对原分段 ID。校正不满足文字位置兼容条件或 items 无法对应时，受影响段保持原分段并警告 ID；不得通过自动重新绑定补齐 items，以免丢失校正。详细规则见[字幕渲染](references/SUBTITLE-RENDERING.md)，参数与示例见[生成参数](references/OPERATIONS.md#生成参数)。
 
-阅读停留的延长由视频项目处理，不改写这里的基准时间。转写时间戳用于制作定位，存在合理误差；不要为追求声学边界完全一致而自动重转写或增加严格门禁。
+转写时间戳用于制作定位，存在合理误差；不要为追求声学边界完全一致而自动重转写或增加严格门禁。
 
 更多参数、删除任务见[环境与命令](references/OPERATIONS.md)；持久化规则见[架构](references/ARCHITECTURE.md)。

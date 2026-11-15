@@ -249,8 +249,7 @@ def validate_subtitle_options(options: Any) -> dict[str, Any]:
     if not isinstance(options, dict):
         raise SubtitleJobError("subtitle_options has invalid fields")
     options = dict(options)
-    # Earlier jobs stored a reading-tail policy. Keep their corrections and
-    # segmentation settings; display extension now belongs to the video project.
+    # 兼容旧任务的 tail_factor 字段，保留校正与切分参数。
     legacy_tail = options.pop("tail_factor", Decimal("1.1"))
     if isinstance(legacy_tail, float):
         legacy_tail = Decimal(str(legacy_tail))
@@ -273,7 +272,7 @@ def _milliseconds(seconds: Decimal) -> int:
     return int((seconds * 1000).to_integral_value(rounding=ROUND_HALF_UP))
 
 
-def normalized_srt_segments(normalized: dict[str, Any]) -> list[tuple[int, int, str]]:
+def normalized_subtitle_segments(normalized: dict[str, Any]) -> list[tuple[int, int, str]]:
     duration = _decimal_number(normalized.get("duration"), "normalized_transcript.duration")
     segments = normalized["segments"]
     result: list[tuple[int, int, str]] = []
@@ -380,7 +379,7 @@ def _split_segment(
     return blocks
 
 
-def rendered_srt_segments(
+def rendered_subtitle_segments(
     normalized: dict[str, Any],
     baseline: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
@@ -390,7 +389,7 @@ def rendered_srt_segments(
     options = validate_subtitle_options(DEFAULT_SUBTITLE_OPTIONS if options is None else options)
     baseline = baseline if baseline is not None else normalized
     compare_normalized_correction(baseline, normalized)
-    normalized_srt_segments(normalized)
+    normalized_subtitle_segments(normalized)
     groups, invalid = _item_groups(baseline)
     blocks_by_segment: list[list[SubtitleBlock]] = []
     fallback = set(invalid)
@@ -431,7 +430,7 @@ def rendered_srt_segments(
                 group = blocks_by_segment[group_index]
                 if len(group) == 1:
                     raise SubtitleJobError("segment is empty after millisecond rounding")
-                # 撤销切点，优先并入前块；首块则并入后块。保留未延长的时间。
+                # 撤销切点，优先并入前块；首块则并入后块。保留原始转写时间戳。
                 merge_index = max(0, block_index - 1)
                 left, right = group[merge_index : merge_index + 2]
                 group[merge_index : merge_index + 2] = [(left[0], right[1], left[2] + right[2])]
@@ -458,7 +457,7 @@ def expected_srt_bytes(
     blocks = [
         f"{index}\n{_timestamp(start)} --> {_timestamp(end)}\n{text}"
         for index, (start, end, text) in enumerate(
-            rendered_srt_segments(normalized, baseline, options, warn=warn), start=1
+            rendered_subtitle_segments(normalized, baseline, options, warn=warn), start=1
         )
     ]
     return ("\n\n".join(blocks) + "\n").encode("utf-8-sig")
@@ -479,7 +478,7 @@ def expected_subtitle_bytes(
     cues = [
         {"id": str(index), "text": text, "startMs": start, "endMs": end}
         for index, (start, end, text) in enumerate(
-            rendered_srt_segments(normalized, baseline, options, warn=warn), start=1
+            rendered_subtitle_segments(normalized, baseline, options, warn=warn), start=1
         )
     ]
     return (json.dumps({"version": 1, "cues": cues}, ensure_ascii=False, indent=2) + "\n").encode(
@@ -592,8 +591,8 @@ def validate_job(
     baseline = read_json_object(baseline_path, decimal_numbers=True)
     normalized = read_json_object(normalized_path, decimal_numbers=True)
     expected_changed_ids = compare_normalized_correction(baseline, normalized)
-    normalized_srt_segments(baseline)
-    normalized_srt_segments(normalized)
+    normalized_subtitle_segments(baseline)
+    normalized_subtitle_segments(normalized)
     transcripts = JobTranscripts(baseline, normalized, expected_changed_ids)
     if allow_stale_derived:
         return transcripts

@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts import bind_transcription, generate_srt, open_subtitle_job, subtitle_job, transcript
+from scripts import (
+    bind_transcription,
+    generate_subtitle,
+    open_subtitle_job,
+    subtitle_job,
+    transcript,
+)
 from scripts.transcription_input import TranscriptionInput
 
 
@@ -81,7 +87,7 @@ def test_show_preserves_artifacts_and_precision(task, target, context, ids):
 def test_show_time_range_returns_overlapping_segments_without_changes(task, start, end, ids):
     job_path, audio, manifest, _, _ = task
     transcript.operate("edit", job_path, 1, text="校正后的文字")
-    subtitle = generate_srt.generate_srt(job_path)
+    subtitle = generate_subtitle.generate_subtitle(job_path)
     audio.unlink()
     manifest.unlink()
     job = subtitle_job.load_job(job_path)
@@ -132,8 +138,8 @@ def test_invalid_time_range_is_rejected_before_loading_job(task, arguments, caps
 
 def test_edit_reset_records_precision_and_manual_subtitle(task, capsys):
     job_path, _, _, original, baseline = task
-    old_srt = generate_srt.generate_srt(job_path)
-    old_content = old_srt.read_bytes()
+    old_subtitle = generate_subtitle.generate_subtitle(job_path)
+    old_content = old_subtitle.read_bytes()
     text = '  中文 "引号"\n下一行  '
     first = transcript.operate("edit", job_path, 0, text=text)
     second = transcript.operate("edit", job_path, 2, text="校正二")
@@ -151,7 +157,7 @@ def test_edit_reset_records_precision_and_manual_subtitle(task, capsys):
     subtitle_job.validate_job(job_path, job)
     assert open_subtitle_job.main([str(task[1])]) == 0
     assert json.loads(capsys.readouterr().out)["subtitle"] is None
-    assert old_srt.read_bytes() == old_content
+    assert old_subtitle.read_bytes() == old_content
     reset = transcript.operate("reset", job_path, 0)
     assert (
         subtitle_job.read_json_object(reset, decimal_numbers=True)["segments"][0]
@@ -160,7 +166,7 @@ def test_edit_reset_records_precision_and_manual_subtitle(task, capsys):
     assert subtitle_job.load_job(job_path)["changed_segment_ids"] == [2]
     repeated = transcript.operate("reset", job_path, 0)
     assert repeated == reset
-    generated = generate_srt.generate_srt(job_path)
+    generated = generate_subtitle.generate_subtitle(job_path)
     assert "校正二" in generated.read_text(encoding="utf-8-sig")
     assert transcript.operate("reset", job_path, "all").read_bytes() == baseline
 
@@ -237,10 +243,10 @@ def test_publish_failure_keeps_existing_results(task, monkeypatch, command, fail
     job_path = task[0]
     if command == "reset":
         transcript.operate("edit", job_path, 0, text="changed")
-    srt = generate_srt.generate_srt(job_path)
+    subtitle = generate_subtitle.generate_subtitle(job_path)
     normalized = Path(subtitle_job.load_job(job_path)["artifacts"]["normalized_transcript"])
     baseline = Path(subtitle_job.load_job(job_path)["artifacts"]["before_correction"])
-    before = {p: p.read_bytes() for p in (job_path, normalized, baseline, srt)}
+    before = {p: p.read_bytes() for p in (job_path, normalized, baseline, subtitle)}
     directories = set(job_path.parent.glob("transcript-*/"))
     original_open = Path.open
 
@@ -327,7 +333,7 @@ def test_strict_correction_records_without_subtitle(task):
 @pytest.mark.parametrize("damage", ["missing", "stale"])
 def test_segment_operations_allow_unavailable_subtitle(task, damage):
     job_path, audio, manifest, _, _ = task
-    subtitle = generate_srt.generate_srt(job_path)
+    subtitle = generate_subtitle.generate_subtitle(job_path)
     if damage == "missing":
         subtitle.unlink()
     else:
@@ -343,7 +349,7 @@ def test_segment_operations_allow_unavailable_subtitle(task, damage):
 @pytest.mark.parametrize("command", ["show", "edit", "reset"])
 def test_segment_operations_do_not_read_or_render_old_subtitle(task, monkeypatch, command):
     job_path = task[0]
-    subtitle = generate_srt.generate_srt(job_path)
+    subtitle = generate_subtitle.generate_subtitle(job_path)
     original_read = Path.read_bytes
 
     def reject_subtitle_read(path):
@@ -355,7 +361,7 @@ def test_segment_operations_do_not_read_or_render_old_subtitle(task, monkeypatch
         pytest.fail("segment operations must not render subtitles")
 
     monkeypatch.setattr(Path, "read_bytes", reject_subtitle_read)
-    monkeypatch.setattr(subtitle_job, "rendered_srt_segments", reject_render)
+    monkeypatch.setattr(subtitle_job, "rendered_subtitle_segments", reject_render)
 
     output = transcript.operate(command, job_path, 0, text="校正")
 
@@ -370,7 +376,7 @@ def test_segment_operations_do_not_read_or_render_old_subtitle(task, monkeypatch
 @pytest.mark.parametrize("command,target", [("edit", 0), ("reset", 0), ("reset", "all")])
 def test_unchanged_operation_keeps_paths_and_valid_subtitle(task, command, target):
     job_path = task[0]
-    generate_srt.generate_srt(job_path)
+    generate_subtitle.generate_subtitle(job_path)
     before = subtitle_job.load_job(job_path)
     before_bytes = job_path.read_bytes()
     path = transcript.operate(command, job_path, target, text=task[3]["segments"][0]["text"])
@@ -418,7 +424,7 @@ def test_batch_edit_commits_once_and_reuses_baseline(task, monkeypatch, capsys, 
     segments = transcript.operate("show", job_path, "all")["segments"]
     assert segments[0]["text"] == '  引号"与换行\n'
     assert segments[3]["text"] == "私密批量校正"
-    subtitle = generate_srt.generate_srt(job_path)
+    subtitle = generate_subtitle.generate_subtitle(job_path)
     unchanged = job_path.read_bytes()
     commits.clear()
     assert transcript.main(["edit", str(job_path), "--edits-file", str(edits_file)]) == 0
@@ -443,7 +449,7 @@ def test_batch_edit_commits_once_and_reuses_baseline(task, monkeypatch, capsys, 
 )
 def test_invalid_batch_changes_nothing(task, edits, capsys):
     job_path = task[0]
-    generate_srt.generate_srt(job_path)
+    generate_subtitle.generate_subtitle(job_path)
     before = {path: path.read_bytes() for path in job_path.parent.rglob("*") if path.is_file()}
     edits_file = task[1].parent / "edits.json"
     edits_file.write_text(json.dumps(edits), encoding="utf-8")

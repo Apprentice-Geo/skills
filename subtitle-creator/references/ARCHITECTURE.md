@@ -6,13 +6,13 @@
 本地音频 → open_subtitle_job → 按音频 SHA-256 定位 job
 已完成 manifest → 公共 load_result() → bind_transcription
   → 本地不可变基准 + 可编辑工作副本
-工作副本 → transcript show / edit / reset → generate_srt --format json|srt → JSON／SRT
+工作副本 → transcript show / edit / reset → generate_subtitle --format json|srt → JSON／SRT
 ```
 
 - `open_subtitle_job.py` 按音频内容创建或恢复任务，返回当前可用产物；不生成字幕。
 - `transcription_input.py` 通过公共 `load_result()` 只读接入上游，完整投影公开 `items` 字段；`bind_transcription.py` 验证音频身份并导入本地数据，每次显式绑定都替换基准、清空校正并使字幕失效。
 - `subtitle_job.py` 验证任务身份、产物路径、文本校正边界、不可编辑 items、时间轴与字幕内容，发布本地工作副本。字幕导出、打开任务及有效性检查共用其渲染函数与 job 保存的配置；切分、校正回退及时间戳规则集中见[字幕渲染](SUBTITLE-RENDERING.md)。
-- `transcript.py` 查看、批量修改文本，或从本地基准恢复文本；`generate_srt.py` 从合法工作副本直接生成所选 JSON／SRT 并记录校正 ID。
+- `transcript.py` 查看、批量修改文本，或从本地基准恢复文本；`generate_subtitle.py` 从合法工作副本直接生成所选 JSON／SRT 并记录校正 ID。
 - `remove_subtitle_job.py` 只删除当前配置根目录下单个任务，拒绝链接与越界。
 - `runtime_paths.py` 解析数据目录，`process_logging.py` 管理固定位置的会话日志。环境与依赖检查不参与字幕业务状态。
 
@@ -34,4 +34,4 @@
 
 已验证 transcript 使用递归 JSON 序列化，有限 `Decimal` 直接写成 JSON 数字，保留 duration 和时间戳精度，不经 `float`。基准与工作副本允许位于不同目录。
 
-`artifacts.subtitle` 保存当前交付字幕的路径，扩展名决定 JSON 或 SRT；生成与恢复共用同一断句结果及对应序列化，不强制同时生成两种文件。新参数不含阅读尾部设置；旧任务的 `tail_factor=1.1` 可读取，重生成时移除，旧延长产物按陈旧字幕处理。
+`artifacts.subtitle` 保存当前交付字幕的路径，扩展名决定 JSON 或 SRT；生成与恢复共用同一断句结果及对应序列化，不强制同时生成两种文件。

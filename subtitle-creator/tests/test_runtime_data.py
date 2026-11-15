@@ -200,7 +200,7 @@ def test_setup_launcher_resolves_data_before_uv_and_cwd(tmp_path, cli_override):
 def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkeypatch):
     from scripts import (
         bind_transcription,
-        generate_srt,
+        generate_subtitle,
         open_subtitle_job,
         remove_subtitle_job,
     )
@@ -232,8 +232,8 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
         == 0
     )
     upstream.unlink()
-    assert generate_srt.main([str(job_path), *common]) == 0
-    assert generate_srt.main([str(job_path), *common]) == 0
+    assert generate_subtitle.main([str(job_path), *common]) == 0
+    assert generate_subtitle.main([str(job_path), *common]) == 0
     assert read_json_object(job_path)["status"] == "transcription_bound"
     # 切换目录不能误删另一根目录的任务。
     with pytest.raises(SubtitleJobError):
@@ -250,7 +250,7 @@ def test_external_subtitle_create_attach_finalize_resume_remove(tmp_path, monkey
     [
         ("open_subtitle_job", ["audio.wav"]),
         ("bind_transcription", ["job.json", "--transcription-manifest", "manifest.json"]),
-        ("generate_srt", ["job.json"]),
+        ("generate_subtitle", ["job.json"]),
         ("remove_subtitle_job", ["job.json"]),
         ("transcript", ["reset", "job.json", "--id", "all"]),
     ],

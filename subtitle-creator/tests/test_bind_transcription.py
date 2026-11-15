@@ -161,7 +161,7 @@ def test_bind_rechecks_original_audio(
 
 @pytest.mark.parametrize("same_manifest", [True, False])
 def test_bind_always_reimports_and_invalidates_subtitle(subtitle_task, monkeypatch, same_manifest):
-    from scripts import generate_srt
+    from scripts import generate_subtitle
 
     job_path, manifest_path, _audio, audio_id = subtitle_task
     monkeypatch.setattr(
@@ -171,7 +171,7 @@ def test_bind_always_reimports_and_invalidates_subtitle(subtitle_task, monkeypat
     normalized = subtitle_job.read_json_object(first_path)
     normalized["segments"][0]["text"] = "corrected"
     first_path.write_bytes(json_bytes(normalized))
-    generate_srt.generate_srt(job_path)
+    generate_subtitle.generate_subtitle(job_path)
     replacement = replace(
         sample_transcription(audio_id),
         segments=[{"id": 0, "start": 1, "end": 3, "text": "new transcription"}],

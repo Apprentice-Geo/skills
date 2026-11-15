@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import generate_srt, open_subtitle_job, subtitle_job
+from scripts import generate_subtitle, open_subtitle_job, subtitle_job
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 RESULTS_DIR = SKILL_DIR / "results"
@@ -173,7 +173,7 @@ def test_create_recovers_existing_transcription_bound_job_from_audio(
     assert normalized_path.read_bytes() == original_normalized
     assert (subtitle_path.read_bytes() if subtitle_path.exists() else None) == original_subtitle
     assert json.loads(job_path.read_text(encoding="utf-8"))["status"] == "transcription_bound"
-    assert generate_srt.generate_srt(job_path) == subtitle_path
+    assert generate_subtitle.generate_subtitle(job_path) == subtitle_path
     normalized = subtitle_job.read_json_object(normalized_path, decimal_numbers=True)
     assert subtitle_path.read_bytes() == subtitle_job.expected_srt_bytes(
         normalized, options=subtitle_job.load_job(job_path)["subtitle_options"]
@@ -187,7 +187,7 @@ def test_open_reuses_validated_sources_and_renders_subtitle_once(audio, monkeypa
     reads = []
     renders = []
     original_read = subtitle_job.read_json_object
-    original_render = subtitle_job.rendered_srt_segments
+    original_render = subtitle_job.rendered_subtitle_segments
 
     def record_read(path, **kwargs):
         reads.append(path)
@@ -198,7 +198,7 @@ def test_open_reuses_validated_sources_and_renders_subtitle_once(audio, monkeypa
         return original_render(*args, **kwargs)
 
     monkeypatch.setattr(subtitle_job, "read_json_object", record_read)
-    monkeypatch.setattr(subtitle_job, "rendered_srt_segments", record_render)
+    monkeypatch.setattr(subtitle_job, "rendered_subtitle_segments", record_render)
 
     result = run_create(audio_path)
 

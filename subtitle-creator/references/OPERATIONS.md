@@ -57,7 +57,7 @@ uv run --no-sync python -m scripts.transcript reset "<absolute-job-path>" --id a
 ## 生成参数
 
 ```powershell
-uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --format json --target-chars 24 --target-seconds 6 --min-gap 0.2
+uv run --no-sync python -m scripts.generate_subtitle "<absolute-job-path>" --format json --target-chars 24 --target-seconds 6 --min-gap 0.2
 ```
 
 | 参数 | 约束 | 首次默认值 |
@@ -67,7 +67,7 @@ uv run --no-sync python -m scripts.generate_srt "<absolute-job-path>" --format j
 | `--target-seconds` | 有限正数，单位秒 | `6` |
 | `--min-gap` | 有限正数，单位秒 | `0.2` |
 
-后续生成时，未显式提供的参数复用上次记录值；只覆盖一个参数也会保留其他值。两种格式都不延长尾部，阅读停留由视频项目处理。旧任务的 `tail_factor=1.1` 可读取，生成后移除，不丢失文本校正。阈值为软目标，切点不保证词语完整；分段、校正回退及取整规则见[字幕渲染](SUBTITLE-RENDERING.md)。生成后的打开与有效性检查也使用保存的参数，不以默认值重新解释字幕。
+后续生成时，未显式提供的参数复用上次记录值；只覆盖一个参数也会保留其他值。两种格式都沿用原始转写时间戳。阈值为软目标，切点不保证词语完整；分段、校正回退及取整规则见[字幕渲染](SUBTITLE-RENDERING.md)。生成后的打开与有效性检查也使用保存的参数，不以默认值重新解释字幕。
 
 ## 删除任务
 

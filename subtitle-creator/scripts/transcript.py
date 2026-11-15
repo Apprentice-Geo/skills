@@ -21,7 +21,7 @@ from .subtitle_job import (
     SubtitleJobError,
     compare_normalized_correction,
     load_job,
-    normalized_srt_segments,
+    normalized_subtitle_segments,
     publish_transcript,
     read_json_object,
     transcript_json,
@@ -99,7 +99,7 @@ def _load_bound(job_path: Path, results_dir: Path | None):
         raise SubtitleJobError("before-correction artifact digest mismatch")
     baseline = read_json_object(baseline_path, decimal_numbers=True)
     compare_normalized_correction(baseline, baseline)
-    normalized_srt_segments(baseline)
+    normalized_subtitle_segments(baseline)
     return job_path, job, baseline_bytes, baseline
 
 
@@ -199,7 +199,7 @@ def operate(
         try:
             current = read_json_object(normalized_path, decimal_numbers=True)
             unchanged = not compare_normalized_correction(baseline, current)
-            normalized_srt_segments(current)
+            normalized_subtitle_segments(current)
         except SubtitleJobError:
             unchanged = False
         if unchanged:

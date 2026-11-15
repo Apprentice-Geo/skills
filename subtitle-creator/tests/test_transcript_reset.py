@@ -4,7 +4,7 @@ import pytest
 
 from scripts import (
     bind_transcription,
-    generate_srt,
+    generate_subtitle,
     open_subtitle_job,
     subtitle_job,
     transcript,
@@ -40,7 +40,7 @@ def test_reset_restores_bound_snapshot_without_audio_or_upstream(bound_job, dama
     normalized = subtitle_job.read_json_object(normalized_path)
     normalized["segments"][0]["text"] = "校正文本"
     subtitle_job.atomic_write_json(normalized_path, normalized)
-    generate_srt.generate_srt(job_path)
+    generate_subtitle.generate_subtitle(job_path)
     if damage == "missing":
         normalized_path.unlink()
     elif damage == "json":
@@ -60,7 +60,7 @@ def test_reset_restores_bound_snapshot_without_audio_or_upstream(bound_job, dama
     assert job["artifacts"]["subtitle"] is None
     assert Path(job["artifacts"]["before_correction"]).read_bytes() == baseline
     subtitle_job.validate_job(job_path, job)
-    assert generate_srt.generate_srt(job_path).is_file()
+    assert generate_subtitle.generate_subtitle(job_path).is_file()
     assert transcript.operate("reset", job_path, "all").read_bytes() == baseline
 
 
@@ -69,12 +69,12 @@ def test_reset_all_repairs_boolean_timestamps_when_text_is_unchanged(bound_job, 
     job_path, normalized_path, _audio, _manifest = bound_job
     job = subtitle_job.load_job(job_path)
     baseline = Path(job["artifacts"]["before_correction"]).read_bytes()
-    generate_srt.generate_srt(job_path)
+    generate_subtitle.generate_subtitle(job_path)
     normalized = subtitle_job.read_json_object(normalized_path)
     normalized["segments"][0][field] = value
     subtitle_job.atomic_write_json(normalized_path, normalized)
     with pytest.raises(subtitle_job.SubtitleJobError, match="must be a JSON number"):
-        generate_srt.generate_srt(job_path)
+        generate_subtitle.generate_subtitle(job_path)
 
     restored = transcript.operate("reset", job_path, "all")
 
@@ -83,7 +83,7 @@ def test_reset_all_repairs_boolean_timestamps_when_text_is_unchanged(bound_job, 
     assert restored_job["changed_segment_ids"] == []
     assert restored_job["artifacts"]["subtitle"] is None
     subtitle_job.validate_job(job_path, restored_job)
-    assert generate_srt.generate_srt(job_path).is_file()
+    assert generate_subtitle.generate_subtitle(job_path).is_file()
 
 
 def test_reset_rejects_damaged_baseline_without_publishing(bound_job):
@@ -103,7 +103,7 @@ def test_reset_failed_publish_preserves_corrections_and_subtitle(bound_job, monk
     normalized = subtitle_job.read_json_object(normalized_path)
     normalized["segments"][0]["text"] = "keep correction"
     subtitle_job.atomic_write_json(normalized_path, normalized)
-    subtitle_path = generate_srt.generate_srt(job_path)
+    subtitle_path = generate_subtitle.generate_subtitle(job_path)
     before = {path: path.read_bytes() for path in (job_path, normalized_path, subtitle_path)}
     with monkeypatch.context() as patch:
 
