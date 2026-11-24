@@ -55,7 +55,7 @@
 uv sync --python 3.12 --extra cpu
 ```
 
-`cpu` 与 `qwen3-asr` extra 互斥，开发同步禁止使用 `--all-extras`。Qwen 环境的安装与切换命令见 `SKILL.md`。
+`cpu` 与 `qwen3-asr` extra 互斥，开发同步禁止使用 `--all-extras`。Qwen 环境的安装与切换命令见 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖)。
 
 静态检查：
 
@@ -76,15 +76,7 @@ setup、模型安装和真实转写命令见 `SKILL.md` 与 `references/ERROR-HA
 
 ## 提交信息
 
-编写提交信息时，遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) 规范：
-
-```
-<type>(<scope>): <简短描述>
-
-[可选的详细说明]
-```
-
-提交前除相关测试外，运行上述静态检查，并对已暂存内容运行 `git diff --cached --check`。
+提交前运行相关测试和上述静态检查，对已暂存内容运行 `git diff --cached --check`。提交格式见[仓库提交约定](../AGENTS.md#提交信息)。
 
 ## 维护本文件
 

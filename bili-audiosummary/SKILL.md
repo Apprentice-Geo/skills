@@ -101,10 +101,8 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 ## 恢复与重新总结
 
-恢复缺失产物、补充音频、更换转写、按新要求重写或切换语言时，阅读[操作参考](references/OPERATIONS.md)，按所需操作继续并复用已有资源，避免重复下载；普通恢复无需删除任务。
+恢复缺失产物时沿用已有资源和总结。补充音频、更换转写、按新要求重写或切换语言的命令见[操作参考](references/OPERATIONS.md)。显式重新导入转写、改用另一种总结语言或重新总结都会归档旧总结，使任务回到 `prompt_ready`。交付前需要完成新的总结。
 
-- 单纯恢复不改写总结；显式重新导入转写、切换实际总结语言或重新总结会归档旧总结并回到 `prompt_ready`。旧总结不能作为当前产物交付。
-- 中途失败时保留备份，按[输入与总结替换失败](references/ERROR-HANDLING.md#输入与总结替换失败)恢复并校验后再交付。
-- 只有明确需要删除整个任务时才使用 `scripts.remove_summary_job`；它会删除下载资源和用户总结，普通恢复无需删除。
+替换中途失败时保留备份，按[输入与总结替换失败](references/ERROR-HANDLING.md#输入与总结替换失败)恢复并校验。
 
-内部职责与数据流见[架构](references/ARCHITECTURE.md)。
+需要移除整个任务时，见[删除任务](references/OPERATIONS.md#删除任务)。内部职责与数据流见[架构](references/ARCHITECTURE.md)。

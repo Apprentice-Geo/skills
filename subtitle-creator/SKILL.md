@@ -71,9 +71,9 @@ uv run --no-sync python -m scripts.generate_subtitle "<absolute-job-path>" --for
 
 需要 SRT 时使用 `--format srt`；省略格式沿用当前产物格式，没有产物时默认 SRT。JSON 与 SRT 共用断句结果，不需要先生成另一种格式。
 
-需要调整字数、时长或停顿阈值时，阅读[生成参数](references/OPERATIONS.md#生成参数)；省略的参数复用上次生成值，首次生成使用默认值。切分及时间戳的具体行为见[字幕渲染](references/SUBTITLE-RENDERING.md)。
+调整字数、时长或停顿阈值时，参见[生成参数](references/OPERATIONS.md#生成参数)。首次生成使用默认值，后续省略的参数沿用上次的值。
 
-校正和查看仍针对原分段 ID。校正不满足文字位置兼容条件或 items 无法对应时，受影响段保持原分段并警告 ID；不得通过自动重新绑定补齐 items，以免丢失校正。详细规则见[字幕渲染](references/SUBTITLE-RENDERING.md)，参数与示例见[生成参数](references/OPERATIONS.md#生成参数)。
+查看和校正仍使用原分段 ID。若校正后的文字位置或转写 items 无法与原段对应，生成命令会保留该段并报告其 ID。不要为补齐 items 自动重新绑定转写，这会丢失校正。切分和时间戳规则见[字幕渲染](references/SUBTITLE-RENDERING.md)。
 
 转写时间戳用于制作定位，存在合理误差；不要为追求声学边界完全一致而自动重转写或增加严格门禁。
 

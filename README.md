@@ -13,4 +13,4 @@ English version: [README.en.md](README.en.md)
 | `subtitle-creator` | 从本地音频创建 JSON／SRT 字幕，并可选地校正文本。 |
 | `article-format-correction` | 在保留含义、结构和作者表达风格的前提下，校正 Markdown 文章格式。 |
 | `anti-sycophancy-review` | 审查论点、计划、预测和解释，避免无依据地附和。 |
-| `coding-guidelines` | 为代码开发、审查、诊断、方案评估及项目文档维护提供个人化准则，涵盖范围判断、代码复用、验证、文档组织、工作上下文与历史归档。 |
+| `coding-guidelines` | 指导代码开发、审查、诊断与方案评估，组织项目文档和交接记录，并按读者需要编写文档、界面文案和演示稿。 |

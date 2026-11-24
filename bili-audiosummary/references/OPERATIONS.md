@@ -52,6 +52,8 @@ uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>
 
 替换转写、切换实际总结语言或重新总结时，旧总结归档为 `.superseded-<id>.md`；旧总结不能作为当前产物交付。
 
-中途失败时按[输入与总结替换失败](ERROR-HANDLING.md#输入与总结替换失败)恢复；保留备份，恢复并校验后再交付。恢复、换转写和换语言均不需要删除任务。
+中途失败时保留备份，按[输入与总结替换失败](ERROR-HANDLING.md#输入与总结替换失败)恢复并校验。
 
-只有明确需要删除整个任务时才使用 `scripts.remove_summary_job`，它会删除下载资源和用户总结。内部职责与数据流见[架构](ARCHITECTURE.md)。
+## 删除任务
+
+只有明确要删除整个任务时才使用 `scripts.remove_summary_job`。它会一并删除下载资源和用户总结。

@@ -27,7 +27,6 @@
 - [公共 Artifact 验证](#公共-artifact-验证)
 - [Cache 恢复](#cache-恢复)
 - [日志](#日志)
-- [停止条件](#停止条件)
 
 ## Setup 与依赖
 
@@ -112,8 +111,8 @@ marker 缺失、损坏、不匹配或模型文件不完整时，按环境策略�
 ## Alignment 与空结果
 
 - 完整转写必须包含非空文本和 timestamp item。
-- 单个 accepted chunk 可以为空，并在合并时忽略。如果所有 chunk 合并后得到空 transcript，停止执行。
-- 时间戳、probability 或文字归属校验失败时，保留原始错误并停止；先检查 Provider 和依赖，不能通过修改产物或放宽校验继续。
+- 清除零时长 item 后，合并时跳过空 chunk。若合并后的 transcript 为空，停止转写。
+- 时间戳、probability 校验失败，或 Provider 文本无法按原文顺序对应到 timestamp item 时，停止转写并保留原始错误。检查 Provider 和依赖，不修改产物或放宽校验。
 - 保留由标点驱动的分段行为。如果句子输出看起来有误，检查 alignment item 和 segmentation 规则，不得手动编辑已发布的 `transcript.json`。
 - alignment 验证失败时，不得发布 `manifest.json`。
 - 如果文本规范化失败，或规范化后的文本与 item 不再对齐，停止执行，不得回退到未规范化的公共文本。
@@ -122,15 +121,15 @@ marker 缺失、损坏、不匹配或模型文件不完整时，按环境策略�
 
 ## 公共 Artifact 验证
 
-使用结果前，以 `manifest.json` 调用 `audio_transcribe_contract.load_result`；完整校验合同见[公共 contract 与发布](ARCHITECTURE.md#公共-contract-与发布)。验证失败时，consumer 必须停止使用结果，生产端应使用原音频重新运行转写，由恢复流程决定重建或重新发布，不得手动修改公共 JSON。
+读取已有转写时，把 `manifest.json` 路径传给 `audio_transcribe_contract.load_result()`。校验通过即可使用返回的正文，无需原音频、本地模型、日志或 workspace。校验失败时停止使用该结果。需要恢复时，用原音频重新运行转写命令，保留公共 JSON 原样。校验范围见[公共 contract 与发布](ARCHITECTURE.md#公共-contract-与发布)。
 
-日志和 workspace 不参与公共验证，缺少它们不影响 bundle 读取。`load_manifest()` 只供生产端检查恢复所需的元数据，正文不存在或损坏时也可能成功；不得据此声称完整转写成功。旧公共 schema 和旧入口/API 不迁移，重新运行命令生成当前格式结果。
+`load_manifest()` 只供生产端检查恢复所需的元数据，正文缺失或损坏时也可能成功。旧公共 schema 和旧入口/API 不迁移，需要当前格式时重新运行转写命令。
 
 ## Cache 恢复
 
 恢复只由生产命令执行，consumer loader 不修复文件。输入音频仍需存在；命令计算 `audio_id` 和当前 resolved request 的 `config_digest`，定位本地结果目录及其固定 `workspace/result.json`。manifest 不记录或控制私有路径。自动 Provider、语言或其他配置变化会定位到不同结果，不能仅凭相同音频复用另一配置。
 
-私有 ASR cache 只支持当前严格格式，且仅存储 accepted 结果。plan 通过重新计算的 `plan_id` 验证内容身份，chunk 必须绑定当前 `plan_id` 并在读取时重新验证 alignment。旧字段、未知字段、错误身份或格式错误的条目自然失效；不得迁移或手动编辑旧 cache。
+私有 ASR cache 只存储通过校验的结果。复用 plan 时，`alignment_policy` 必须匹配当前策略，重新计算的 `plan_id` 也必须与记录一致。读取 chunk 时核对所属的 `plan_id` 并重新验证 alignment。字段、格式或身份不匹配的条目失效，不迁移或手动编辑旧 cache。
 
 有效且匹配当前请求的 bundle 直接命中 cache，无需日志或 workspace。有效 manifest 若与当前音频或 resolved request 不匹配，停止执行并保留文件。
 
@@ -151,29 +150,3 @@ result lock 覆盖检查、重建与发布。如果某个进程阻塞在 lock �
 - 报告失败时，应包含精确命令、简洁错误、可用的结果或日志路径，以及是否存在完整 manifest。
 - 报告中不得包含 transcript 文本、其他 workflow 的 Cookie 内容、原始模型对象或不必要的敏感本地路径。
 - CLI 每次调用在数据目录的 `.cache/logs/` 建立日志，包括解码和请求解析失败；`--results-dir` 不移动它。Python API 未指定日志路径时保留结果目录内的 `transcribe.log`：cache hit 不改写首次日志，已有 manifest 的恢复尝试追加，日志缺失时可重新创建。日志不属于公共结果合同。
-
-## 停止条件
-
-出现以下情况时，停止执行，不得生成或使用 transcript：
-
-- 输入的本地音频文件缺失；
-- 解码失败或解码后的音频为空；
-- 需要自动语言检测，但 language-id 模型或可用语音不可用；
-- resolved language 为空或无效；
-- 请求的 Provider 不受支持或未 ready；
-- 请求 Qwen3-ASR，但缺少 CUDA 或所需的本地模型 artifact；
-- 请求 faster-whisper，但缺少所需依赖或本地模型 artifact；
-- CPU worker/thread 选项无效或超出 budget；
-- Provider 推理失败；
-- alignment 验证失败；
-- 无法按 source 顺序把 Provider 文本映射到 timestamp item；
-- zero-duration cleanup 后，每个 accepted chunk 都为空；
-- 文本或 timestamp item 为空；
-- resolved request 缺少精确匹配的受支持 alignment policy，包括加载旧 manifest 时；
-- 无效 workspace/cache 无法重建为合法结果，或候选公共正文具有无效字段、probability 或 timestamp；
-- 正式 manifest 安装前，publication candidate 验证失败；
-- 有效 manifest 与当前音频或 resolved request 身份不匹配；
-- 公共 artifact 验证失败且无法重建或完成发布；
-- 没有任何完整 `manifest.json` 验证成功。
-
-禁止通过编辑 `manifest.json`、`transcript.json` 或 `workspace/` 下的文件绕过停止条件。

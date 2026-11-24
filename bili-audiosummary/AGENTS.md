@@ -77,10 +77,4 @@ uv run --no-sync python -m pytest tests/test_continue_summary.py tests/test_comp
 
 ## 提交信息
 
-编写提交信息时，遵循 [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) 规范：
-
-```
-<type>(<scope>): <简短描述>
-
-[可选的详细说明]
-```
+提交格式见[仓库提交约定](../AGENTS.md#提交信息)。

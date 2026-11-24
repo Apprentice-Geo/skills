@@ -13,4 +13,4 @@ This repository contains Agent Skills for personal use. The Skills reflect perso
 | `subtitle-creator` | Create JSON or SRT subtitles from local audio with optional text correction. |
 | `article-format-correction` | Correct the Markdown formatting of the article while preserving its meaning, structure, and the author's expressive style. |
 | `anti-sycophancy-review` | Review claims, plans, predictions, and interpretations without unsupported agreement. |
-| `coding-guidelines` | Apply personal guidelines to code development, review, diagnosis, change evaluation, and project documentation, covering scope decisions, code reuse, verification, document organization, working context, and historical archives. |
+| `coding-guidelines` | Develop, review, and debug code, assess proposed changes, organize project documentation and handoff notes, and write documentation, UI copy, and presentations for their intended readers. |
