@@ -52,10 +52,10 @@ git diff --cached --check
 
 测试权限、临时目录、uv 缓存和清理统一遵循[根目录的测试执行环境规则](../AGENTS.md#测试执行环境)。以下命令展示测试范围；实际执行时按根规则配置环境，并追加 `--basetemp` 和 `-o cache_dir=...`，不自动同步依赖。
 
-运行完整常规测试：
+运行完整测试：
 
 ```powershell
-uv run --no-sync python -m pytest -m "not live"
+uv run --no-sync python -m pytest
 ```
 
 优先针对改动范围运行聚焦测试，例如：
@@ -65,7 +65,7 @@ uv run --no-sync python -m pytest tests/test_run_pipeline.py
 uv run --no-sync python -m pytest tests/test_continue_summary.py tests/test_complete_summary.py
 ```
 
-真实流程测试会访问 Bilibili，外部转写流程还依赖单独安装的 `audio-transcribe`。除非任务明确要求端到端验证，否则先使用常规单元测试和模拟边界完成验证。
+除非任务明确要求端到端验证，否则先使用常规单元测试和模拟边界完成验证。手动验证外部转写接入时，需要单独安装 `audio-transcribe`。
 
 ## 测试与验证
 

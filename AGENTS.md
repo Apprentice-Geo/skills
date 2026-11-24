@@ -30,6 +30,10 @@
 - 每次在仓库 `.cache/test-runs/<run-id>/<skill>/` 下使用独立目录，通过 `--basetemp` 和 `-o cache_dir=...` 分别指定测试临时目录与缓存；uv 缓存也放在本次运行目录内，避免复用已有的权限失败目录。
 - 在同一沙箱外执行上下文中完成运行和清理，保留测试结果与必要日志。清理前确认目标的绝对路径位于本次运行目录内，且目标及路径不包含链接或 junction；不清理历史样本或无关文件。
 
+## 持续集成
+
+PR 有更新或 `main` 收到推送时，GitHub Actions 使用 Windows 和 Python 3.12 运行带测试的 Skill，其中 `audio-transcribe` 使用 `cpu` extra。文档检查验证 Skill 的 YAML 头及 Git 跟踪的 Markdown 结构和相对链接，可在仓库根目录运行 `uv run --script .github/scripts/check_docs.py`。 [CI 工作流](.github/workflows/ci.yml)
+
 ## Skill 文档规则
 
 > 本章节内容是针对单个 Skill 文档的规则，文档路径均为相对于特定 Skill 根目录的路径

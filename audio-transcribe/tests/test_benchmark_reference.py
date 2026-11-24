@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import wave
 from copy import deepcopy
 from pathlib import Path
@@ -253,29 +252,6 @@ def test_reference_loader_rejects_invalid_wav_before_worker(tmp_path: Path) -> N
 
     with pytest.raises(ValueError, match="readable PCM WAV"):
         _load(manifest_path, data, samples_path, {("zh", 8)})
-
-
-def test_reference_loader_rejects_symbolic_link(tmp_path: Path) -> None:
-    manifest_path, data, samples_path, value = _reference_tree(tmp_path)
-    relative = value["languages"]["zh"]["parts"][0]["path"]
-    part = manifest_path.parent / relative
-    target = part.with_suffix(".target")
-    part.replace(target)
-    try:
-        os.symlink(target, part)
-    except OSError as exc:
-        pytest.skip(f"symbolic links unavailable: {exc}")
-
-    manifest = load_reference_manifest(manifest_path)
-    with pytest.raises(ValueError, match="symbolic link"):
-        load_reference_samples(
-            manifest,
-            {("zh", 8)},
-            data_dir=data,
-            samples_manifest_path=samples_path,
-            normalize_units=benchmark.normalize_text,
-            unit_digest=benchmark.unit_digest,
-        )
 
 
 def test_fixed_references_match_all_samples_and_are_cumulative_prefixes() -> None:

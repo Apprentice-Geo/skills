@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests / ${{ matrix.skill }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - skill: audio-transcribe
+            sync-args: --extra cpu
+          - skill: bili-audiosummary
+            sync-args: ""
+          - skill: subtitle-creator
+            sync-args: ""
+    defaults:
+      run:
+        working-directory: ${{ matrix.skill }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.11.7"
+          python-version: "3.12"
+          cache-dependency-glob: ${{ matrix.skill }}/uv.lock
+      - name: Install locked dependencies
+        run: uv sync --locked ${{ matrix.sync-args }}
+      - name: Run Pytest
+        run: >
+          uv run --no-sync python -m pytest -rs
+          --basetemp "$env:RUNNER_TEMP/pytest"
+          -o "cache_dir=$env:RUNNER_TEMP/pytest-cache"
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.11.7"
+          enable-cache: false
+      - name: Check Skill metadata and Markdown
+        run: uv run --script .github/scripts/check_docs.py
