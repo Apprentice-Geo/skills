@@ -34,7 +34,7 @@ metadata:
 
 ### 1. 打开任务
 
-新建和恢复均从音频入口开始，不要求用户提供 job 路径：
+任务已绑定转写时，可直接用 `subtitle_job.json` 的绝对路径继续校正或生成字幕。新建任务或按音频找回已有任务时，运行以下命令：
 
 ```powershell
 uv run --no-sync python -m scripts.open_subtitle_job "<audio-path>"
@@ -64,12 +64,12 @@ uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits
 ### 3. 生成并交付
 
 ```powershell
-uv run --no-sync python -m scripts.generate_subtitle "<absolute-job-path>" --format json
+uv run --no-sync python -m scripts.generate_subtitle "<absolute-job-path>"
 ```
 
-从当前工作副本直接生成最终断句后的 JSON，保留校正，返回 `subtitle: <absolute-path>`。交付这个文件，并说明仍有疑义的校正。
+默认沿用当前字幕的格式，尚无字幕时生成 SRT。用户指定格式时，加上 `--format json` 或 `--format srt`。两种格式都从当前工作副本直接生成，保留已校正的文本，使用相同的断句规则。
 
-需要 SRT 时使用 `--format srt`；省略格式沿用当前产物格式，没有产物时默认 SRT。JSON 与 SRT 共用断句结果，不需要先生成另一种格式。
+命令成功后返回 `subtitle: <absolute-path>`。交付该路径下的文件，并说明仍有疑义的校正。
 
 调整字数、时长或停顿阈值时，参见[生成参数](references/OPERATIONS.md#生成参数)。首次生成使用默认值，后续省略的参数沿用上次的值。
 

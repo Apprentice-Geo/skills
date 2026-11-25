@@ -1,6 +1,6 @@
 ---
 name: audio-transcribe
-description: 当用户希望转写本地音频文件，并需要可复用的时间戳、转写 artifact、Whisper 或 Qwen3-ASR 时，使用此 Skill。
+description: 将本地音频转成带时间戳的文字稿。支持 faster-whisper 和 Qwen3-ASR，转写结果可用于后续总结或字幕制作。
 compatibility: Windows。需要 uv、Python 3.12、项目打包的 ffmpeg，以及至少一个已安装的本地转写模型。
 license: Apache-2.0
 metadata:

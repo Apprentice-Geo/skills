@@ -1,7 +1,7 @@
 ---
 name: bili-audiosummary
 description: 根据 Bilibili 视频 URL 创建基于音频的总结、笔记、要点和带时间戳的说明。适用于演讲、访谈、讲座、播客、教程和评论等以语音为主的视频。当关键内容依赖画面分析时，不得使用此 Skill。
-compatibility: Windows。需要使用 uv 管理 Python 3.12 环境。需要访问 Bilibili 网络；原生字幕不可用或被明确跳过时，还需要安装 audio-transcribe Skill。
+compatibility: Windows，使用 uv 管理 Python 3.12 环境。获取视频资源时需要访问 Bilibili，只有从音频生成新转写时才需要安装 audio-transcribe Skill。
 license: Apache-2.0
 metadata:
   Github: https://github.com/Apprentice-Geo/skills/tree/main/bili-audiosummary
