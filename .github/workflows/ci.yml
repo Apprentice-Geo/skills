@@ -24,6 +24,8 @@ jobs:
             sync-args: ""
           - skill: article-format-correction
             sync-args: ""
+          - skill: subscription-orchestrator
+            sync-args: ""
     defaults:
       run:
         working-directory: ${{ matrix.skill }}
