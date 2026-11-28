@@ -1,7 +1,7 @@
 ---
 name: bili-audiosummary
 description: 根据 Bilibili 视频 URL 创建基于音频的总结、笔记、要点和带时间戳的说明。适用于演讲、访谈、讲座、播客、教程和评论等以语音为主的视频。当关键内容依赖画面分析时，不得使用此 Skill。
-compatibility: Windows，使用 uv 管理 Python 3.12 环境。获取视频资源时需要访问 Bilibili，只有从音频生成新转写时才需要安装 audio-transcribe Skill。
+compatibility: Windows，使用 uv 管理 Python 3.12 环境，首次安装需 Git 并访问 GitHub 下载合同包。获取视频资源时需要访问 Bilibili，只有从音频生成新转写时才需要安装 audio-transcribe Skill。
 license: Apache-2.0
 metadata:
   Github: https://github.com/Apprentice-Geo/skills/tree/main/bili-audiosummary
@@ -101,8 +101,4 @@ uv run --no-sync python -m scripts.complete_summary "<absolute-summary-job-path>
 
 ## 恢复与重新总结
 
-恢复缺失产物时沿用已有资源和总结。补充音频、更换转写、按新要求重写或切换语言的命令见[操作参考](references/OPERATIONS.md)。显式重新导入转写、改用另一种总结语言或重新总结都会归档旧总结，使任务回到 `prompt_ready`。交付前需要完成新的总结。
-
-替换中途失败时保留备份，按[输入与总结替换失败](references/ERROR-HANDLING.md#输入与总结替换失败)恢复并校验。
-
-需要移除整个任务时，见[删除任务](references/OPERATIONS.md#删除任务)。内部职责与数据流见[架构](references/ARCHITECTURE.md)。
+恢复缺失产物时沿用已有资源和总结。补充音频、更换转写、按新要求重写、切换总结语言、归档与失败恢复，以及删除任务，见[操作参考](references/OPERATIONS.md)。内部职责与数据流见[架构](references/ARCHITECTURE.md)。

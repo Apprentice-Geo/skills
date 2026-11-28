@@ -1,6 +1,6 @@
 # audio-transcribe 开发说明
 
-本文件面向执行仓库任务的 Agent 和维护这些规则的维护者。它定义仓库级工作约束、权威来源、任务路由和验证要求；运行时流程、公开合同、错误处理和 benchmark 方法由各自的长期文档负责。
+本文件补充 `audio-transcribe` 特有的开发约束、权威来源、任务路由和验证要求；仓库通用的编辑、测试执行环境和提交规范见[根目录开发说明](../AGENTS.md)。运行时流程、公开合同、错误处理和 benchmark 方法由各自的长期文档负责。
 
 ## 项目范围
 
@@ -18,15 +18,11 @@
 - `benchmark/README.md`：benchmark 的方法、数据、reference、运行、恢复、报告和维护规则的唯一详细说明。
 - `scripts/`、`packages/` 和 `tests/`：当前可观察行为及其验证证据。
 
-长期文档定义预期合同，实现和测试反映当前可观察行为。三者不一致时，将其视为需要调查的缺陷；不得静默选择其中一方，或仅修改另一方来消除表面差异。
+## 开发约束
 
-## 全局开发约束
-
-- 修改前读取当前实现、相关测试和对应权威文档；不要依据旧说明、阶段性计划或记忆推断当前行为。
-- 修改用户可见行为时，同步检查 `README.md`、`SKILL.md` 及直接相关的长期文档。
-- 保持 Windows PowerShell 和 Python 3.12 兼容。运行仓库 Python 模块和开发工具时，应使用 `uv run --no-sync python -m <module>` 或长期文档记录的等价命令；不因验证自动同步依赖。
+- 保持 Windows PowerShell 和 Python 3.12 兼容。运行 Python 模块和开发工具时，使用 `uv run --no-sync python -m <module>` 或长期文档记录的等价命令；不因验证自动同步依赖。
 - `.cache/`、`.venv/`、`.pytest_cache/`、`.pytest-tmp/`、`.ruff_cache/`、`models/`、`results/`、`tmp/`、`benchmark/data/`、`benchmark/tmp/`、`benchmark/reports/` 和本地音频均为本地或生成内容，不应纳入提交。
-- 相同规则应只有一个详细来源。AGENTS.md 可以保留高风险边界的简短摘要，但不得复制易变化的字段、schema、算法步骤或错误枚举。
+- 相同规则只保留一个详细来源。本文件可保留高风险边界的简短摘要，不得复制易变化的字段、schema、算法步骤或错误枚举。
 
 ## 任务路由与验证
 
@@ -43,7 +39,7 @@
 
 任何可能改变 transcript 字节或 timestamp 的 resolved behavior 都必须纳入结果身份。修改这类行为时，以 `references/ARCHITECTURE.md` 的 identity contract 为准，并通过上述 result identity、pipeline 或 Provider 测试中受影响的 identity assertions 验证，不在本文件重复列举其组成字段。
 
-先运行与改动直接相关的聚焦测试。变更跨越多个模块或公共合同时，在聚焦测试通过后运行完整测试。真实转写依赖本地模型、CUDA 条件和输入音频；除非任务明确要求端到端证据，否则使用单元测试和模拟边界验证。
+真实转写依赖本地模型、CUDA 条件和输入音频；除非任务明确要求端到端证据，否则使用单元测试和模拟边界验证。
 
 真实 benchmark 会加载本地模型、预热并处理长音频，可能长时间占用 CPU、GPU、内存和磁盘。不需要真实模型结果的普通实现或文档改动默认只运行 benchmark 单元测试；只有任务明确需要真实性能或准确率证据时，才运行最小范围的筛选 benchmark。完整矩阵以及 `benchmark.prepare_audio --pin-sha256` 仅在用户以维护者身份明确要求时运行。未运行真实 benchmark 时，应准确报告验证范围，不得声称已验证真实性能、RTF 或转写准确率。
 
@@ -55,7 +51,7 @@
 uv sync --python 3.12 --extra cpu
 ```
 
-`cpu` 与 `qwen3-asr` extra 互斥，开发同步禁止使用 `--all-extras`。Qwen 环境的安装与切换命令见 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖)。
+`cpu` 与 `qwen3-asr` extra 互斥，安装与切换规则见 [Setup 与依赖](references/ERROR-HANDLING.md#setup-与依赖)。
 
 静态检查：
 
@@ -66,7 +62,7 @@ uv run --no-sync python -m ruff format --check .
 git diff --check
 ```
 
-测试执行权限、独立运行目录、临时目录、uv 与 Pytest 缓存及清理统一遵循[根目录的测试执行环境规则](../AGENTS.md#测试执行环境)。以下命令仅展示完整测试范围；实际执行时按根规则配置环境，并追加 `--basetemp` 和 `-o cache_dir=...`。
+完整测试范围如下；实际执行权限、独立目录、缓存与清理遵循[根目录测试执行环境规则](../AGENTS.md#测试执行环境)：
 
 ```powershell
 uv run --no-sync python -m pytest
@@ -80,7 +76,7 @@ setup、模型安装和真实转写命令见 `SKILL.md` 与 `references/ERROR-HA
 
 ## 维护本文件
 
-- 只有仓库级工作方式、权威来源、任务路由或验证政策变化时，才修改 AGENTS.md。
-- 领域行为变化应更新其权威文档；除非路由或仓库级边界同时变化，否则不要把细节同步复制到 AGENTS.md。
+- 只有本 Skill 的开发边界、权威来源、任务路由或验证政策变化时，才修改本文件。
+- 领域行为变化应更新其权威文档；除非路由或开发边界同时变化，否则不要把细节同步复制到本文件。
 - 不在本文件记录临时进度、阶段性问题、单次调查结论或带日期的 benchmark 结果。
 - 删除或重命名长期文档、命令、模块或测试时，同步检查本文件中的路由和链接。

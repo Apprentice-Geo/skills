@@ -26,7 +26,7 @@ uv run --no-sync python -m scripts.prepare_audio "<absolute-summary-job-path>"
 - 读取更新后的 job，将音频交给 `audio-transcribe`，再按[默认流程](../SKILL.md#2-依据任务状态继续)导入其公共 manifest。
 - 已有字幕任务会拒绝冲突的字幕语言或 `--skip-subtitles`；已有外部转写任务继续使用转写输入，字幕选项不再适用。
 
-显式传入 `--transcription-manifest` 总会校验并重新导入输入，同一路径也不例外。替换转写后旧总结归档，任务回到 `prompt_ready`，需重新编写、校验和交付。
+显式传入 `--transcription-manifest` 总会校验并重新导入输入，同一路径也不例外。
 
 ## 按新要求重新总结
 
@@ -36,7 +36,7 @@ uv run --no-sync python -m scripts.prepare_audio "<absolute-summary-job-path>"
 uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>" --regenerate-summary
 ```
 
-该操作复用当前转写、归档旧总结并回到 `prompt_ready`。随后按本次用户请求重新编写总结、校验和交付，无需重新下载或转写。尚无转写输入时，先完成转写和导入。
+该操作复用当前转写，无需重新下载或转写；尚无转写输入时先完成转写和导入。
 
 ## 切换总结语言
 
@@ -46,11 +46,11 @@ uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>
 uv run --no-sync python -m scripts.continue_summary "<absolute-summary-job-path>" --summary-language ja
 ```
 
-支持语言和默认值见 [SKILL.md](../SKILL.md#1-准备资源和任务)。切换实际总结语言会归档旧总结并回到 `prompt_ready`，随后按新语言重新编写、校验和交付。
+支持语言和默认值见 [SKILL.md](../SKILL.md#1-准备资源和任务)。
 
 ## 保留与失败恢复
 
-替换转写、切换实际总结语言或重新总结时，旧总结归档为 `.superseded-<id>.md`；旧总结不能作为当前产物交付。
+显式重新导入转写、切换实际总结语言或按新要求重新总结时，旧总结归档为 `.superseded-<id>.md`，任务回到 `prompt_ready`；随后需按新要求重新编写、校验和交付，旧总结不能作为当前产物交付。
 
 中途失败时保留备份，按[输入与总结替换失败](ERROR-HANDLING.md#输入与总结替换失败)恢复并校验。
 

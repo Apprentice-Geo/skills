@@ -57,9 +57,7 @@ uv run --no-sync python -m scripts.transcript show "<absolute-job-path>" --id 3 
 uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits-file "<edits.json>"
 ```
 
-批量修改格式、查看全部或时间范围、单段编辑与 reset 的命令和参数组合见[分段命令约定](references/OPERATIONS.md#分段命令约定)，使用对应操作前阅读。整批校验成功才提交，失败不部分写入。
-
-编辑和 reset 复用不可变基准，不生成字幕；文本改变或修复工作副本后，原字幕会失效，需要重新生成。
+批量修改格式、查看全部或时间范围、单段编辑与 reset 的命令和提交规则见[分段命令约定](references/OPERATIONS.md#分段命令约定)，使用对应操作前阅读。文本改变或修复工作副本后，原字幕会失效，需要重新生成。
 
 ### 3. 生成并交付
 
@@ -67,14 +65,6 @@ uv run --no-sync python -m scripts.transcript edit "<absolute-job-path>" --edits
 uv run --no-sync python -m scripts.generate_subtitle "<absolute-job-path>"
 ```
 
-默认沿用当前字幕的格式，尚无字幕时生成 SRT。用户指定格式时，加上 `--format json` 或 `--format srt`。两种格式都从当前工作副本直接生成，保留已校正的文本，使用相同的断句规则。
-
-命令成功后返回 `subtitle: <absolute-path>`。交付该路径下的文件，并说明仍有疑义的校正。
-
-调整字数、时长或停顿阈值时，参见[生成参数](references/OPERATIONS.md#生成参数)。首次生成使用默认值，后续省略的参数沿用上次的值。
-
-查看和校正仍使用原分段 ID。若校正后的文字位置或转写 items 无法与原段对应，生成命令会保留该段并报告其 ID。不要为补齐 items 自动重新绑定转写，这会丢失校正。切分和时间戳规则见[字幕渲染](references/SUBTITLE-RENDERING.md)。
-
-转写时间戳用于制作定位，存在合理误差；不要为追求声学边界完全一致而自动重转写或增加严格门禁。
-
-更多参数、删除任务见[环境与命令](references/OPERATIONS.md)；持久化规则见[架构](references/ARCHITECTURE.md)。
+- **格式与交付**：默认沿用当前字幕格式，尚无字幕时生成 SRT；指定格式时加 `--format json` 或 `--format srt`。命令成功后返回 `subtitle: <absolute-path>`，交付该路径下的文件，并说明仍有疑义的校正。
+- **无法细分的回退**：若校正后的文字位置或转写 items 无法与原段对应，命令会保留该段并报告其原分段 ID；不要为补齐 items 自动重新绑定转写，这会丢失校正。转写时间戳存在合理误差，不要为追求声学边界完全一致而自动重转写。
+- **参数与更多参考**：调整字数、时长或停顿阈值见[生成参数](references/OPERATIONS.md#生成参数)；切分与时间戳规则见[字幕渲染](references/SUBTITLE-RENDERING.md)；删除任务见[环境与命令](references/OPERATIONS.md#删除任务)；持久化规则见[架构](references/ARCHITECTURE.md)。

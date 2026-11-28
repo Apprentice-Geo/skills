@@ -1,7 +1,7 @@
 ---
 name: audio-transcribe
 description: 将本地音频转成带时间戳的文字稿。支持 faster-whisper 和 Qwen3-ASR，转写结果可用于后续总结或字幕制作。
-compatibility: Windows。需要 uv、Python 3.12、项目打包的 ffmpeg，以及至少一个已安装的本地转写模型。
+compatibility: Windows。需要 uv、Python 3.12、Git、项目打包的 ffmpeg，以及至少一个已安装的本地转写模型；首次安装需访问 GitHub 下载合同包。
 license: Apache-2.0
 metadata:
   Github: https://github.com/Apprentice-Geo/skills/tree/main/audio-transcribe
@@ -34,7 +34,7 @@ uv run --no-sync python -m scripts.transcribe "<local-audio-path>"
 
 成功条件是完整 bundle 通过 `load_result()`，仅有 manifest 文件或 `load_manifest()` 通过不表示转写成功。解析出 Provider 后，加载、推理或发布失败应报告原因，不静默换模型。
 
-当前公共格式为 schema 4；旧格式保留原文件，不自动迁移。重新运行会根据新配置身份生成结果。消费者使用 bundle 不需要原模型；生产端复用结果仍核对当前模型安装和实际配置。
+旧公共格式保留原文件，不自动迁移，需要当前格式时重新运行转写命令；当前公共合同详见[架构](references/ARCHITECTURE.md#公共-contract-与发布)。消费者使用 bundle 不需要原模型；生产端复用结果仍核对当前模型安装和实际配置。
 
 ## 按需参考
 
